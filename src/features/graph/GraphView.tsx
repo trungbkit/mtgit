@@ -19,6 +19,9 @@ import {
 import type { GraphRow } from "../../ipc/types";
 import { useSession, WORKING } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
+import { useConflict, type ConflictKind, conflictLabel } from "../../stores/conflict";
+import { confirmDialog, promptDialog } from "../../stores/dialog";
+import { validateRefName } from "../../lib/refname";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
 import { Avatar } from "../../components/Avatar";
 import { copyText } from "../../lib/clipboard";
@@ -76,6 +79,7 @@ export function GraphView() {
 
   const qc = useQueryClient();
   const pushToast = useToasts((s) => s.push);
+  const setConflict = useConflict((s) => s.set);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [gearOpen, setGearOpen] = useState(false);
 
@@ -95,10 +99,11 @@ export function GraphView() {
           toastError(err);
         }
       };
-      const reportConflicts = (c: { conflicts: string[] }, okMsg: string) => {
+      const reportConflicts = (kind: ConflictKind, c: { conflicts: string[] }, okMsg: string) => {
         if (c.conflicts.length > 0) {
-          pushToast("error", `Conflicts in ${c.conflicts.length} file(s) — resolve externally.`);
-        } else {
+          setConflict({ repoPath: path, kind, files: c.conflicts });
+          pushToast("error", `${conflictLabel(kind)} paused — ${c.conflicts.length} conflicted file(s).`);
+        } else if (okMsg) {
           pushToast("success", okMsg);
         }
       };
@@ -107,7 +112,12 @@ export function GraphView() {
       const short = row.oid.slice(0, 7);
 
       const createWorktreeFlow = async () => {
-        const name = prompt("Worktree / branch name");
+        const name = await promptDialog({
+          title: "Create worktree",
+          label: "Worktree / branch name",
+          confirmLabel: "Choose location…",
+          validate: validateRefName,
+        });
         if (!name) return;
         const parent = await openDialog({ directory: true, title: "Choose worktree location" });
         if (typeof parent !== "string") return;
@@ -133,21 +143,28 @@ export function GraphView() {
         { separator: true },
         {
           label: "Create branch here",
-          onClick: () => {
-            const name = prompt("New branch name");
+          onClick: async () => {
+            const name = await promptDialog({
+              title: "Create branch",
+              label: "Branch name",
+              placeholder: "feature/x",
+              confirmLabel: "Create",
+              validate: validateRefName,
+            });
             if (name) run(() => createBranch(path, name, row.oid, false), `Created ${name}`);
           },
         },
         {
           label: "Cherry pick commit",
-          onClick: () => run(() => cherryPick(path, row.oid).then((r) => reportConflicts(r, "Cherry-picked"))),
+          onClick: () =>
+            run(() => cherryPick(path, row.oid).then((r) => reportConflicts("cherryPick", r, "Cherry-picked"))),
         },
         {
           label: `Rebase ${head} onto this commit`,
           onClick: () =>
             run(() =>
               rebaseOnto(path, row.oid).then((r) =>
-                r.done ? pushToast("success", `Rebased ${r.applied} commit(s)`) : reportConflicts(r, ""),
+                r.done ? pushToast("success", `Rebased ${r.applied} commit(s)`) : reportConflicts("rebase", r, ""),
               ),
             ),
         },
@@ -159,8 +176,15 @@ export function GraphView() {
             {
               label: "Hard (discard changes)",
               danger: true,
-              onClick: () => {
-                if (confirm("Hard reset discards uncommitted changes. Continue?")) {
+              onClick: async () => {
+                if (
+                  await confirmDialog({
+                    title: "Hard reset",
+                    message: "This discards all uncommitted changes in the working tree. Continue?",
+                    confirmLabel: "Hard reset",
+                    danger: true,
+                  })
+                ) {
                   run(() => resetTo(path, row.oid, "hard"), "Reset (hard)");
                 }
               },
@@ -169,7 +193,7 @@ export function GraphView() {
         },
         {
           label: "Revert commit",
-          onClick: () => run(() => revertCommit(path, row.oid).then((r) => reportConflicts(r, "Reverted"))),
+          onClick: () => run(() => revertCommit(path, row.oid).then((r) => reportConflicts("revert", r, "Reverted"))),
         },
         { separator: true },
         { label: "Copy commit sha", onClick: () => copyText(row.oid) },
@@ -185,24 +209,35 @@ export function GraphView() {
         { separator: true },
         {
           label: "Create tag here",
-          onClick: () => {
-            const name = prompt("Tag name");
+          onClick: async () => {
+            const name = await promptDialog({
+              title: "Create tag",
+              label: "Tag name",
+              confirmLabel: "Create",
+              validate: validateRefName,
+            });
             if (name) run(() => createTag(path, name, row.oid), `Tagged ${name}`);
           },
         },
         {
           label: "Create annotated tag here",
-          onClick: () => {
-            const name = prompt("Tag name");
+          onClick: async () => {
+            const name = await promptDialog({
+              title: "Create annotated tag",
+              label: "Tag name",
+              confirmLabel: "Next",
+              validate: validateRefName,
+            });
             if (!name) return;
-            const msg = prompt("Tag message") ?? "";
+            const msg =
+              (await promptDialog({ title: `Tag ${name}`, label: "Tag message", confirmLabel: "Create" })) ?? "";
             run(() => createTag(path, name, row.oid, msg), `Tagged ${name}`);
           },
         },
       );
       setMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [repo, qc, pushToast, originUrl],
+    [repo, qc, pushToast, originUrl, setConflict],
   );
 
   const parentRef = useRef<HTMLDivElement>(null);

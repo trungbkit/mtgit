@@ -6,6 +6,7 @@ import {
   createBranch,
   createTag,
   deleteBranch,
+  deleteRemoteBranch,
   deleteTag,
   listRefs,
   listWorktrees,
@@ -20,6 +21,9 @@ import {
 import type { BranchInfo } from "../../ipc/types";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
+import { useConflict } from "../../stores/conflict";
+import { confirmDialog, promptDialog } from "../../stores/dialog";
+import { validateRefName } from "../../lib/refname";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
 import { copyText } from "../../lib/clipboard";
 import "./sidebar.css";
@@ -31,6 +35,7 @@ export function Sidebar() {
   const toggleSidebar = useSession((s) => s.toggleSidebar);
   const qc = useQueryClient();
   const pushToast = useToasts((s) => s.push);
+  const setConflict = useConflict((s) => s.set);
   const [filter, setFilter] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
@@ -70,6 +75,55 @@ export function Sidebar() {
     await run(() => checkout(path, name), `Checked out ${name}`);
   }
 
+  async function deleteBranchFlow(b: BranchInfo) {
+    const ok = await confirmDialog({
+      title: "Delete branch",
+      message: `Delete branch "${b.name}"?`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteBranch(path, b.name, false);
+      pushToast("success", "Deleted");
+      refresh();
+    } catch (e) {
+      if (/not fully merged/i.test(String(e))) {
+        const force = await confirmDialog({
+          title: "Branch not fully merged",
+          message: `"${b.name}" has commits not merged into HEAD. Force delete and lose them?`,
+          confirmLabel: "Force delete",
+          danger: true,
+        });
+        if (force) run(() => deleteBranch(path, b.name, true), "Deleted (forced)");
+      } else {
+        toastError(e);
+      }
+    }
+  }
+
+  async function deleteRemoteBranchFlow(b: BranchInfo) {
+    const slash = b.name.indexOf("/");
+    if (slash < 0) return;
+    const remote = b.name.slice(0, slash);
+    const branch = b.name.slice(slash + 1);
+    const ok = await confirmDialog({
+      title: "Delete remote branch",
+      message: `Delete "${branch}" on "${remote}"?\n\nRuns: git push ${remote} --delete ${branch}`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const res = await deleteRemoteBranch(path, remote, branch);
+      if (res.success) pushToast("success", `Deleted ${b.name} on remote`);
+      else pushToast("error", res.output.split("\n").pop() ?? "push --delete failed");
+      refresh();
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
   const f = filter.trim().toLowerCase();
   const match = (b: BranchInfo) => !f || b.name.toLowerCase().includes(f);
   const localItems = (data?.local ?? []).filter(match);
@@ -100,8 +154,14 @@ export function Sidebar() {
       items.push(
         {
           label: "Rename…",
-          onClick: () => {
-            const nn = prompt("New branch name", b.name);
+          onClick: async () => {
+            const nn = await promptDialog({
+              title: "Rename branch",
+              label: "New branch name",
+              defaultValue: b.name,
+              confirmLabel: "Rename",
+              validate: validateRefName,
+            });
             if (nn && nn !== b.name) run(() => renameBranch(path, b.name, nn), "Renamed");
           },
         },
@@ -123,29 +183,28 @@ export function Sidebar() {
         {
           label: `Rebase ${headBranch ?? "HEAD"} onto ${b.name}`,
           disabled: b.isHead,
-          onClick: () =>
-            run(() =>
-              rebaseOnto(path, b.name).then((r) =>
-                r.done
-                  ? pushToast("success", `Rebased ${r.applied} commit(s)`)
-                  : pushToast("error", `Rebase conflict in ${r.conflicts.length} file(s) — aborted.`),
-              ),
-            ),
+          onClick: () => run(() => rebaseOnto(path, b.name).then(reportRebase)),
         },
         {
           label: "Delete",
           danger: true,
           disabled: b.isHead,
-          onClick: () => {
-            if (confirm(`Delete branch ${b.name}?`)) run(() => deleteBranch(path, b.name), "Deleted");
-          },
+          onClick: () => deleteBranchFlow(b),
         },
       );
     } else {
-      items.push({
-        label: "Merge into current",
-        onClick: () => run(() => mergeRef(path, b.name).then(reportMerge)),
-      });
+      items.push(
+        {
+          label: "Merge into current",
+          onClick: () => run(() => mergeRef(path, b.name).then(reportMerge)),
+        },
+        { separator: true },
+        {
+          label: "Delete remote branch",
+          danger: true,
+          onClick: () => deleteRemoteBranchFlow(b),
+        },
+      );
     }
     setMenu({ x: e.clientX, y: e.clientY, items });
   }
@@ -160,8 +219,10 @@ export function Sidebar() {
         {
           label: "Delete tag",
           danger: true,
-          onClick: () => {
-            if (confirm(`Delete tag ${tag.name}?`)) run(() => deleteTag(path, tag.name), "Tag deleted");
+          onClick: async () => {
+            if (await confirmDialog({ title: "Delete tag", message: `Delete tag "${tag.name}"?`, confirmLabel: "Delete", danger: true })) {
+              run(() => deleteTag(path, tag.name), "Tag deleted");
+            }
           },
         },
       ],
@@ -170,11 +231,21 @@ export function Sidebar() {
 
   function reportMerge(res: Awaited<ReturnType<typeof mergeRef>>) {
     if (res.kind === "conflicts") {
-      pushToast("error", `Merge has conflicts in ${res.conflicts.length} file(s) — resolve externally.`);
+      setConflict({ repoPath: path, kind: "merge", files: res.conflicts });
+      pushToast("error", `Merge paused — ${res.conflicts.length} conflicted file(s).`);
     } else if (res.kind === "upToDate") {
       pushToast("info", "Already up to date.");
     } else {
       pushToast("success", `Merged (${res.kind}).`);
+    }
+  }
+
+  function reportRebase(r: Awaited<ReturnType<typeof rebaseOnto>>) {
+    if (r.done) {
+      pushToast("success", `Rebased ${r.applied} commit(s)`);
+    } else {
+      setConflict({ repoPath: path, kind: "rebase", files: r.conflicts });
+      pushToast("error", `Rebase paused — ${r.conflicts.length} conflicted file(s).`);
     }
   }
 
@@ -186,16 +257,27 @@ export function Sidebar() {
       items: [
         {
           label: "New branch…",
-          onClick: () => {
-            const name = prompt("New branch name");
+          onClick: async () => {
+            const name = await promptDialog({
+              title: "Create branch",
+              label: "Branch name",
+              placeholder: "feature/x",
+              confirmLabel: "Create",
+              validate: validateRefName,
+            });
             if (name) run(() => createBranch(path, name, undefined, true), `Created ${name}`);
           },
         },
         {
           label: "New tag…",
-          onClick: () => {
+          onClick: async () => {
             if (!repo!.head.oid) return;
-            const name = prompt("New tag name");
+            const name = await promptDialog({
+              title: "Create tag",
+              label: "Tag name",
+              confirmLabel: "Create",
+              validate: validateRefName,
+            });
             if (name) run(() => createTag(path, name, repo!.head.oid!), `Tagged ${name}`);
           },
         },
@@ -237,15 +319,21 @@ export function Sidebar() {
           headBranch={headBranch}
           dragged={dragged}
           setDragged={setDragged}
-          onDropMerge={(target, source) => {
-            if (target !== source) {
-              if (confirm(`Merge ${source} into ${target}?`)) {
-                run(async () => {
-                  if (headBranch !== target) await checkout(path, target);
-                  return mergeRef(path, source).then(reportMerge);
-                });
-              }
-            }
+          onDropMerge={async (target, source) => {
+            if (target === source) return;
+            const ok = await confirmDialog({
+              title: "Merge branches",
+              message:
+                headBranch === target
+                  ? `Merge "${source}" into "${target}"?`
+                  : `Check out "${target}" and merge "${source}" into it?`,
+              confirmLabel: "Merge",
+            });
+            if (!ok) return;
+            run(async () => {
+              if (headBranch !== target) await checkout(path, target);
+              return mergeRef(path, source).then(reportMerge);
+            });
           }}
         />
         <BranchSection

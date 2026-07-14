@@ -111,8 +111,8 @@ pub fn create_branch(path: String, name: String, target: Option<String>, checkou
 }
 
 #[tauri::command]
-pub fn delete_branch(path: String, name: String) -> Result<()> {
-    branch::delete_branch(&open(&path)?, &name)
+pub fn delete_branch(path: String, name: String, force: bool) -> Result<()> {
+    branch::delete_branch(&open(&path)?, &name, force)
 }
 
 #[tauri::command]
@@ -143,6 +143,23 @@ pub fn reset_to(path: String, oid: String, mode: ops::ResetMode) -> Result<()> {
 #[tauri::command]
 pub fn rebase_onto(path: String, onto: String) -> Result<ops::RebaseResult> {
     ops::rebase(&open(&path)?, &onto)
+}
+
+#[tauri::command]
+pub fn rebase_continue(path: String) -> Result<ops::RebaseResult> {
+    ops::rebase_continue(&open(&path)?)
+}
+
+#[tauri::command]
+pub fn rebase_abort(path: String) -> Result<()> {
+    ops::rebase_abort(&open(&path)?)
+}
+
+/// Abort a pending merge / cherry-pick / revert, discarding the half-applied
+/// changes and restoring HEAD.
+#[tauri::command]
+pub fn abort_operation(path: String) -> Result<()> {
+    ops::abort_pending(&open(&path)?)
 }
 
 #[tauri::command]

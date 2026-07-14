@@ -47,7 +47,8 @@ export const watchRepo = (path: string) => invoke<void>("watch_repo", { path });
 // M4
 export const createBranch = (path: string, name: string, target: string | undefined, checkout: boolean) =>
   invoke<void>("create_branch", { path, name, target, checkout });
-export const deleteBranch = (path: string, name: string) => invoke<void>("delete_branch", { path, name });
+export const deleteBranch = (path: string, name: string, force = false) =>
+  invoke<void>("delete_branch", { path, name, force });
 export const renameBranch = (path: string, oldName: string, newName: string) =>
   invoke<void>("rename_branch", { path, old: oldName, new: newName });
 export const checkout = (path: string, refname: string) => invoke<void>("checkout", { path, refname });
@@ -59,6 +60,10 @@ export const resetTo = (path: string, oid: string, mode: ResetMode) =>
   invoke<void>("reset_to", { path, oid, mode });
 export const rebaseOnto = (path: string, onto: string) =>
   invoke<RebaseResult>("rebase_onto", { path, onto });
+export const rebaseContinue = (path: string) => invoke<RebaseResult>("rebase_continue", { path });
+export const rebaseAbort = (path: string) => invoke<void>("rebase_abort", { path });
+/** Abort a pending merge / cherry-pick / revert, restoring HEAD. */
+export const abortOperation = (path: string) => invoke<void>("abort_operation", { path });
 export const revertCommit = (path: string, oid: string) =>
   invoke<ConflictResult>("revert_commit", { path, oid });
 export const createPatch = (path: string, oid: string, outPath: string) =>
@@ -85,6 +90,10 @@ export const stashPop = (path: string, index: number) => invoke<void>("stash_pop
 export const stashDrop = (path: string, index: number) => invoke<void>("stash_drop", { path, index });
 export const gitNetwork = (path: string, op: "fetch" | "pull" | "push", remote?: string, extra?: string[]) =>
   invoke<GitOpResult>("git_network", { path, op, remote, extra });
+
+/** Delete a branch on a remote: `git push <remote> --delete <branch>`. */
+export const deleteRemoteBranch = (path: string, remote: string, branch: string) =>
+  gitNetwork(path, "push", remote, ["--delete", branch]);
 
 // M5
 export const ptySpawn = (cwd: string, rows: number, cols: number) =>

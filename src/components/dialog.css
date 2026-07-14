@@ -1,0 +1,96 @@
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog {
+  min-width: 360px;
+  max-width: 480px;
+  background: var(--bg-elevated, #2b3038);
+  border: 1px solid var(--border, #444c56);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  padding: 18px 18px 14px;
+  color: var(--fg, #e6edf3);
+  font-size: 13px;
+}
+
+.dialog-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.dialog-message {
+  color: var(--fg-muted, #adbac7);
+  margin-bottom: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.dialog-label {
+  display: block;
+  color: var(--fg-muted, #adbac7);
+  margin-bottom: 4px;
+}
+
+.dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  background: var(--bg-input, #22272e);
+  border: 1px solid var(--border, #444c56);
+  border-radius: 5px;
+  color: var(--fg, #e6edf3);
+  font-size: 13px;
+  outline: none;
+}
+.dialog-input:focus {
+  border-color: var(--accent, #539bf5);
+}
+.dialog-input.invalid {
+  border-color: var(--danger, #e5534b);
+}
+
+.dialog-error {
+  color: var(--danger, #e5534b);
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.dialog-btn {
+  padding: 6px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--border, #444c56);
+  background: var(--bg-input, #22272e);
+  color: var(--fg, #e6edf3);
+  font-size: 13px;
+  cursor: pointer;
+}
+.dialog-btn:hover {
+  background: var(--bg-hover, #333b45);
+}
+.dialog-btn.primary {
+  background: var(--accent, #539bf5);
+  border-color: var(--accent, #539bf5);
+  color: #fff;
+}
+.dialog-btn.primary:hover {
+  filter: brightness(1.08);
+}
+.dialog-btn.primary.danger {
+  background: var(--danger, #e5534b);
+  border-color: var(--danger, #e5534b);
+}

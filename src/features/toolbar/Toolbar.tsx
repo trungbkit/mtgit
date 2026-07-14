@@ -14,6 +14,8 @@ import {
 } from "../../ipc/commands";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
+import { promptDialog } from "../../stores/dialog";
+import { validateRefName } from "../../lib/refname";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
 import "./toolbar.css";
 
@@ -108,15 +110,26 @@ export function Toolbar() {
     openMenu(e, items);
   }
 
-  function newBranch() {
+  async function newBranch() {
     if (!repo) return;
-    const name = prompt("New branch name");
+    const name = await promptDialog({
+      title: "Create branch",
+      label: "Branch name",
+      placeholder: "feature/x",
+      confirmLabel: "Create",
+      validate: validateRefName,
+    });
     if (name) run(() => createBranch(repo.path, name, undefined, true), `Created ${name}`);
   }
 
-  function newTag() {
+  async function newTag() {
     if (!repo || !repo.head.oid) return;
-    const name = prompt("New tag name");
+    const name = await promptDialog({
+      title: "Create tag",
+      label: "Tag name",
+      confirmLabel: "Create",
+      validate: validateRefName,
+    });
     if (name) run(() => createTag(repo.path, name, repo.head.oid!), `Tagged ${name}`);
   }
 
@@ -177,6 +190,7 @@ export function Toolbar() {
               { label: "Pull", onClick: () => net("pull") },
               { label: "Pull (rebase)", onClick: () => net("pull", ["--rebase"]) },
               { label: "Fetch", onClick: () => net("fetch") },
+              { label: "Fetch (prune)", onClick: () => net("fetch", ["--prune"]) },
             ])
           }
         />
@@ -232,6 +246,7 @@ export function Toolbar() {
               { label: "New tag…", onClick: newTag },
               { separator: true },
               { label: "Fetch", onClick: () => net("fetch") },
+              { label: "Fetch (prune)", onClick: () => net("fetch", ["--prune"]) },
               { label: "Open terminal", onClick: () => repo && toggleTerminal() },
             ])
           }

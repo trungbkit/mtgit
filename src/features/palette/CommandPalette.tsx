@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { checkout, createBranch, gitNetwork, listRefs, openRepo } from "../../ipc/commands";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
+import { promptDialog } from "../../stores/dialog";
+import { validateRefName } from "../../lib/refname";
 import "./palette.css";
 
 interface Action {
@@ -63,7 +65,13 @@ export function CommandPalette() {
           id: "newbranch",
           label: "Create branch…",
           run: wrap(async () => {
-            const name = prompt("New branch name");
+            const name = await promptDialog({
+              title: "Create branch",
+              label: "Branch name",
+              placeholder: "feature/x",
+              confirmLabel: "Create",
+              validate: validateRefName,
+            });
             if (name) await createBranch(repo.path, name, undefined, true);
           }, "Branch created"),
         },

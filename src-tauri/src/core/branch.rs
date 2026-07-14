@@ -18,13 +18,31 @@ pub fn create_branch(repo: &Repository, name: &str, target: Option<&str>, checko
     Ok(())
 }
 
-pub fn delete_branch(repo: &Repository, name: &str) -> Result<()> {
+/// Delete a local branch. Refuses to delete the checked-out branch, and (unless
+/// `force`) refuses to delete a branch not fully merged into HEAD, mirroring
+/// `git branch -d` vs `-D`.
+pub fn delete_branch(repo: &Repository, name: &str, force: bool) -> Result<()> {
     let mut branch = repo.find_branch(name, BranchType::Local)?;
     if branch.is_head() {
         return Err(Error::Msg("cannot delete the checked-out branch".into()));
     }
+    if !force && !is_merged_into_head(repo, &branch)? {
+        return Err(Error::Msg(format!(
+            "branch '{name}' is not fully merged — deleting it will lose commits"
+        )));
+    }
     branch.delete()?;
     Ok(())
+}
+
+/// Is `branch`'s tip reachable from HEAD (i.e. already merged)?
+fn is_merged_into_head(repo: &Repository, branch: &git2::Branch<'_>) -> Result<bool> {
+    let tip = branch.get().peel_to_commit()?.id();
+    let head = match repo.head().ok().and_then(|h| h.target()) {
+        Some(h) => h,
+        None => return Ok(false),
+    };
+    Ok(head == tip || repo.graph_descendant_of(head, tip)?)
 }
 
 pub fn rename_branch(repo: &Repository, old: &str, new: &str) -> Result<()> {
@@ -35,7 +53,25 @@ pub fn rename_branch(repo: &Repository, old: &str, new: &str) -> Result<()> {
 
 /// Checkout a branch, remote-tracking branch, tag, or commit. Uses a safe
 /// checkout so it refuses to clobber uncommitted changes.
+///
+/// Checking out a remote-tracking branch (e.g. `origin/feat`) with no matching
+/// local branch creates a local branch tracking it and switches to that, rather
+/// than detaching HEAD — the behaviour users expect from `git checkout feat`.
 pub fn checkout_ref(repo: &Repository, refname: &str) -> Result<()> {
+    if let Ok(remote_branch) = repo.find_branch(refname, BranchType::Remote) {
+        let local_name = refname.split_once('/').map(|(_, n)| n).unwrap_or(refname).to_string();
+        if repo.find_branch(&local_name, BranchType::Local).is_err() {
+            let commit = remote_branch.get().peel_to_commit()?;
+            let mut local = repo.branch(&local_name, &commit, false)?;
+            let _ = local.set_upstream(Some(refname));
+        }
+        return checkout_object(repo, &local_name);
+    }
+    checkout_object(repo, refname)
+}
+
+/// Resolve `refname` (branch / tag / commit) and check it out, updating HEAD.
+fn checkout_object(repo: &Repository, refname: &str) -> Result<()> {
     let (object, reference) = repo.revparse_ext(refname)?;
 
     let mut co = CheckoutBuilder::new();
@@ -150,8 +186,46 @@ mod tests {
         let a = t.commit("a", &[]);
         create_branch(&t.repo, "topic", Some(&a.to_string()), false).unwrap();
         assert!(t.repo.find_branch("topic", BranchType::Local).is_ok());
-        delete_branch(&t.repo, "topic").unwrap();
+        delete_branch(&t.repo, "topic", true).unwrap();
         assert!(t.repo.find_branch("topic", BranchType::Local).is_err());
+    }
+
+    #[test]
+    fn delete_unmerged_branch_requires_force() {
+        // main at `a`; topic at descendant `b` (not merged into main).
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let b = t.commit("b", &[a]);
+        t.repo.branch("main", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        t.repo.set_head("refs/heads/main").unwrap();
+        t.repo.branch("topic", &t.repo.find_commit(b).unwrap(), true).unwrap();
+
+        assert!(delete_branch(&t.repo, "topic", false).is_err(), "unmerged delete must be refused");
+        assert!(t.repo.find_branch("topic", BranchType::Local).is_ok());
+        delete_branch(&t.repo, "topic", true).unwrap();
+        assert!(t.repo.find_branch("topic", BranchType::Local).is_err());
+    }
+
+    #[test]
+    fn checkout_remote_branch_creates_local_tracking() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        t.repo.branch("main", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        t.repo.set_head("refs/heads/main").unwrap();
+        let mut co = CheckoutBuilder::new();
+        co.force();
+        t.repo.checkout_head(Some(&mut co)).unwrap();
+
+        // Simulate a fetched remote-tracking branch with no local counterpart.
+        t.repo.remote("origin", "https://example.com/repo.git").unwrap();
+        t.repo.reference("refs/remotes/origin/feat", a, true, "test").unwrap();
+
+        checkout_ref(&t.repo, "origin/feat").unwrap();
+
+        let feat = t.repo.find_branch("feat", BranchType::Local).unwrap();
+        assert!(feat.is_head(), "new local branch should be checked out");
+        let upstream = feat.upstream().unwrap();
+        assert_eq!(upstream.name().unwrap().unwrap(), "origin/feat");
     }
 
     #[test]

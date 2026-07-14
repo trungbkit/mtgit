@@ -11,6 +11,7 @@ import {
 import type { StatusEntry } from "../../ipc/types";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
+import { confirmDialog } from "../../stores/dialog";
 import { FileViewer } from "../diff/FileViewer";
 import { FileList } from "../commit-detail/FileList";
 import "./staging.css";
@@ -127,9 +128,16 @@ export function StagingView() {
               <>
                 <button
                   title="Discard"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    if (confirm(`Discard changes to ${f.path}? This cannot be undone.`)) {
+                    if (
+                      await confirmDialog({
+                        title: "Discard changes",
+                        message: `Discard changes to ${f.path}? This cannot be undone.`,
+                        confirmLabel: "Discard",
+                        danger: true,
+                      })
+                    ) {
                       run(() => discardPaths(repo.path, [f.path]));
                     }
                   }}

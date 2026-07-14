@@ -8,6 +8,8 @@ import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { CommandPalette } from "../features/palette/CommandPalette";
 import { StatusBar } from "../features/statusbar/StatusBar";
 import { ToastContainer } from "../components/ToastContainer";
+import { ConflictBanner } from "../components/ConflictBanner";
+import { DialogHost } from "../components/DialogHost";
 import { useRepoEvents } from "../ipc/events";
 import { useSession } from "../stores/session";
 import "./app.css";
@@ -42,6 +44,7 @@ export function App() {
     <div className="app">
       <Toolbar />
       <TabBar />
+      <ConflictBanner />
       <div className="app-body">
         <div style={{ width: sidebarCollapsed ? 44 : sidebarW, flexShrink: 0 }}>
           <Sidebar />
@@ -59,6 +62,7 @@ export function App() {
       <StatusBar />
       <CommandPalette />
       <ToastContainer />
+      <DialogHost />
     </div>
   );
 }
