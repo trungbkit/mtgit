@@ -1,0 +1,31 @@
+[package]
+name = "mtgit"
+version = "0.1.0"
+description = "A GitKraken-style desktop git client"
+authors = ["MTGit"]
+edition = "2021"
+
+[lib]
+name = "mtgit_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# git2 without default features: we only use libgit2 for local reads
+# (log/refs/diff/status). Network ops shell out to system git, so we avoid
+# pulling in openssl/libssh2 and their build-time headaches.
+git2 = { version = "0.20", default-features = false }
+thiserror = "2"
+notify = "8"
+notify-debouncer-full = "0.5"
+portable-pty = "0.9"
+
+[dev-dependencies]
+tempfile = "3"

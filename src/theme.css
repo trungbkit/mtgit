@@ -1,0 +1,87 @@
+/* MTGit dark theme tokens. Sampled to resemble the GitKraken-style target:
+   near-black panels, subtle borders, a saturated lane palette. */
+
+:root {
+  --bg-app: #1b1f24;
+  --bg-panel: #22272e;
+  --bg-panel-2: #2d333b;
+  --bg-hover: #2d333b;
+  --bg-selected: #316dca33;
+  --bg-selected-solid: #316dca;
+  --border: #373e47;
+  --border-strong: #444c56;
+
+  --text: #cdd9e5;
+  --text-dim: #909dab;
+  --text-faint: #636e7b;
+
+  --accent: #316dca;
+  --accent-text: #6cb6ff;
+  --green: #57ab5a;
+  --red: #e5534b;
+  --yellow: #daaa3f;
+
+  --row-height: 28px;
+  --lane-width: 18px;
+  --dot-radius: 4.5px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+button {
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+button:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.primary:hover {
+  filter: brightness(1.1);
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-thumb {
+  background: #444c56;
+  border-radius: 6px;
+  border: 2px solid var(--bg-panel);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #586069;
+}

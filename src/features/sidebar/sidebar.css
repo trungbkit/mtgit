@@ -1,0 +1,129 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.sidebar-top {
+  display: flex;
+  gap: 6px;
+  padding: 8px 8px 4px;
+}
+.sidebar-top button {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.sidebar-filter {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+.sidebar-filter::placeholder {
+  color: var(--text-faint);
+}
+
+.sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.section-header .caret {
+  font-size: 9px;
+  width: 10px;
+}
+.section-header .count {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.folder {
+  padding: 3px 10px 3px 24px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+
+.ref-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ref-item:hover {
+  background: var(--bg-hover);
+}
+.ref-item.head {
+  font-weight: 600;
+}
+.ref-icon {
+  color: var(--text-faint);
+  font-size: 11px;
+  width: 14px;
+  text-align: center;
+}
+.ref-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.head-dot {
+  margin-left: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+
+.ahead-behind {
+  margin-left: auto;
+  display: flex;
+  gap: 5px;
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+}
+.ahead-behind .ahead {
+  color: var(--green);
+}
+.ahead-behind .behind {
+  color: var(--yellow);
+}
+
+.ref-item.droppable {
+  outline: 1px dashed var(--accent);
+  outline-offset: -2px;
+  background: #316dca1a;
+}
+
+.ref-item[draggable="true"] {
+  cursor: grab;
+}

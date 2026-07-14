@@ -1,0 +1,125 @@
+.diff-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.diff-path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.diff-stat.add {
+  color: var(--green);
+}
+.diff-stat.del {
+  color: var(--red);
+}
+.diff-mode-toggle {
+  display: flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.diff-mode-toggle button {
+  border: none;
+  border-radius: 0;
+  padding: 3px 10px;
+  font-size: 11px;
+  background: var(--bg-panel);
+}
+.diff-mode-toggle button.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+.diff-code {
+  flex: 1;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: text;
+}
+
+.hunk-header {
+  padding: 2px 10px;
+  background: var(--bg-panel-2);
+  color: var(--accent-text);
+  font-size: 11px;
+  position: sticky;
+  left: 0;
+}
+
+.dline {
+  display: flex;
+  white-space: pre;
+  min-width: max-content;
+}
+.dline .gutter {
+  flex-shrink: 0;
+  width: 46px;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--text-faint);
+  background: var(--bg-panel);
+  user-select: none;
+}
+.dline .sign {
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  color: var(--text-faint);
+  user-select: none;
+}
+.dline .content {
+  padding-right: 16px;
+  flex: 1;
+}
+.dline.add {
+  background: #2ea04326;
+}
+.dline.add .gutter {
+  background: #2ea04340;
+}
+.dline.del {
+  background: #f8514926;
+}
+.dline.del .gutter {
+  background: #f8514940;
+}
+.dline.empty {
+  background: #0000001a;
+}
+
+/* Split view */
+.diff-code.split .split-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-width: max-content;
+}
+.diff-code.split .split-row > .dline {
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.diff-note {
+  padding: 20px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  text-align: center;
+}

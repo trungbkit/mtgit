@@ -1,0 +1,73 @@
+.staging {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.staging-lists {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+
+.staging-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  background: var(--bg-panel-2);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.staging-group-head button {
+  padding: 2px 8px;
+  font-size: 10.5px;
+}
+.staging-group.conflict .staging-group-head {
+  color: var(--red);
+}
+
+.staging-diff {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.commit-form {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  background: var(--bg-panel);
+}
+.commit-form textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  background: var(--bg-app);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.commit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.commit-actions label {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}

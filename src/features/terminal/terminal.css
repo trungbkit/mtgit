@@ -1,0 +1,28 @@
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  height: 240px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: #1b1f24;
+}
+.terminal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.terminal-head button {
+  padding: 1px 7px;
+  font-size: 11px;
+}
+.terminal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 6px;
+  overflow: hidden;
+}

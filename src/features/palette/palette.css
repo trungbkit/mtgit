@@ -1,0 +1,53 @@
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: #0006;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+.palette {
+  width: 560px;
+  max-width: 90vw;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px #000b;
+  overflow: hidden;
+}
+.palette-input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  padding: 12px 14px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.palette-input:focus {
+  outline: none;
+}
+.palette-list {
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.palette-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.palette-item.active {
+  background: var(--accent);
+  color: #fff;
+}
+.palette-empty {
+  padding: 14px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  text-align: center;
+}
