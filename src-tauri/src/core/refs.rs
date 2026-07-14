@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{Error, Result};
 use git2::{BranchType, Oid, Repository};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -161,4 +161,64 @@ pub fn list(repo: &Repository) -> Result<RefList> {
     out.remote.sort_by(|a, b| a.name.cmp(&b.name));
     out.tags.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+/// Create a tag at `target`. `message = None` makes a lightweight tag; `Some`
+/// makes an annotated tag signed by the current git identity.
+pub fn create_tag(repo: &Repository, name: &str, target: &str, message: Option<&str>) -> Result<()> {
+    let oid = Oid::from_str(target).map_err(|_| Error::Msg(format!("bad oid: {target}")))?;
+    let obj = repo.find_object(oid, None)?;
+    match message {
+        Some(msg) => {
+            let sig = repo
+                .signature()
+                .map_err(|_| Error::Msg("no git identity configured".into()))?;
+            repo.tag(name, &obj, &sig, msg, false)?;
+        }
+        None => {
+            repo.tag_lightweight(name, &obj, false)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn delete_tag(repo: &Repository, name: &str) -> Result<()> {
+    repo.tag_delete(name)?;
+    Ok(())
+}
+
+/// URL of a named remote (e.g. "origin"), if it exists.
+pub fn remote_url(repo: &Repository, name: &str) -> Option<String> {
+    repo.find_remote(name).ok().and_then(|r| r.url().map(str::to_string))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::TestRepo;
+
+    #[test]
+    fn create_and_delete_lightweight_tag() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        create_tag(&t.repo, "v1", &a.to_string(), None).unwrap();
+        let refs = list(&t.repo).unwrap();
+        assert!(refs.tags.iter().any(|tag| tag.name == "v1"));
+
+        delete_tag(&t.repo, "v1").unwrap();
+        let refs = list(&t.repo).unwrap();
+        assert!(!refs.tags.iter().any(|tag| tag.name == "v1"));
+    }
+
+    #[test]
+    fn create_annotated_tag() {
+        let t = TestRepo::new();
+        let mut cfg = t.repo.config().unwrap();
+        cfg.set_str("user.name", "T").unwrap();
+        cfg.set_str("user.email", "t@e.com").unwrap();
+        let a = t.commit("a", &[]);
+        create_tag(&t.repo, "rel-1", &a.to_string(), Some("release one")).unwrap();
+        let refs = list(&t.repo).unwrap();
+        assert!(refs.tags.iter().any(|tag| tag.name == "rel-1"));
+    }
 }

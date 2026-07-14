@@ -1,0 +1,16 @@
+.avatar-img,
+.avatar-fallback {
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-fallback {
+  color: #fff;
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+}

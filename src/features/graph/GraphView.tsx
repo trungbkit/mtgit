@@ -1,20 +1,28 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   checkout,
   cherryPick,
-  getCommit,
+  createBranch,
+  createPatch,
+  createTag,
+  createWorktree,
   getGraph,
+  getRemoteUrl,
   getStatus,
   rebaseOnto,
   resetTo,
+  revertCommit,
 } from "../../ipc/commands";
 import type { GraphRow } from "../../ipc/types";
 import { useSession, WORKING } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
+import { Avatar } from "../../components/Avatar";
 import { copyText } from "../../lib/clipboard";
+import { timeAgo, formatTimestamp } from "../../lib/time";
 import { laneColor } from "./palette";
 import "./graph.css";
 
@@ -22,10 +30,9 @@ const ROW_HEIGHT = 28;
 const LANE_WIDTH = 18;
 const DOT_RADIUS = 4.5;
 const GUTTER_PAD = 12;
+const BRANCH_COL_WIDTH = 200;
+const AVATAR_SIZE = 18;
 
-/** Fetch the whole graph in one shot — the Rust side caches the layout, and row
- *  metadata for even 50k commits is only a few MB. The DOM stays light because
- *  rows are virtualized; the canvas only ever paints the visible band. */
 function useGraphData(path: string | undefined) {
   return useQuery({
     queryKey: ["graph", path],
@@ -34,10 +41,24 @@ function useGraphData(path: string | undefined) {
   });
 }
 
+/** Build a web URL for a commit from a remote's git URL. */
+function commitWebUrl(remote: string, sha: string): string | null {
+  let url = remote.trim();
+  // scp-style: git@host:owner/repo(.git)
+  const scp = url.match(/^[\w.-]+@([\w.-]+):(.+)$/);
+  if (scp) url = `https://${scp[1]}/${scp[2]}`;
+  url = url.replace(/^ssh:\/\//, "https://").replace(/\.git$/, "").replace(/\/$/, "");
+  if (!/^https?:\/\//.test(url)) return null;
+  const sep = /gitlab/i.test(url) ? "/-/commit/" : "/commit/";
+  return `${url}${sep}${sha}`;
+}
+
 export function GraphView() {
   const repo = useSession((s) => s.repo);
   const selectedOid = useSession((s) => s.selectedOid);
   const selectOid = useSession((s) => s.selectOid);
+  const graphOpts = useSession((s) => s.graphOpts);
+  const setGraphOpts = useSession((s) => s.setGraphOpts);
 
   const { data, isLoading, error } = useGraphData(repo?.path);
   const rows = data?.rows ?? [];
@@ -47,10 +68,16 @@ export function GraphView() {
     enabled: !!repo?.path,
     queryFn: () => getStatus(repo!.path),
   });
+  const { data: originUrl } = useQuery({
+    queryKey: ["remoteUrl", repo?.path],
+    enabled: !!repo?.path,
+    queryFn: () => getRemoteUrl(repo!.path, "origin"),
+  });
 
   const qc = useQueryClient();
   const pushToast = useToasts((s) => s.push);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [gearOpen, setGearOpen] = useState(false);
 
   const rowContextMenu = useCallback(
     (e: React.MouseEvent, row: GraphRow) => {
@@ -78,6 +105,21 @@ export function GraphView() {
 
       const localBadge = row.refs.find((r) => r.kind === "localBranch");
       const short = row.oid.slice(0, 7);
+
+      const createWorktreeFlow = async () => {
+        const name = prompt("Worktree / branch name");
+        if (!name) return;
+        const parent = await openDialog({ directory: true, title: "Choose worktree location" });
+        if (typeof parent !== "string") return;
+        const wtPath = `${parent}/${name}`;
+        run(() => createWorktree(path, name, wtPath, row.oid), `Worktree ${name} created`);
+      };
+      const createPatchFlow = async () => {
+        const out = await saveDialog({ defaultPath: `${short}.patch`, title: "Save patch" });
+        if (typeof out !== "string") return;
+        run(() => createPatch(path, row.oid, out), "Patch created");
+      };
+
       const items: MenuItem[] = [];
       if (localBadge) {
         items.push({
@@ -86,10 +128,22 @@ export function GraphView() {
         });
       }
       items.push(
-        { label: `Checkout ${short} (detached)`, onClick: () => run(() => checkout(path, row.oid), "Checked out commit") },
-        { label: "Cherry-pick onto current", onClick: () => run(() => cherryPick(path, row.oid).then((r) => reportConflicts(r, "Cherry-picked"))) },
+        { label: "Checkout this commit", onClick: () => run(() => checkout(path, row.oid), "Checked out commit") },
+        { label: "Create worktree from this commit", onClick: createWorktreeFlow },
+        { separator: true },
         {
-          label: `Rebase ${head} onto ${short}`,
+          label: "Create branch here",
+          onClick: () => {
+            const name = prompt("New branch name");
+            if (name) run(() => createBranch(path, name, row.oid, false), `Created ${name}`);
+          },
+        },
+        {
+          label: "Cherry pick commit",
+          onClick: () => run(() => cherryPick(path, row.oid).then((r) => reportConflicts(r, "Cherry-picked"))),
+        },
+        {
+          label: `Rebase ${head} onto this commit`,
           onClick: () =>
             run(() =>
               rebaseOnto(path, row.oid).then((r) =>
@@ -97,29 +151,58 @@ export function GraphView() {
               ),
             ),
         },
-        { label: `Reset ${head} → ${short} (soft)`, onClick: () => run(() => resetTo(path, row.oid, "soft"), "Reset (soft)") },
-        { label: `Reset ${head} → ${short} (mixed)`, onClick: () => run(() => resetTo(path, row.oid, "mixed"), "Reset (mixed)") },
         {
-          label: `Reset ${head} → ${short} (hard)`,
-          danger: true,
+          label: `Reset ${head} to this commit`,
+          submenu: [
+            { label: "Soft (keep index & working tree)", onClick: () => run(() => resetTo(path, row.oid, "soft"), "Reset (soft)") },
+            { label: "Mixed (keep working tree)", onClick: () => run(() => resetTo(path, row.oid, "mixed"), "Reset (mixed)") },
+            {
+              label: "Hard (discard changes)",
+              danger: true,
+              onClick: () => {
+                if (confirm("Hard reset discards uncommitted changes. Continue?")) {
+                  run(() => resetTo(path, row.oid, "hard"), "Reset (hard)");
+                }
+              },
+            },
+          ],
+        },
+        {
+          label: "Revert commit",
+          onClick: () => run(() => revertCommit(path, row.oid).then((r) => reportConflicts(r, "Reverted"))),
+        },
+        { separator: true },
+        { label: "Copy commit sha", onClick: () => copyText(row.oid) },
+      );
+      if (originUrl) {
+        const web = commitWebUrl(originUrl, row.oid);
+        if (web) {
+          items.push({ label: "Copy link to this commit on remote: origin", onClick: () => copyText(web) });
+        }
+      }
+      items.push(
+        { label: "Create patch from commit", onClick: createPatchFlow },
+        { separator: true },
+        {
+          label: "Create tag here",
           onClick: () => {
-            if (confirm("Hard reset discards uncommitted changes. Continue?")) {
-              run(() => resetTo(path, row.oid, "hard"), "Reset (hard)");
-            }
+            const name = prompt("Tag name");
+            if (name) run(() => createTag(path, name, row.oid), `Tagged ${name}`);
           },
         },
-        { label: "Copy SHA", onClick: () => copyText(row.oid) },
         {
-          label: "Copy commit message",
-          onClick: () =>
-            getCommit(path, row.oid)
-              .then((d) => copyText(d.body ? `${d.summary}\n\n${d.body}` : d.summary))
-              .catch(toastError),
+          label: "Create annotated tag here",
+          onClick: () => {
+            const name = prompt("Tag name");
+            if (!name) return;
+            const msg = prompt("Tag message") ?? "";
+            run(() => createTag(path, name, row.oid, msg), `Tagged ${name}`);
+          },
         },
       );
       setMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [repo, qc, pushToast],
+    [repo, qc, pushToast, originUrl],
   );
 
   const parentRef = useRef<HTMLDivElement>(null);
@@ -132,7 +215,6 @@ export function GraphView() {
     overscan: 24,
   });
 
-  // Widest lane referenced anywhere sets the gutter width.
   const maxLane = rows.reduce((m, r) => {
     let local = r.lane;
     for (const e of r.edges) local = Math.max(local, e.fromLane, e.toLane);
@@ -142,7 +224,6 @@ export function GraphView() {
 
   const laneX = useCallback((lane: number) => GUTTER_PAD + lane * LANE_WIDTH + LANE_WIDTH / 2, []);
 
-  // Imperative canvas paint of the visible band. Called on scroll/resize/data.
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const parent = parentRef.current;
@@ -169,7 +250,6 @@ export function GraphView() {
     const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1);
     const last = Math.min(rows.length - 1, Math.ceil((scrollTop + ch) / ROW_HEIGHT) + 1);
 
-    // Edges first so dots sit on top.
     for (let i = first; i <= last; i++) {
       const row = rows[i];
       const yTop = i * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
@@ -183,7 +263,6 @@ export function GraphView() {
         if (x1 === x2) {
           ctx.lineTo(x2, yBot);
         } else {
-          // Smooth S-curve between lanes.
           const midY = (yTop + yBot) / 2;
           ctx.bezierCurveTo(x1, midY, x2, midY, x2, yBot);
         }
@@ -209,7 +288,6 @@ export function GraphView() {
     }
   }, [rows, gutterWidth, laneX, selectedOid]);
 
-  // Repaint on scroll.
   useEffect(() => {
     const parent = parentRef.current;
     if (!parent) return;
@@ -235,11 +313,12 @@ export function GraphView() {
     draw();
   }, [draw]);
 
-  // Keyboard navigation over the selected row.
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
       if (rows.length === 0) return;
+      const active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
       ev.preventDefault();
       const idx = rows.findIndex((r) => r.oid === selectedOid);
       const next =
@@ -271,6 +350,39 @@ export function GraphView() {
 
   return (
     <div className="graph-container">
+      <div className="graph-header">
+        <div className="gh-refs" style={{ width: BRANCH_COL_WIDTH }}>
+          BRANCH / TAG
+        </div>
+        <div className="gh-graph" style={{ width: gutterWidth }}>
+          GRAPH
+        </div>
+        <div className="gh-message">COMMIT MESSAGE</div>
+        <button className="gh-gear" title="Graph options" onClick={() => setGearOpen((v) => !v)}>
+          ⚙
+        </button>
+        {gearOpen && (
+          <div className="gh-gear-pop" onMouseLeave={() => setGearOpen(false)}>
+            <label>
+              <input
+                type="checkbox"
+                checked={graphOpts.relativeDates}
+                onChange={(e) => setGraphOpts({ relativeDates: e.target.checked })}
+              />
+              Relative dates
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={graphOpts.showAuthor}
+                onChange={(e) => setGraphOpts({ showAuthor: e.target.checked })}
+              />
+              Show author
+            </label>
+          </div>
+        )}
+      </div>
+
       {status?.isDirty && (
         <div
           className={`wip-row${selectedOid === WORKING ? " selected" : ""}`}
@@ -283,7 +395,7 @@ export function GraphView() {
       )}
       <div className="graph-scroll" ref={parentRef}>
         <div className="graph-inner" style={{ height: virtualizer.getTotalSize() }}>
-          <canvas className="graph-canvas" ref={canvasRef} />
+          <canvas className="graph-canvas" ref={canvasRef} style={{ marginLeft: BRANCH_COL_WIDTH }} />
           {virtualizer.getVirtualItems().map((vi) => {
             const row = rows[vi.index];
             return (
@@ -292,7 +404,9 @@ export function GraphView() {
                 row={row}
                 top={vi.start}
                 gutter={gutterWidth}
+                nodeLeft={BRANCH_COL_WIDTH + laneX(row.lane)}
                 selected={row.oid === selectedOid}
+                opts={graphOpts}
                 onSelect={() => selectOid(row.oid)}
                 onContextMenu={(e) => rowContextMenu(e, row)}
               />
@@ -309,40 +423,49 @@ function GraphRowView({
   row,
   top,
   gutter,
+  nodeLeft,
   selected,
+  opts,
   onSelect,
   onContextMenu,
 }: {
   row: GraphRow;
   top: number;
   gutter: number;
+  nodeLeft: number;
   selected: boolean;
+  opts: { relativeDates: boolean; showAuthor: boolean };
   onSelect: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   return (
     <div
       className={`graph-row${selected ? " selected" : ""}`}
-      style={{ top, height: ROW_HEIGHT, paddingLeft: gutter }}
+      style={{ top, height: ROW_HEIGHT }}
       onClick={onSelect}
       onContextMenu={onContextMenu}
     >
-      <div className="row-refs">
+      <div className="row-refs" style={{ width: BRANCH_COL_WIDTH }}>
         {row.refs.map((r) => (
-          <span key={r.kind + r.name} className={`badge badge-${r.kind}${r.isHead ? " head" : ""}`}>
+          <span key={r.kind + r.name} className={`badge badge-${r.kind}${r.isHead ? " head" : ""}`} title={r.name}>
+            {r.kind === "tag" ? "🏷 " : ""}
             {r.name}
           </span>
         ))}
       </div>
+      <div className="row-graph" style={{ width: gutter }} />
+      <span
+        className="node-avatar"
+        style={{ left: nodeLeft - AVATAR_SIZE / 2, borderColor: laneColor(row.color) }}
+      >
+        <Avatar email={row.email} name={row.author} size={AVATAR_SIZE} />
+      </span>
       <span className="row-summary">{row.summary}</span>
-      <span className="row-author">{row.author}</span>
-      <span className="row-date">{formatDate(row.timestamp)}</span>
+      {opts.showAuthor && <span className="row-author">{row.author}</span>}
+      <span className="row-date" title={formatTimestamp(row.timestamp)}>
+        {opts.relativeDates ? timeAgo(row.timestamp) : formatTimestamp(row.timestamp)}
+      </span>
       <span className="row-oid">{row.oid.slice(0, 7)}</span>
     </div>
   );
-}
-
-function formatDate(unixSeconds: number): string {
-  const d = new Date(unixSeconds * 1000);
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }

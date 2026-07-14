@@ -5,6 +5,66 @@
   min-height: 0;
 }
 
+.graph-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 26px;
+  flex-shrink: 0;
+  padding-right: 8px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.gh-refs,
+.gh-graph {
+  flex-shrink: 0;
+  padding-left: 12px;
+}
+.gh-message {
+  flex: 1;
+  padding-left: 4px;
+}
+.gh-gear {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 2px 6px;
+}
+.gh-gear:hover {
+  color: var(--text);
+}
+.gh-gear-pop {
+  position: absolute;
+  right: 8px;
+  top: 26px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #0008;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--text);
+}
+.gh-gear-pop label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
 .graph-scroll {
   position: relative;
   flex: 1;
@@ -88,6 +148,26 @@
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+  overflow: hidden;
+  padding-left: 8px;
+  justify-content: flex-end;
+}
+.row-graph {
+  flex-shrink: 0;
+}
+.node-avatar {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  box-sizing: content-box;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+  background: var(--bg-app);
 }
 
 .badge {

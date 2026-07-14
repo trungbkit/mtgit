@@ -1,0 +1,82 @@
+.statusbar {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  gap: 12px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.sb-left,
+.sb-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sb-center {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  color: var(--accent-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sb-right {
+  margin-left: auto;
+}
+
+.sb-branch {
+  color: var(--text);
+}
+.sb-clean {
+  color: var(--green);
+}
+.sb-clean.dirty {
+  color: var(--yellow);
+}
+.sb-ab {
+  color: var(--text-dim);
+}
+.sb-warn {
+  color: var(--yellow);
+}
+
+.sb-icon {
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1;
+}
+.sb-icon:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.sb-icon.on {
+  color: var(--accent-text);
+}
+.sb-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sb-zoom,
+.sb-version {
+  color: var(--text-faint);
+}
+.sb-git-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+}
+.sb-git-dot[data-ok="true"] {
+  background: var(--green);
+}

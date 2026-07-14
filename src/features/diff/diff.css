@@ -123,3 +123,18 @@
   font-size: 12.5px;
   text-align: center;
 }
+
+/* Word-level intra-line highlights */
+.word-del {
+  background: #f8514966;
+  border-radius: 2px;
+}
+.word-add {
+  background: #2ea04366;
+  border-radius: 2px;
+}
+
+/* Full-file view reuses .diff-code / .dline styling */
+.diff-code.fileview .dline .gutter {
+  width: 52px;
+}

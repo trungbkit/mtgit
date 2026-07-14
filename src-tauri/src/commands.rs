@@ -1,4 +1,7 @@
-use crate::core::{branch, commit as commit_mod, diff, graph, ops, refs, repo, stash, status};
+use crate::core::{
+    blame, branch, commit as commit_mod, diff, graph, history, ops, refs, repo, stash, status,
+    worktree,
+};
 use crate::error::{Error, Result};
 use crate::state::{AppState, CachedGraph};
 use crate::{shellout, watcher};
@@ -140,6 +143,63 @@ pub fn reset_to(path: String, oid: String, mode: ops::ResetMode) -> Result<()> {
 #[tauri::command]
 pub fn rebase_onto(path: String, onto: String) -> Result<ops::RebaseResult> {
     ops::rebase(&open(&path)?, &onto)
+}
+
+#[tauri::command]
+pub fn revert_commit(path: String, oid: String) -> Result<ops::ConflictResult> {
+    ops::revert(&open(&path)?, &oid)
+}
+
+#[tauri::command]
+pub fn create_patch(path: String, oid: String, out_path: String) -> Result<()> {
+    ops::format_patch(&open(&path)?, &oid, &out_path)
+}
+
+// ---- Tags, remotes, worktrees, blame, history, file content ------------------
+
+#[tauri::command]
+pub fn create_tag(path: String, name: String, target: String, message: Option<String>) -> Result<()> {
+    refs::create_tag(&open(&path)?, &name, &target, message.as_deref())
+}
+
+#[tauri::command]
+pub fn delete_tag(path: String, name: String) -> Result<()> {
+    refs::delete_tag(&open(&path)?, &name)
+}
+
+#[tauri::command]
+pub fn get_remote_url(path: String, remote: String) -> Result<Option<String>> {
+    Ok(refs::remote_url(&open(&path)?, &remote))
+}
+
+#[tauri::command]
+pub fn list_worktrees(path: String) -> Result<Vec<worktree::WorktreeInfo>> {
+    worktree::list(&open(&path)?)
+}
+
+#[tauri::command]
+pub fn create_worktree(
+    path: String,
+    name: String,
+    worktree_path: String,
+    target: Option<String>,
+) -> Result<()> {
+    worktree::add(&open(&path)?, &name, &worktree_path, target.as_deref())
+}
+
+#[tauri::command]
+pub fn blame_file(path: String, file: String, oid: Option<String>) -> Result<Vec<blame::BlameLine>> {
+    blame::blame_file(&open(&path)?, &file, oid.as_deref())
+}
+
+#[tauri::command]
+pub fn file_history(path: String, file: String, limit: usize) -> Result<Vec<history::HistoryEntry>> {
+    history::file_log(&open(&path)?, &file, limit)
+}
+
+#[tauri::command]
+pub fn file_at_commit(path: String, oid: String, file: String) -> Result<diff::FileContent> {
+    diff::file_content(&open(&path)?, &oid, &file)
 }
 
 #[tauri::command]

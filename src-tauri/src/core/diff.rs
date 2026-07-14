@@ -292,6 +292,37 @@ fn file_diffs(diff: &Diff) -> Result<Vec<FileDiff>> {
     Ok(out)
 }
 
+/// Full file content at a commit, for the "File View" tab.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContent {
+    pub text: String,
+    pub binary: bool,
+    pub is_large: bool,
+}
+
+pub fn file_content(repo: &Repository, oid: &str, file: &str) -> Result<FileContent> {
+    let oid = Oid::from_str(oid).map_err(|_| Error::Msg(format!("bad oid: {oid}")))?;
+    let commit = repo.find_commit(oid)?;
+    let tree = commit.tree()?;
+    let entry = tree
+        .get_path(std::path::Path::new(file))
+        .map_err(|_| Error::Msg(format!("file not found in commit: {file}")))?;
+    let obj = entry.to_object(repo)?;
+    let blob = obj.as_blob().ok_or_else(|| Error::Msg("not a file blob".into()))?;
+    if blob.size() as u64 > LARGE_FILE_BYTES {
+        return Ok(FileContent { text: String::new(), binary: false, is_large: true });
+    }
+    if blob.is_binary() {
+        return Ok(FileContent { text: String::new(), binary: true, is_large: false });
+    }
+    Ok(FileContent {
+        text: String::from_utf8_lossy(blob.content()).into_owned(),
+        binary: false,
+        is_large: false,
+    })
+}
+
 fn split_message(message: &str) -> (String, String) {
     let trimmed = message.trim_end();
     match trimmed.split_once("\n\n") {

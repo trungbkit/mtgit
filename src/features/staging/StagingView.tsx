@@ -11,7 +11,7 @@ import {
 import type { StatusEntry } from "../../ipc/types";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
-import { DiffView } from "../diff/DiffView";
+import { FileViewer } from "../diff/FileViewer";
 import { FileList } from "../commit-detail/FileList";
 import "./staging.css";
 
@@ -151,7 +151,17 @@ export function StagingView() {
       </div>
 
       <div className="staging-diff">
-        {activeDiff ? <DiffView diff={activeDiff} /> : <div className="detail-empty">Select a file to view its diff.</div>}
+        {activeDiff ? (
+          <FileViewer
+            diff={activeDiff}
+            repoPath={repo.path}
+            commitOid={null}
+            headOid={repo.head.oid}
+            isWorkingTree
+          />
+        ) : (
+          <div className="detail-empty">Select a file to view its diff.</div>
+        )}
       </div>
 
       <div className="commit-form">

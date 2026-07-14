@@ -1,0 +1,93 @@
+.fileviewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.fv-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.fv-edit {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.fv-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fv-path b {
+  color: var(--text);
+}
+.fv-encoding {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.fv-close {
+  padding: 2px 7px;
+  font-size: 11px;
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+}
+.fv-close:hover {
+  color: var(--text);
+}
+
+.fv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.fv-tabs,
+.fv-actions {
+  display: flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fv-tabs button,
+.fv-actions button {
+  border: none;
+  border-radius: 0;
+  padding: 3px 10px;
+  font-size: 11px;
+  background: var(--bg-panel);
+}
+.fv-tabs button.on,
+.fv-actions button.on {
+  background: var(--accent);
+  color: #fff;
+}
+.fv-stats {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+.fv-toolbar .diff-mode-toggle {
+  margin-left: auto;
+}
+
+.fv-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}

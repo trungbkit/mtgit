@@ -1,9 +1,12 @@
+pub mod blame;
 pub mod branch;
 pub mod commit;
 pub mod diff;
 pub mod graph;
+pub mod history;
 pub mod ops;
 pub mod refs;
 pub mod repo;
 pub mod stash;
 pub mod status;
+pub mod worktree;

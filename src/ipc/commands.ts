@@ -1,10 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BlameLine,
   CommitDetail,
   ConflictResult,
+  FileContent,
   FileDiff,
   GitOpResult,
   GraphPage,
+  HistoryEntry,
   MergeMode,
   MergeResult,
   RebaseResult,
@@ -13,6 +16,7 @@ import type {
   ResetMode,
   StashEntry,
   StatusReport,
+  WorktreeInfo,
 } from "./types";
 
 /** Thin, typed wrappers over the Tauri command handlers. */
@@ -55,6 +59,24 @@ export const resetTo = (path: string, oid: string, mode: ResetMode) =>
   invoke<void>("reset_to", { path, oid, mode });
 export const rebaseOnto = (path: string, onto: string) =>
   invoke<RebaseResult>("rebase_onto", { path, onto });
+export const revertCommit = (path: string, oid: string) =>
+  invoke<ConflictResult>("revert_commit", { path, oid });
+export const createPatch = (path: string, oid: string, outPath: string) =>
+  invoke<void>("create_patch", { path, oid, outPath });
+export const createTag = (path: string, name: string, target: string, message?: string) =>
+  invoke<void>("create_tag", { path, name, target, message });
+export const deleteTag = (path: string, name: string) => invoke<void>("delete_tag", { path, name });
+export const getRemoteUrl = (path: string, remote: string) =>
+  invoke<string | null>("get_remote_url", { path, remote });
+export const listWorktrees = (path: string) => invoke<WorktreeInfo[]>("list_worktrees", { path });
+export const createWorktree = (path: string, name: string, worktreePath: string, target?: string) =>
+  invoke<void>("create_worktree", { path, name, worktreePath, target });
+export const blameFile = (path: string, file: string, oid?: string) =>
+  invoke<BlameLine[]>("blame_file", { path, file, oid });
+export const fileHistory = (path: string, file: string, limit: number) =>
+  invoke<HistoryEntry[]>("file_history", { path, file, limit });
+export const fileAtCommit = (path: string, oid: string, file: string) =>
+  invoke<FileContent>("file_at_commit", { path, oid, file });
 export const stashSave = (path: string, message: string | undefined, includeUntracked: boolean) =>
   invoke<string>("stash_save", { path, message, includeUntracked });
 export const stashList = (path: string) => invoke<StashEntry[]>("stash_list", { path });

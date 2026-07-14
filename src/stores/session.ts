@@ -17,6 +17,11 @@ function loadRecent(): string[] {
 
 export type DiffMode = "inline" | "split";
 
+export interface GraphOpts {
+  relativeDates: boolean;
+  showAuthor: boolean;
+}
+
 interface SessionState {
   repo: RepoInfo | null; // the active tab's repo
   tabs: RepoInfo[];
@@ -26,6 +31,8 @@ interface SessionState {
   terminalOpen: boolean;
   diffMode: DiffMode;
   paletteOpen: boolean;
+  sidebarCollapsed: boolean;
+  graphOpts: GraphOpts;
 
   setRepo: (repo: RepoInfo) => void;
   switchTab: (path: string) => void;
@@ -35,6 +42,8 @@ interface SessionState {
   toggleTerminal: () => void;
   setDiffMode: (m: DiffMode) => void;
   setPaletteOpen: (v: boolean) => void;
+  toggleSidebar: () => void;
+  setGraphOpts: (o: Partial<GraphOpts>) => void;
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -46,6 +55,8 @@ export const useSession = create<SessionState>((set) => ({
   terminalOpen: false,
   diffMode: "inline",
   paletteOpen: false,
+  sidebarCollapsed: false,
+  graphOpts: { relativeDates: true, showAuthor: true },
 
   setRepo: (repo) =>
     set((s) => {
@@ -79,4 +90,6 @@ export const useSession = create<SessionState>((set) => ({
   toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
   setDiffMode: (m) => set({ diffMode: m }),
   setPaletteOpen: (v) => set({ paletteOpen: v }),
+  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setGraphOpts: (o) => set((s) => ({ graphOpts: { ...s.graphOpts, ...o } })),
 }));

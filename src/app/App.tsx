@@ -6,6 +6,7 @@ import { GraphView } from "../features/graph/GraphView";
 import { DetailPanel } from "../features/commit-detail/DetailPanel";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { CommandPalette } from "../features/palette/CommandPalette";
+import { StatusBar } from "../features/statusbar/StatusBar";
 import { ToastContainer } from "../components/ToastContainer";
 import { useRepoEvents } from "../ipc/events";
 import { useSession } from "../stores/session";
@@ -16,6 +17,7 @@ export function App() {
   const [detailW, setDetailW] = useState(420);
   const terminalOpen = useSession((s) => s.terminalOpen);
   const repo = useSession((s) => s.repo);
+  const sidebarCollapsed = useSession((s) => s.sidebarCollapsed);
   const setPaletteOpen = useSession((s) => s.setPaletteOpen);
   const toggleTerminal = useSession((s) => s.toggleTerminal);
 
@@ -41,10 +43,10 @@ export function App() {
       <Toolbar />
       <TabBar />
       <div className="app-body">
-        <div style={{ width: sidebarW, flexShrink: 0 }}>
+        <div style={{ width: sidebarCollapsed ? 44 : sidebarW, flexShrink: 0 }}>
           <Sidebar />
         </div>
-        <Divider onDrag={(dx) => setSidebarW((w) => clamp(w + dx, 160, 480))} />
+        {!sidebarCollapsed && <Divider onDrag={(dx) => setSidebarW((w) => clamp(w + dx, 160, 480))} />}
         <div className="app-main">
           <GraphView />
           {terminalOpen && repo && <TerminalPanel />}
@@ -54,6 +56,7 @@ export function App() {
           <DetailPanel />
         </div>
       </div>
+      <StatusBar />
       <CommandPalette />
       <ToastContainer />
     </div>

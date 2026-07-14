@@ -176,3 +176,35 @@ export interface GitOpResult {
   code: number | null;
   output: string;
 }
+
+// ---- Worktrees, blame, file history, file content ----
+
+export interface WorktreeInfo {
+  name: string;
+  path: string;
+  branch: string | null;
+  locked: boolean;
+}
+
+export interface BlameLine {
+  lineNo: number;
+  oid: string;
+  author: string;
+  summary: string;
+  timestamp: number;
+  content: string;
+}
+
+export interface HistoryEntry {
+  oid: string;
+  summary: string;
+  author: string;
+  email: string;
+  timestamp: number;
+}
+
+export interface FileContent {
+  text: string;
+  binary: boolean;
+  isLarge: boolean;
+}
