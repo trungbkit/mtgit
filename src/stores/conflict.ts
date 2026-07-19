@@ -7,6 +7,10 @@ export interface ConflictInfo {
   repoPath: string;
   kind: ConflictKind;
   files: string[];
+  currentSha?: string | null;
+  current?: number;
+  total?: number;
+  canSkip?: boolean;
 }
 
 interface ConflictState {

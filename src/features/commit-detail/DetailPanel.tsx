@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { commit as doCommit, getCommit, getCommitDiff } from "../../ipc/commands";
+import { commitAdvanced, getCommit, getCommitDiff, getStatus } from "../../ipc/commands";
 import type { CommitDetail, FileStatus } from "../../ipc/types";
 import { useSession, WORKING } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -15,18 +15,44 @@ import "./detail.css";
 export function DetailPanel() {
   const repo = useSession((s) => s.repo);
   const selectedOid = useSession((s) => s.selectedOid);
+  const selectOid = useSession((s) => s.selectOid);
+  const { data: status } = useQuery({
+    queryKey: ["status", repo?.path],
+    enabled: !!repo,
+    queryFn: () => getStatus(repo!.path),
+  });
 
   if (selectedOid === WORKING) {
     return <StagingView />;
   }
-  if (!repo || !selectedOid) {
+  if (!repo) {
     return (
       <section className="detail">
         <div className="detail-empty">Select a commit to see its details.</div>
       </section>
     );
   }
-  return <CommitView repoPath={repo.path} oid={selectedOid} headOid={repo.head.oid} />;
+  const changed = new Set([
+    ...(status?.staged ?? []).map((entry) => entry.path),
+    ...(status?.unstaged ?? []).map((entry) => entry.path),
+    ...(status?.conflicted ?? []).map((entry) => entry.path),
+  ]).size;
+  return (
+    <div className="detail-shell">
+      {changed > 0 && (
+        <button className="changes-banner" onClick={() => selectOid(WORKING)}>
+          {changed} file change{changed === 1 ? "" : "s"} in working directory — View Changes
+        </button>
+      )}
+      {selectedOid ? (
+        <CommitView repoPath={repo.path} oid={selectedOid} headOid={repo.head.oid} />
+      ) : (
+        <section className="detail">
+          <div className="detail-empty">Select a commit to see its details.</div>
+        </section>
+      )}
+    </div>
+  );
 }
 
 function summarize(files: { status: FileStatus }[]): string {
@@ -85,11 +111,13 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
 
   async function updateMessage() {
     try {
-      const newOid = await doCommit(repoPath, amendMsg, true);
+      const [summary = "", ...rest] = amendMsg.split("\n");
+      const result = await commitAdvanced(repoPath, summary, rest.join("\n").trimStart(), true);
+      if (!result.success) throw new Error(result.output);
       pushToast("success", "Commit message updated.");
       setAmending(false);
       qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === repoPath });
-      selectOid(newOid);
+      if (result.oid) selectOid(result.oid);
     } catch (e) {
       toastError(e);
     }

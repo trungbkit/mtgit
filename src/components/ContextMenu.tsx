@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./contextmenu.css";
 
 export interface MenuItem {
@@ -19,12 +19,14 @@ export interface MenuState {
 }
 
 export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose: () => void }) {
+  const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
     const close = () => onClose();
     window.addEventListener("click", close);
     window.addEventListener("contextmenu", close);
     window.addEventListener("blur", close);
+    requestAnimationFrame(() => root.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus());
     return () => {
       window.removeEventListener("click", close);
       window.removeEventListener("contextmenu", close);
@@ -34,7 +36,26 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
 
   if (!menu) return null;
   return (
-    <div className="context-menu" style={{ left: menu.x, top: menu.y }}>
+    <div
+      ref={root}
+      className="context-menu"
+      role="menu"
+      style={{ left: menu.x, top: menu.y }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onClose();
+          return;
+        }
+        const buttons = [...(root.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const delta = event.key === "ArrowDown" ? 1 : -1;
+          buttons[(index + delta + buttons.length) % buttons.length]?.focus();
+        }
+      }}
+    >
       <MenuItems items={menu.items} onClose={onClose} />
     </div>
   );
@@ -68,6 +89,7 @@ function MenuItems({ items, onClose }: { items: MenuItem[]; onClose: () => void 
         }
         return (
           <button
+            role="menuitem"
             key={i}
             className={`ctx-item${it.danger ? " danger" : ""}`}
             disabled={it.disabled}

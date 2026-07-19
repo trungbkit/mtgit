@@ -58,6 +58,61 @@
   font-family: inherit;
   font-size: 12.5px;
 }
+.commit-summary-wrap {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-app);
+}
+.commit-summary-wrap input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 7px 9px;
+  background: transparent;
+  color: var(--text);
+  font: 12.5px inherit;
+}
+.commit-summary-wrap input.long,
+.commit-summary-wrap input.long + span {
+  color: var(--yellow);
+}
+.commit-summary-wrap span {
+  padding-right: 8px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.commit-warning {
+  margin-top: 6px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--yellow) 12%, transparent);
+  color: var(--yellow);
+  font-size: 11px;
+}
+.hook-failure {
+  margin-top: 6px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--red) 55%, var(--border));
+  border-radius: 5px;
+}
+.hook-failure pre {
+  max-height: 80px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--red);
+  font: 10.5px/1.4 var(--font-mono);
+}
+.staging-bulk {
+  display: flex;
+  gap: 5px;
+}
+.staging-group-head .danger-link {
+  color: var(--red);
+}
 .commit-actions {
   display: flex;
   align-items: center;

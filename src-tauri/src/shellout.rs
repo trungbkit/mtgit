@@ -7,6 +7,8 @@ use crate::error::{Error, Result};
 use serde::Serialize;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Serialize, Clone)]
@@ -37,7 +39,29 @@ pub fn git_available() -> bool {
 
 /// Run a network git operation, streaming stderr lines as `git-progress`
 /// events and returning the combined output when it finishes.
-pub fn run(app: &AppHandle, repo_path: &str, op: &str, remote: Option<&str>, extra: &[String]) -> Result<GitOpResult> {
+pub fn run(
+    app: &AppHandle,
+    repo_path: &str,
+    op: &str,
+    remote: Option<&str>,
+    extra: &[String],
+    pids: &Mutex<HashMap<String, u32>>,
+) -> Result<GitOpResult> {
+    run_inner(Some(app), repo_path, op, remote, extra, Some(pids))
+}
+
+pub fn run_silent(repo_path: &str, op: &str, remote: Option<&str>, extra: &[String]) -> Result<GitOpResult> {
+    run_inner(None, repo_path, op, remote, extra, None)
+}
+
+fn run_inner(
+    app: Option<&AppHandle>,
+    repo_path: &str,
+    op: &str,
+    remote: Option<&str>,
+    extra: &[String],
+    pids: Option<&Mutex<HashMap<String, u32>>>,
+) -> Result<GitOpResult> {
     if !matches!(op, "fetch" | "pull" | "push") {
         return Err(Error::Msg(format!("unsupported network op: {op}")));
     }
@@ -55,6 +79,11 @@ pub fn run(app: &AppHandle, repo_path: &str, op: &str, remote: Option<&str>, ext
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| Error::Msg(format!("failed to launch git: {e}")))?;
+    if let Some(pids) = pids {
+        if let Ok(mut active) = pids.lock() {
+            active.insert(repo_path.to_string(), child.id());
+        }
+    }
 
     let mut collected = String::new();
 
@@ -62,7 +91,9 @@ pub fn run(app: &AppHandle, repo_path: &str, op: &str, remote: Option<&str>, ext
     if let Some(stderr) = child.stderr.take() {
         let reader = BufReader::new(stderr);
         for line in reader.lines().map_while(std::result::Result::ok) {
-            let _ = app.emit("git-progress", ProgressEvent { op: op.to_string(), line: line.clone() });
+            if let Some(app) = app {
+                let _ = app.emit("git-progress", ProgressEvent { op: op.to_string(), line: line.clone() });
+            }
             collected.push_str(&line);
             collected.push('\n');
         }
@@ -77,6 +108,11 @@ pub fn run(app: &AppHandle, repo_path: &str, op: &str, remote: Option<&str>, ext
     }
 
     let status = child.wait().map_err(|e| Error::Msg(e.to_string()))?;
+    if let Some(pids) = pids {
+        if let Ok(mut active) = pids.lock() {
+            active.remove(repo_path);
+        }
+    }
     Ok(GitOpResult {
         success: status.success(),
         code: status.code(),

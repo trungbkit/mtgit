@@ -1,0 +1,54 @@
+.compare-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  background: #0008;
+}
+
+.compare-dialog {
+  display: grid;
+  grid-template: auto 1fr / 230px 1fr;
+  width: min(1050px, 92vw);
+  height: min(760px, 88vh);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-panel);
+  box-shadow: 0 20px 70px #000b;
+}
+
+.compare-dialog > header {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.compare-dialog > aside {
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.compare-dialog > aside button {
+  display: flex;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.compare-dialog > aside button.selected {
+  background: var(--bg-selected);
+}
+
+.compare-dialog > main {
+  min-width: 0;
+  min-height: 0;
+}

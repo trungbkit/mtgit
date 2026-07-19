@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
-import type { FileDiff } from "../../ipc/types";
+import { useQueryClient } from "@tanstack/react-query";
+import type { FileDiff, Hunk } from "../../ipc/types";
+import { applyPatch } from "../../ipc/commands";
 import { useSession } from "../../stores/session";
-import { toastError } from "../../stores/toasts";
+import { toastError, useToasts } from "../../stores/toasts";
+import { confirmDialog } from "../../stores/dialog";
 import { DiffView } from "./DiffView";
 import { FileContentView } from "./FileContentView";
 import { BlameView } from "./BlameView";
@@ -17,6 +20,7 @@ export function FileViewer({
   commitOid,
   headOid,
   isWorkingTree,
+  worktreeStaged,
   onClose,
   onSelectCommit,
 }: {
@@ -26,12 +30,15 @@ export function FileViewer({
   commitOid: string | null;
   headOid: string | null;
   isWorkingTree: boolean;
+  worktreeStaged?: boolean;
   onClose?: () => void;
   onSelectCommit?: (oid: string) => void;
 }) {
   const mode = useSession((s) => s.diffMode);
   const setMode = useSession((s) => s.setDiffMode);
   const [sub, setSub] = useState<SubMode>("diff");
+  const qc = useQueryClient();
+  const pushToast = useToasts((state) => state.push);
 
   // Reset to the diff tab whenever the selected file changes.
   useEffect(() => {
@@ -47,6 +54,16 @@ export function FileViewer({
       await openPath(`${repoPath}/${diff.path}`);
     } catch (e) {
       toastError(e);
+    }
+  }
+
+  async function applyHunk(hunk: Hunk, reverse: boolean, cached: boolean, selected?: Set<number>) {
+    try {
+      await applyPatch(repoPath, buildPatch(diff, hunk, selected), cached, reverse);
+      pushToast("success", reverse ? (cached ? "Hunk unstaged." : "Hunk discarded.") : "Hunk staged.");
+      qc.invalidateQueries({ predicate: (query) => query.queryKey[1] === repoPath });
+    } catch (error) {
+      toastError(error);
     }
   }
 
@@ -109,7 +126,31 @@ export function FileViewer({
       </div>
 
       <div className="fv-body">
-        {sub === "diff" && <DiffView diff={diff} mode={mode} />}
+        {sub === "diff" && (
+          <DiffView
+            diff={diff}
+            mode={mode}
+            staging={isWorkingTree ? (worktreeStaged ? "unstage" : "stage") : null}
+            onHunkAction={(hunk) => applyHunk(hunk, !!worktreeStaged, true)}
+            onLinesAction={(hunk, selected) => applyHunk(hunk, !!worktreeStaged, true, selected)}
+            onDiscardHunk={
+              isWorkingTree && !worktreeStaged
+                ? async (hunk) => {
+                    if (
+                      await confirmDialog({
+                        title: "Discard hunk",
+                        message: `Discard this hunk from ${diff.path}?`,
+                        confirmLabel: "Discard hunk",
+                        danger: true,
+                      })
+                    ) {
+                      applyHunk(hunk, true, false);
+                    }
+                  }
+                : undefined
+            }
+          />
+        )}
         {sub === "file" &&
           (fileOid ? (
             <FileContentView repoPath={repoPath} oid={fileOid} file={diff.path} />
@@ -129,4 +170,30 @@ export function FileViewer({
       </div>
     </div>
   );
+}
+
+function buildPatch(diff: FileDiff, hunk: Hunk, selected?: Set<number>): string {
+  const oldPath = diff.status === "added" || diff.status === "untracked" ? "/dev/null" : `a/${diff.oldPath ?? diff.path}`;
+  const newPath = diff.status === "deleted" ? "/dev/null" : `b/${diff.path}`;
+  let header = hunk.header;
+  let lines = hunk.lines.map((line, index) => ({ ...line, index }));
+
+  if (selected) {
+    const match = hunk.header.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
+    const oldStart = Number(match?.[1] ?? 1);
+    const newStart = Number(match?.[2] ?? 1);
+    lines = lines.flatMap((line) => {
+      if (line.kind === "add" && !selected.has(line.index)) return [];
+      if (line.kind === "del" && !selected.has(line.index)) return [{ ...line, kind: "context" as const }];
+      return [line];
+    });
+    const oldCount = lines.filter((line) => line.kind !== "add").length;
+    const newCount = lines.filter((line) => line.kind !== "del").length;
+    header = `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@${match?.[3] ?? ""}`;
+  }
+
+  const body = lines
+    .map((line) => `${line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}${line.text}\n`)
+    .join("");
+  return `diff --git a/${diff.oldPath ?? diff.path} b/${diff.path}\n--- ${oldPath}\n+++ ${newPath}\n${header}\n${body}`;
 }

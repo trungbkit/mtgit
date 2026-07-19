@@ -205,10 +205,21 @@ pub fn build_rows(
             edges.push(Edge { from_lane: from, to_lane: to, kind, color: to });
         }
 
+        let subject = commit.summary().unwrap_or("");
+        let body_preview = commit
+            .body()
+            .and_then(|body| body.lines().find(|line| !line.trim().is_empty()))
+            .unwrap_or("");
+        let summary = if body_preview.is_empty() {
+            subject.to_string()
+        } else {
+            format!("{subject} — {body_preview}")
+        };
+
         rows.push(GraphRow {
             oid: rl.oid.to_string(),
             parents: commit.parent_ids().map(|o| o.to_string()).collect(),
-            summary: commit.summary().unwrap_or("").to_string(),
+            summary,
             author: author.name().unwrap_or("").to_string(),
             email: author.email().unwrap_or("").to_string(),
             timestamp: commit.time().seconds(),

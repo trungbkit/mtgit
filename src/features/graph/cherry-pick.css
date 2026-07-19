@@ -1,0 +1,51 @@
+.pick-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  background: #0007;
+}
+
+.pick-popover {
+  width: 390px;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-panel-2);
+  box-shadow: 0 18px 55px #000a;
+}
+
+.pick-popover h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.pick-popover p,
+.pick-popover label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.pick-popover fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pick-popover fieldset label,
+.pick-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pick-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 14px;
+}

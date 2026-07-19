@@ -28,11 +28,13 @@ export function DialogHost() {
 
   const cancel = () => {
     if (current.kind === "prompt") current.resolve(null);
-    else current.resolve(false);
+    else if (current.kind === "confirm") current.resolve(false);
+    else current.resolve(null);
     close();
   };
 
   const submit = () => {
+    if (current.kind === "choice") return;
     if (current.kind === "prompt") {
       const v = value.trim();
       const err = current.validate?.(v) ?? null;
@@ -49,6 +51,7 @@ export function DialogHost() {
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
+      if (current.kind === "choice") return;
       e.preventDefault();
       submit();
     } else if (e.key === "Escape") {
@@ -88,16 +91,34 @@ export function DialogHost() {
           </>
         )}
 
-        <div className="dialog-actions">
-          <button className="dialog-btn" onClick={cancel}>
-            Cancel
-          </button>
-          <button className={`dialog-btn primary${danger ? " danger" : ""}`} onClick={submit}>
-            {current.kind === "confirm"
-              ? (current.confirmLabel ?? "Confirm")
-              : (current.confirmLabel ?? "OK")}
-          </button>
-        </div>
+        {current.kind === "choice" ? (
+          <div className="dialog-choice-actions">
+            {current.choices.map((choice) => (
+              <button
+                key={choice.value}
+                className={`dialog-btn${choice.danger ? " danger" : ""}`}
+                onClick={() => {
+                  current.resolve(choice.value);
+                  close();
+                }}
+              >
+                {choice.label}
+              </button>
+            ))}
+            <button className="dialog-btn" onClick={cancel}>{current.cancelLabel ?? "Cancel"}</button>
+          </div>
+        ) : (
+          <div className="dialog-actions">
+            <button className="dialog-btn" onClick={cancel}>
+              Cancel
+            </button>
+            <button className={`dialog-btn primary${danger ? " danger" : ""}`} onClick={submit}>
+              {current.kind === "confirm"
+                ? (current.confirmLabel ?? "Confirm")
+                : (current.confirmLabel ?? "OK")}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,108 @@
+.conflict-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+.ce-head,
+.ce-sides header,
+.ce-output header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 9px;
+  background: var(--bg-panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ce-head strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.ce-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+  flex: 1;
+}
+
+.ce-sides section:first-child {
+  border-right: 1px solid var(--border);
+}
+
+.ce-sides section,
+.ce-output {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.ce-output {
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.ce-sides textarea,
+.ce-output textarea {
+  flex: 1;
+  min-height: 90px;
+  resize: none;
+  border: 0;
+  padding: 8px;
+  background: var(--bg-app);
+  color: var(--text);
+  font: 11px/1.45 var(--font-mono);
+  outline: none;
+}
+.ce-hunks {
+  max-height: 90px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.ce-hunks > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+.ce-hunks label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ce-output textarea {
+  background: color-mix(in srgb, var(--bg-app) 88%, var(--accent) 12%);
+}
+
+.ce-sides button,
+.ce-output button,
+.ce-binary-actions button {
+  padding: 3px 8px;
+  font-size: 10.5px;
+}
+
+.ce-output header > div {
+  display: flex;
+  gap: 5px;
+}
+
+.conflict-editor.binary {
+  padding-bottom: 12px;
+}
+
+.ce-binary-actions {
+  display: flex;
+  gap: 8px;
+  padding: 16px;
+}

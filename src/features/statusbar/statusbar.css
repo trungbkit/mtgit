@@ -18,6 +18,10 @@
   gap: 10px;
 }
 .sb-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   flex: 1;
   min-width: 0;
   text-align: center;
@@ -25,6 +29,15 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.sb-center > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sb-cancel {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 10px;
 }
 .sb-right {
   margin-left: auto;

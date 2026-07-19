@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { abortOperation, rebaseAbort, rebaseContinue } from "../ipc/commands";
+import { operationAbort, operationContinue, operationSkip } from "../ipc/commands";
 import { conflictLabel, useConflict } from "../stores/conflict";
-import { useSession } from "../stores/session";
+import { useSession, WORKING } from "../stores/session";
 import { toastError, useToasts } from "../stores/toasts";
 import "./conflictbanner.css";
 
@@ -16,12 +16,13 @@ export function ConflictBanner() {
   const repoPathActive = useSession((s) => s.repo?.path);
   const toggleTerminal = useSession((s) => s.toggleTerminal);
   const terminalOpen = useSession((s) => s.terminalOpen);
+  const selectOid = useSession((s) => s.selectOid);
   const pushToast = useToasts((s) => s.push);
   const qc = useQueryClient();
 
   // Only surface the banner for the repo currently in view.
   if (!active || active.repoPath !== repoPathActive) return null;
-  const { repoPath, kind, files } = active;
+  const { repoPath, kind, files, currentSha, current, total, canSkip } = active;
   const refresh = () => qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === repoPath });
 
   async function run(fn: () => Promise<unknown>, ok: string) {
@@ -35,15 +36,23 @@ export function ConflictBanner() {
     }
   }
 
-  async function onContinue() {
+  async function onContinue(skip = false) {
     try {
-      const res = await rebaseContinue(repoPath);
-      if (res.done) {
-        pushToast("success", `Rebase complete (${res.applied} commit(s) applied).`);
+      const res = await (skip ? operationSkip(repoPath) : operationContinue(repoPath));
+      if (res.success) {
+        pushToast("success", `${conflictLabel(kind)} ${skip ? "skipped the commit and continued" : "complete"}.`);
         clear();
       } else {
         pushToast("error", `Still ${res.conflicts.length} conflicted file(s) — resolve, then continue.`);
-        useConflict.getState().set({ repoPath, kind: "rebase", files: res.conflicts });
+        useConflict.getState().set({
+          repoPath,
+          kind,
+          files: res.conflicts,
+          currentSha,
+          current: Math.min((current ?? 1) + 1, total ?? 1),
+          total,
+          canSkip,
+        });
       }
       refresh();
     } catch (e) {
@@ -55,36 +64,34 @@ export function ConflictBanner() {
     <div className="conflict-banner">
       <span className="cb-icon">⚠</span>
       <span className="cb-text">
-        <strong>{conflictLabel(kind)} paused —</strong> {files.length} conflicted file
-        {files.length === 1 ? "" : "s"}. Resolve them, then continue or abort.
+        <strong>{conflictLabel(kind)} in progress</strong>
+        {currentSha ? ` — stopped at ${currentSha.slice(0, 7)}` : ""}
+        {total ? ` (${current ?? 1} of ${total})` : ""} — {files.length} conflicted file
+        {files.length === 1 ? "" : "s"}.
       </span>
-      <span className="cb-files" title={files.join("\n")}>
+      <button className="cb-files" title={files.join("\n")} onClick={() => selectOid(WORKING)}>
         {files.slice(0, 3).join(", ")}
         {files.length > 3 ? `, +${files.length - 3} more` : ""}
-      </span>
+      </button>
       <div className="cb-actions">
         {!terminalOpen && (
           <button className="cb-btn" onClick={toggleTerminal}>
             Open terminal
           </button>
         )}
-        {kind === "rebase" && (
-          <button className="cb-btn primary" onClick={onContinue}>
-            Continue
+        {canSkip && (
+          <button className="cb-btn" onClick={() => onContinue(true)}>
+            Skip commit
           </button>
         )}
+        <button className="cb-btn primary" disabled={files.length > 0} onClick={() => onContinue(false)}>
+          Continue
+        </button>
         <button
           className="cb-btn danger"
-          onClick={() =>
-            kind === "rebase"
-              ? run(() => rebaseAbort(repoPath), "Rebase aborted.")
-              : run(() => abortOperation(repoPath), `${conflictLabel(kind)} aborted.`)
-          }
+          onClick={() => run(() => operationAbort(repoPath), `${conflictLabel(kind)} aborted.`)}
         >
           Abort
-        </button>
-        <button className="cb-btn cb-dismiss" title="Dismiss (I'll resolve manually)" onClick={clear}>
-          ✕
         </button>
       </div>
     </div>

@@ -1,0 +1,140 @@
+.rebase-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  justify-content: flex-end;
+  background: #0008;
+}
+
+.rebase-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 78vw);
+  height: 100%;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: -20px 0 50px #0008;
+}
+
+.rebase-sheet > header {
+  display: flex;
+  justify-content: space-between;
+  padding: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rebase-sheet h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.rebase-sheet p {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.rebase-warning,
+.rebase-note {
+  padding: 8px 14px;
+  font-size: 12px;
+}
+
+.rebase-warning {
+  color: var(--yellow);
+  background: color-mix(in srgb, var(--yellow) 12%, transparent);
+}
+
+.rebase-note {
+  color: var(--text-dim);
+  background: var(--bg-panel-2);
+}
+
+.rebase-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.rebase-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-height: 40px;
+  margin-bottom: 4px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-app);
+}
+
+.rebase-row.action-drop {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.rebase-row.action-squash,
+.rebase-row.action-fixup {
+  margin-left: 22px;
+  border-left: 2px solid var(--accent);
+}
+
+.rebase-handle {
+  cursor: grab;
+  color: var(--text-faint);
+}
+
+.rebase-row select {
+  width: 86px;
+}
+
+.rebase-row code {
+  padding-top: 4px;
+  color: var(--text-faint);
+}
+
+.rebase-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.rebase-message span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rebase-message input {
+  width: 100%;
+  margin-top: 5px;
+}
+
+.rebase-move {
+  display: flex;
+}
+
+.rebase-move button {
+  padding: 2px 7px;
+}
+
+.rebase-sheet > footer {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.rebase-sheet > footer > span {
+  flex: 1;
+}
+
+.rebase-sheet > footer em {
+  color: var(--red);
+  font-style: normal;
+}

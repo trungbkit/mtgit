@@ -77,6 +77,10 @@
   gap: 4px;
   flex-shrink: 0;
 }
+.file-size {
+  color: var(--text-faint);
+  font-size: 10px;
+}
 .file-row:hover .file-actions {
   display: flex;
 }

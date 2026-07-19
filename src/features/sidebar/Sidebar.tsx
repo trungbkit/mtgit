@@ -1,44 +1,69 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import {
-  checkout,
+  clearHistory,
   createBranch,
   createTag,
   deleteBranch,
   deleteRemoteBranch,
   deleteTag,
+  gitNetwork,
   listRefs,
+  listSubmodules,
   listWorktrees,
-  mergeRef,
-  rebaseOnto,
+  mergeAdvanced,
+  rebaseStandard,
+  rewriteInfo,
   renameBranch,
   stashApply,
   stashDrop,
   stashList,
   stashPop,
+  updateSubmodules,
 } from "../../ipc/commands";
 import type { BranchInfo } from "../../ipc/types";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import { useConflict } from "../../stores/conflict";
-import { confirmDialog, promptDialog } from "../../stores/dialog";
+import { choiceDialog, confirmDialog, promptDialog } from "../../stores/dialog";
 import { validateRefName } from "../../lib/refname";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
 import { copyText } from "../../lib/clipboard";
+import { smartCheckout } from "../../lib/checkout";
 import "./sidebar.css";
+
+const EMPTY_HIDDEN_REFS: string[] = [];
 
 export function Sidebar() {
   const repo = useSession((s) => s.repo);
   const selectOid = useSession((s) => s.selectOid);
   const collapsed = useSession((s) => s.sidebarCollapsed);
   const toggleSidebar = useSession((s) => s.toggleSidebar);
+  const hiddenRefs = useSession((s) =>
+    repo ? s.hiddenRefs[repo.path] ?? EMPTY_HIDDEN_REFS : EMPTY_HIDDEN_REFS,
+  );
+  const toggleHiddenRef = useSession((s) => s.toggleHiddenRef);
+  const checkoutTarget = useSession((s) => s.checkoutTarget);
   const qc = useQueryClient();
   const pushToast = useToasts((s) => s.push);
   const setConflict = useConflict((s) => s.set);
   const [filter, setFilter] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const focusFilter = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        filterRef.current?.focus();
+        filterRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", focusFilter);
+    return () => window.removeEventListener("keydown", focusFilter);
+  }, []);
 
   const { data } = useQuery({
     queryKey: ["refs", repo?.path],
@@ -54,6 +79,11 @@ export function Sidebar() {
     queryKey: ["worktrees", repo?.path],
     enabled: !!repo,
     queryFn: () => listWorktrees(repo!.path),
+  });
+  const { data: submodules } = useQuery({
+    queryKey: ["submodules", repo?.path],
+    enabled: !!repo,
+    queryFn: () => listSubmodules(repo!.path),
   });
 
   if (!repo) return <aside className="sidebar" />;
@@ -72,7 +102,24 @@ export function Sidebar() {
   }
 
   async function doCheckout(name: string) {
-    await run(() => checkout(path, name), `Checked out ${name}`);
+    await run(() => smartCheckout(path, name), `Checked out ${name}`);
+  }
+
+  async function doRebase(target: string) {
+    const info = await rewriteInfo(path, target);
+    if (
+      (info.pushed > 0 || info.merges > 0) &&
+      !(await confirmDialog({
+        title: `Rebase ${headBranch ?? "HEAD"} onto ${target}`,
+        message: `${info.pushed ? `${info.pushed} affected commit(s) are pushed. ` : ""}${info.merges ? `${info.merges} merge commit(s) will be flattened.` : ""}`,
+        confirmLabel: "Rebase",
+        danger: info.pushed > 0,
+      }))
+    ) {
+      return;
+    }
+    const result = await rebaseStandard(path, target);
+    reportRebase(result);
   }
 
   async function deleteBranchFlow(b: BranchInfo) {
@@ -143,6 +190,7 @@ export function Sidebar() {
         <RailIcon icon="🏷" count={data?.tags.length ?? 0} onClick={toggleSidebar} />
         <RailIcon icon="🌿" count={worktrees?.length ?? 0} onClick={toggleSidebar} />
         <RailIcon icon="≡" count={stashes?.length ?? 0} onClick={toggleSidebar} />
+        <RailIcon icon="▣" count={submodules?.length ?? 0} onClick={toggleSidebar} />
       </aside>
     );
   }
@@ -152,6 +200,17 @@ export function Sidebar() {
     const items: MenuItem[] = [{ label: "Checkout", onClick: () => doCheckout(b.name) }];
     if (local) {
       items.push(
+        {
+          label: `Push ${b.name}`,
+          onClick: () => {
+            const remote = b.upstream?.split("/")[0] ?? "origin";
+            run(async () => {
+              const result = await gitNetwork(path, "push", remote, [b.name]);
+              if (!result.success) throw new Error(result.output);
+              await clearHistory(path);
+            }, `Pushed ${b.name}`);
+          },
+        },
         {
           label: "Rename…",
           onClick: async () => {
@@ -167,23 +226,18 @@ export function Sidebar() {
         },
         {
           label: `Merge into ${headBranch ?? "HEAD"}`,
-          onClick: () => run(() => mergeRef(path, b.name, "default").then(reportMerge)),
-          disabled: b.isHead,
-        },
-        {
-          label: `Merge into ${headBranch ?? "HEAD"} (no-ff)`,
-          onClick: () => run(() => mergeRef(path, b.name, "noFf").then(reportMerge)),
+          onClick: () => run(() => mergeAdvanced(path, b.name, "noFf").then(reportMerge)),
           disabled: b.isHead,
         },
         {
           label: `Merge into ${headBranch ?? "HEAD"} (ff-only)`,
-          onClick: () => run(() => mergeRef(path, b.name, "ffOnly").then(reportMerge)),
+          onClick: () => run(() => mergeAdvanced(path, b.name, "ffOnly").then(reportMerge)),
           disabled: b.isHead,
         },
         {
           label: `Rebase ${headBranch ?? "HEAD"} onto ${b.name}`,
           disabled: b.isHead,
-          onClick: () => run(() => rebaseOnto(path, b.name).then(reportRebase)),
+          onClick: () => run(() => doRebase(b.name)),
         },
         {
           label: "Delete",
@@ -196,7 +250,7 @@ export function Sidebar() {
       items.push(
         {
           label: "Merge into current",
-          onClick: () => run(() => mergeRef(path, b.name).then(reportMerge)),
+          onClick: () => run(() => mergeAdvanced(path, b.name, "noFf").then(reportMerge)),
         },
         { separator: true },
         {
@@ -229,7 +283,7 @@ export function Sidebar() {
     });
   }
 
-  function reportMerge(res: Awaited<ReturnType<typeof mergeRef>>) {
+  function reportMerge(res: Awaited<ReturnType<typeof mergeAdvanced>>) {
     if (res.kind === "conflicts") {
       setConflict({ repoPath: path, kind: "merge", files: res.conflicts });
       pushToast("error", `Merge paused — ${res.conflicts.length} conflicted file(s).`);
@@ -240,9 +294,9 @@ export function Sidebar() {
     }
   }
 
-  function reportRebase(r: Awaited<ReturnType<typeof rebaseOnto>>) {
-    if (r.done) {
-      pushToast("success", `Rebased ${r.applied} commit(s)`);
+  function reportRebase(r: Awaited<ReturnType<typeof rebaseStandard>>) {
+    if (r.success) {
+      pushToast("success", "Rebase complete");
     } else {
       setConflict({ repoPath: path, kind: "rebase", files: r.conflicts });
       pushToast("error", `Rebase paused — ${r.conflicts.length} conflicted file(s).`);
@@ -297,6 +351,7 @@ export function Sidebar() {
 
       <div className="sidebar-top">
         <input
+          ref={filterRef}
           className="sidebar-filter"
           placeholder="Filter (⌘ Option + f)"
           value={filter}
@@ -321,20 +376,28 @@ export function Sidebar() {
           setDragged={setDragged}
           onDropMerge={async (target, source) => {
             if (target === source) return;
-            const ok = await confirmDialog({
-              title: "Merge branches",
+            const action = await choiceDialog({
+              title: `Drop ${source} onto ${target}`,
               message:
                 headBranch === target
-                  ? `Merge "${source}" into "${target}"?`
-                  : `Check out "${target}" and merge "${source}" into it?`,
-              confirmLabel: "Merge",
+                  ? "Choose an operation."
+                  : `${target} is not checked out. MTGit will check it out before applying the selected operation.`,
+              choices: [
+                { label: `Merge ${source} into ${target}`, value: "merge" },
+                { label: `Rebase ${target} onto ${source}`, value: "rebase" },
+                { label: `Fast-forward ${target} to ${source}`, value: "ff" },
+              ],
             });
-            if (!ok) return;
+            if (!action) return;
             run(async () => {
-              if (headBranch !== target) await checkout(path, target);
-              return mergeRef(path, source).then(reportMerge);
+              if (headBranch !== target) await smartCheckout(path, target);
+              if (action === "rebase") return doRebase(source);
+              return mergeAdvanced(path, source, action === "ff" ? "ffOnly" : "noFf").then(reportMerge);
             });
           }}
+          hiddenRefs={hiddenRefs}
+          onToggleHidden={(name) => toggleHiddenRef(path, name)}
+          checkoutTarget={checkoutTarget}
         />
         <BranchSection
           title="Remote"
@@ -345,6 +408,9 @@ export function Sidebar() {
           onMenu={(e, b) => branchMenu(e, b, false)}
           dragged={dragged}
           setDragged={setDragged}
+          hiddenRefs={hiddenRefs}
+          onToggleHidden={(name) => toggleHiddenRef(path, name)}
+          checkoutTarget={checkoutTarget}
         />
         <PlainSection
           title="Tags"
@@ -412,6 +478,34 @@ export function Sidebar() {
             ))}
           </div>
         )}
+
+        <div className="section">
+          <SectionHead title="Submodules" icon="▣" count={submodules?.length ?? 0} />
+          {(submodules ?? []).map((submodule) => (
+            <div
+              key={submodule.path}
+              className="ref-item"
+              style={{ paddingLeft: 20 }}
+              title={submodule.url ?? submodule.path}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenu({
+                  x: event.clientX,
+                  y: event.clientY,
+                  items: [
+                    { label: "Update submodules", onClick: () => run(() => updateSubmodules(path), "Submodules updated") },
+                    { label: "Open folder", onClick: () => openPath(`${path}/${submodule.path}`).catch(toastError) },
+                    { label: "Copy path", onClick: () => copyText(submodule.path) },
+                  ],
+                });
+              }}
+            >
+              <span className="ref-icon">▣</span>
+              <span className="ref-name">{submodule.name}</span>
+              <span className="ref-count">{submodule.oid?.slice(0, 7)}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
@@ -474,6 +568,9 @@ function BranchSection({
   dragged,
   setDragged,
   onDropMerge,
+  hiddenRefs,
+  onToggleHidden,
+  checkoutTarget,
 }: {
   title: string;
   icon: string;
@@ -486,6 +583,9 @@ function BranchSection({
   dragged: string | null;
   setDragged: (s: string | null) => void;
   onDropMerge?: (target: string, source: string) => void;
+  hiddenRefs: string[];
+  onToggleHidden: (name: string) => void;
+  checkoutTarget: string | null;
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -513,7 +613,9 @@ function BranchSection({
                 onDoubleClick={() => onCheckout(b)}
                 onContextMenu={(e) => onMenu(e, b, !!local)}
               >
-                <span className="ref-icon">{local ? "⎇" : "☁"}</span>
+                <span className={`ref-icon${checkoutTarget === b.name ? " spinning" : ""}`}>
+                  {checkoutTarget === b.name ? "◌" : b.isHead ? "✓" : local ? "⎇" : "☁"}
+                </span>
                 <span className="ref-name">{folder ? b.name.slice(folder.length + 1) : b.name}</span>
                 {(b.ahead || b.behind) && (
                   <span className="ahead-behind">
@@ -522,6 +624,16 @@ function BranchSection({
                   </span>
                 )}
                 {b.isHead && <span className="head-dot" title={`HEAD: ${headBranch}`} />}
+                <button
+                  className="ref-eye"
+                  title={hiddenRefs.includes(b.name) ? "Show in graph" : "Hide from graph"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleHidden(b.name);
+                  }}
+                >
+                  {hiddenRefs.includes(b.name) ? "◌" : "◉"}
+                </button>
               </div>
             ))}
           </div>

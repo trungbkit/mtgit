@@ -10,6 +10,7 @@ import { StatusBar } from "../features/statusbar/StatusBar";
 import { ToastContainer } from "../components/ToastContainer";
 import { ConflictBanner } from "../components/ConflictBanner";
 import { DialogHost } from "../components/DialogHost";
+import { DetachedHeadBanner } from "../components/DetachedHeadBanner";
 import { useRepoEvents } from "../ipc/events";
 import { useSession } from "../stores/session";
 import "./app.css";
@@ -45,6 +46,7 @@ export function App() {
       <Toolbar />
       <TabBar />
       <ConflictBanner />
+      <DetachedHeadBanner />
       <div className="app-body">
         <div style={{ width: sidebarCollapsed ? 44 : sidebarW, flexShrink: 0 }}>
           <Sidebar />

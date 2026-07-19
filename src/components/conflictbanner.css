@@ -20,6 +20,10 @@
 }
 
 .cb-files {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
   color: var(--fg-muted, #adbac7);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -27,6 +31,14 @@
   flex: 1;
   min-width: 0;
   font-family: var(--mono, ui-monospace, monospace);
+}
+.cb-files:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.cb-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .cb-actions {

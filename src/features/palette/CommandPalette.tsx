@@ -1,7 +1,8 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { checkout, createBranch, gitNetwork, listRefs, openRepo } from "../../ipc/commands";
+import { createBranch, gitNetwork, listRefs, openRepo } from "../../ipc/commands";
+import { smartCheckout } from "../../lib/checkout";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import { promptDialog } from "../../stores/dialog";
@@ -80,7 +81,7 @@ export function CommandPalette() {
         list.push({
           id: `co-${b.name}`,
           label: `Checkout ${b.name}`,
-          run: wrap(() => checkout(repo.path, b.name), `Checked out ${b.name}`),
+          run: wrap(() => smartCheckout(repo.path, b.name), `Checked out ${b.name}`),
         });
       }
     }

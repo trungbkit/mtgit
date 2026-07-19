@@ -69,6 +69,17 @@
   gap: 8px;
   margin-top: 16px;
 }
+.dialog-choice-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 16px;
+}
+.dialog-choice-actions .dialog-btn {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+}
 
 .dialog-btn {
   padding: 6px 14px;

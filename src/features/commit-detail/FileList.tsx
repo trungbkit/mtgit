@@ -7,6 +7,7 @@ export interface FileItem {
   status: FileStatus;
   additions?: number;
   deletions?: number;
+  size?: number | null;
 }
 
 const STATUS_MARK: Record<FileStatus, { ch: string; cls: string }> = {
@@ -26,11 +27,13 @@ export function FileList({
   selected,
   onSelect,
   renderActions,
+  onContextMenu,
 }: {
   files: FileItem[];
   selected: string | null;
   onSelect: (path: string) => void;
   renderActions?: (f: FileItem) => React.ReactNode;
+  onContextMenu?: (event: React.MouseEvent, file: FileItem) => void;
 }) {
   const [tree, setTree] = useState(false);
 
@@ -48,7 +51,7 @@ export function FileList({
         </div>
       </div>
       {tree ? (
-        <TreeView files={files} selected={selected} onSelect={onSelect} renderActions={renderActions} />
+        <TreeView files={files} selected={selected} onSelect={onSelect} renderActions={renderActions} onContextMenu={onContextMenu} />
       ) : (
         <div className="filelist-items">
           {files.map((f) => (
@@ -60,6 +63,7 @@ export function FileList({
               selected={selected === f.path}
               onSelect={onSelect}
               renderActions={renderActions}
+              onContextMenu={onContextMenu}
             />
           ))}
         </div>
@@ -75,6 +79,7 @@ function FileRow({
   selected,
   onSelect,
   renderActions,
+  onContextMenu,
 }: {
   f: FileItem;
   label: string;
@@ -82,6 +87,7 @@ function FileRow({
   selected: boolean;
   onSelect: (path: string) => void;
   renderActions?: (f: FileItem) => React.ReactNode;
+  onContextMenu?: (event: React.MouseEvent, file: FileItem) => void;
 }) {
   const mark = STATUS_MARK[f.status];
   return (
@@ -89,12 +95,19 @@ function FileRow({
       className={`file-row${selected ? " selected" : ""}`}
       style={{ paddingLeft: 10 + indent * 14 }}
       onClick={() => onSelect(f.path)}
+      onContextMenu={(event) => onContextMenu?.(event, f)}
     >
       <span className={`file-mark ${mark.cls}`}>{mark.ch}</span>
       <span className="file-name">{label}</span>
+      {f.size != null && f.size >= 1024 * 1024 && <span className="file-size">{formatSize(f.size)}</span>}
       {renderActions && <span className="file-actions">{renderActions(f)}</span>}
     </div>
   );
+}
+
+function formatSize(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.ceil(size / 1024)} KB`;
 }
 
 interface TreeNode {
@@ -108,14 +121,16 @@ function TreeView({
   selected,
   onSelect,
   renderActions,
+  onContextMenu,
 }: {
   files: FileItem[];
   selected: string | null;
   onSelect: (path: string) => void;
   renderActions?: (f: FileItem) => React.ReactNode;
+  onContextMenu?: (event: React.MouseEvent, file: FileItem) => void;
 }) {
   const root = useMemo(() => buildTree(files), [files]);
-  return <div className="filelist-items">{renderNode(root, 0, selected, onSelect, renderActions)}</div>;
+  return <div className="filelist-items">{renderNode(root, 0, selected, onSelect, renderActions, onContextMenu)}</div>;
 }
 
 function buildTree(files: FileItem[]): TreeNode {
@@ -138,6 +153,7 @@ function renderNode(
   selected: string | null,
   onSelect: (path: string) => void,
   renderActions?: (f: FileItem) => React.ReactNode,
+  onContextMenu?: (event: React.MouseEvent, file: FileItem) => void,
 ): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   const entries = [...node.children.values()].sort((a, b) => {
@@ -156,6 +172,7 @@ function renderNode(
           selected={selected === child.file.path}
           onSelect={onSelect}
           renderActions={renderActions}
+          onContextMenu={onContextMenu}
         />,
       );
     } else {
@@ -164,7 +181,7 @@ function renderNode(
           {child.name}/
         </div>,
       );
-      out.push(...renderNode(child, depth + 1, selected, onSelect, renderActions));
+        out.push(...renderNode(child, depth + 1, selected, onSelect, renderActions, onContextMenu));
     }
   }
   return out;

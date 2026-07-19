@@ -162,6 +162,14 @@ pub fn commit_diff(repo: &Repository, oid: &str, path_filter: Option<&str>) -> R
     file_diffs(&diff)
 }
 
+pub fn compare_commits(repo: &Repository, old: &str, new: &str) -> Result<Vec<FileDiff>> {
+    let old_tree = repo.revparse_single(old)?.peel_to_commit()?.tree()?;
+    let new_tree = repo.revparse_single(new)?.peel_to_commit()?.tree()?;
+    let mut diff = repo.diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None)?;
+    enable_rename_detection(&mut diff);
+    file_diffs(&diff)
+}
+
 /// Structured diff of the working tree. `staged=true` diffs HEAD..index,
 /// otherwise index..workdir.
 pub fn worktree_diff(repo: &Repository, staged: bool, path_filter: Option<&str>) -> Result<Vec<FileDiff>> {

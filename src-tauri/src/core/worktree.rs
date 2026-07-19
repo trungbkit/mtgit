@@ -15,6 +15,15 @@ pub struct WorktreeInfo {
     pub locked: bool,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmoduleInfo {
+    pub name: String,
+    pub path: String,
+    pub url: Option<String>,
+    pub oid: Option<String>,
+}
+
 pub fn list(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
     let mut out = Vec::new();
     for name in repo.worktrees()?.iter().flatten() {
@@ -32,6 +41,19 @@ pub fn list(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+pub fn list_submodules(repo: &Repository) -> Result<Vec<SubmoduleInfo>> {
+    Ok(repo
+        .submodules()?
+        .into_iter()
+        .map(|submodule| SubmoduleInfo {
+            name: submodule.name().unwrap_or("submodule").to_string(),
+            path: submodule.path().to_string_lossy().to_string(),
+            url: submodule.url().map(str::to_string),
+            oid: submodule.head_id().map(|oid| oid.to_string()),
+        })
+        .collect())
 }
 
 /// Add a linked worktree at `path`. When `target` (an oid) is given, a new

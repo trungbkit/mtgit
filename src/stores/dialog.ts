@@ -24,6 +24,13 @@ export interface ConfirmOptions {
   danger?: boolean;
 }
 
+export interface ChoiceOptions {
+  title: string;
+  message?: string;
+  choices: { label: string; value: string; danger?: boolean }[];
+  cancelLabel?: string;
+}
+
 interface PromptRequest extends PromptOptions {
   kind: "prompt";
   resolve: (value: string | null) => void;
@@ -32,7 +39,11 @@ interface ConfirmRequest extends ConfirmOptions {
   kind: "confirm";
   resolve: (value: boolean) => void;
 }
-export type DialogRequest = PromptRequest | ConfirmRequest;
+interface ChoiceRequest extends ChoiceOptions {
+  kind: "choice";
+  resolve: (value: string | null) => void;
+}
+export type DialogRequest = PromptRequest | ConfirmRequest | ChoiceRequest;
 
 interface DialogState {
   current: DialogRequest | null;
@@ -57,5 +68,11 @@ export function promptDialog(opts: PromptOptions): Promise<string | null> {
 export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
   return new Promise((resolve) => {
     useDialog.getState().open({ ...opts, kind: "confirm", resolve });
+  });
+}
+
+export function choiceDialog(opts: ChoiceOptions): Promise<string | null> {
+  return new Promise((resolve) => {
+    useDialog.getState().open({ ...opts, kind: "choice", resolve });
   });
 }

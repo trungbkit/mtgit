@@ -3,8 +3,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  checkout,
-  cherryPick,
   createBranch,
   createPatch,
   createTag,
@@ -12,11 +10,14 @@ import {
   getGraph,
   getRemoteUrl,
   getStatus,
-  rebaseOnto,
+  mergeAdvanced,
+  rebaseStandard,
+  rewriteInfo,
   resetTo,
   revertCommit,
 } from "../../ipc/commands";
 import type { GraphRow } from "../../ipc/types";
+import type { RebaseAction } from "../../ipc/types";
 import { useSession, WORKING } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import { useConflict, type ConflictKind, conflictLabel } from "../../stores/conflict";
@@ -25,8 +26,12 @@ import { validateRefName } from "../../lib/refname";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
 import { Avatar } from "../../components/Avatar";
 import { copyText } from "../../lib/clipboard";
+import { smartCheckout } from "../../lib/checkout";
 import { timeAgo, formatTimestamp } from "../../lib/time";
 import { laneColor } from "./palette";
+import { CherryPickPopover } from "./CherryPickPopover";
+import { RebasePlanDialog } from "./RebasePlanDialog";
+import { CompareDialog } from "./CompareDialog";
 import "./graph.css";
 
 const ROW_HEIGHT = 28;
@@ -35,6 +40,7 @@ const DOT_RADIUS = 4.5;
 const GUTTER_PAD = 12;
 const BRANCH_COL_WIDTH = 200;
 const AVATAR_SIZE = 18;
+const EMPTY_HIDDEN_REFS: string[] = [];
 
 function useGraphData(path: string | undefined) {
   return useQuery({
@@ -62,6 +68,10 @@ export function GraphView() {
   const selectOid = useSession((s) => s.selectOid);
   const graphOpts = useSession((s) => s.graphOpts);
   const setGraphOpts = useSession((s) => s.setGraphOpts);
+  const hiddenRefs = useSession((s) =>
+    repo ? s.hiddenRefs[repo.path] ?? EMPTY_HIDDEN_REFS : EMPTY_HIDDEN_REFS,
+  );
+  const checkoutTarget = useSession((s) => s.checkoutTarget);
 
   const { data, isLoading, error } = useGraphData(repo?.path);
   const rows = data?.rows ?? [];
@@ -82,6 +92,24 @@ export function GraphView() {
   const setConflict = useConflict((s) => s.set);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [gearOpen, setGearOpen] = useState(false);
+  const [selectedOids, setSelectedOids] = useState<Set<string>>(new Set());
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
+  const [pick, setPick] = useState<{ oids: string[]; parents: string[] } | null>(null);
+  const [rebasePlan, setRebasePlan] = useState<{
+    base: string;
+    targetOid?: string;
+    action?: RebaseAction;
+    move?: "up" | "down";
+  } | null>(null);
+  const [comparison, setComparison] = useState<{ oldOid: string; newOid: string } | null>(null);
+
+  useEffect(() => {
+    setSelectedOids(new Set());
+    setSelectionAnchor(null);
+    setPick(null);
+    setRebasePlan(null);
+    setComparison(null);
+  }, [repo?.path]);
 
   const rowContextMenu = useCallback(
     (e: React.MouseEvent, row: GraphRow) => {
@@ -110,6 +138,47 @@ export function GraphView() {
 
       const localBadge = row.refs.find((r) => r.kind === "localBranch");
       const short = row.oid.slice(0, 7);
+      const chosenRows =
+        selectedOids.has(row.oid) && selectedOids.size > 1
+          ? rows.filter((candidate) => selectedOids.has(candidate.oid))
+          : [row];
+      const chosenOldestFirst = [...chosenRows].reverse().map((candidate) => candidate.oid);
+      const parentRow = rows.find((candidate) => candidate.oid === row.parents[0]);
+
+      const standardRebase = async () => {
+        try {
+          const info = await rewriteInfo(path, row.oid);
+          if (info.pushed || info.merges) {
+            const notes = [
+              info.pushed
+                ? `${info.pushed} affected commit(s) are already pushed; force push with lease will be required.`
+                : "",
+              info.merges ? `${info.merges} merge commit(s) will be flattened.` : "",
+            ]
+              .filter(Boolean)
+              .join("\n");
+            if (
+              !(await confirmDialog({
+                title: `Rebase ${head} onto ${short}`,
+                message: notes,
+                confirmLabel: "Rebase",
+                danger: info.pushed > 0,
+              }))
+            ) {
+              return;
+            }
+          }
+          await run(() =>
+            rebaseStandard(path, row.oid).then((result) =>
+              result.success
+                ? pushToast("success", `Rebased ${info.commits} commit(s)`)
+                : reportConflicts("rebase", result, ""),
+            ),
+          );
+        } catch (error) {
+          toastError(error);
+        }
+      };
 
       const createWorktreeFlow = async () => {
         const name = await promptDialog({
@@ -134,11 +203,11 @@ export function GraphView() {
       if (localBadge) {
         items.push({
           label: `Checkout ${localBadge.name}`,
-          onClick: () => run(() => checkout(path, localBadge.name), `Checked out ${localBadge.name}`),
+          onClick: () => run(() => smartCheckout(path, localBadge.name), `Checked out ${localBadge.name}`),
         });
       }
       items.push(
-        { label: "Checkout this commit", onClick: () => run(() => checkout(path, row.oid), "Checked out commit") },
+        { label: "Checkout this commit", onClick: () => run(() => smartCheckout(path, row.oid), "Checked out commit") },
         { label: "Create worktree from this commit", onClick: createWorktreeFlow },
         { separator: true },
         {
@@ -155,18 +224,20 @@ export function GraphView() {
           },
         },
         {
-          label: "Cherry pick commit",
+          label: chosenOldestFirst.length > 1 ? `Cherry-pick ${chosenOldestFirst.length} commits` : "Cherry-pick commit",
           onClick: () =>
-            run(() => cherryPick(path, row.oid).then((r) => reportConflicts("cherryPick", r, "Cherry-picked"))),
+            setPick({
+              oids: chosenOldestFirst,
+              parents: chosenOldestFirst.length === 1 ? row.parents : [],
+            }),
         },
         {
           label: `Rebase ${head} onto this commit`,
-          onClick: () =>
-            run(() =>
-              rebaseOnto(path, row.oid).then((r) =>
-                r.done ? pushToast("success", `Rebased ${r.applied} commit(s)`) : reportConflicts("rebase", r, ""),
-              ),
-            ),
+          onClick: standardRebase,
+        },
+        {
+          label: `Interactive rebase ${head} onto this commit`,
+          onClick: () => setRebasePlan({ base: row.oid }),
         },
         {
           label: `Reset ${head} to this commit`,
@@ -195,8 +266,60 @@ export function GraphView() {
           label: "Revert commit",
           onClick: () => run(() => revertCommit(path, row.oid).then((r) => reportConflicts("revert", r, "Reverted"))),
         },
+        {
+          label: "Edit commit message",
+          disabled: row.parents.length === 0,
+          onClick: () =>
+            row.parents[0] && setRebasePlan({ base: row.parents[0], targetOid: row.oid, action: "reword" }),
+        },
+        {
+          label: "Drop commit",
+          danger: true,
+          disabled: row.parents.length === 0,
+          onClick: async () => {
+            if (
+              row.parents[0] &&
+              (await confirmDialog({
+                title: "Drop commit",
+                message: `Drop ${short} and rewrite all of its children?`,
+                confirmLabel: "Review rebase plan",
+                danger: true,
+              }))
+            ) {
+              setRebasePlan({ base: row.parents[0], targetOid: row.oid, action: "drop" });
+            }
+          },
+        },
+        {
+          label: "Squash into parent",
+          disabled: !parentRow?.parents[0],
+          onClick: () =>
+            parentRow?.parents[0] &&
+            setRebasePlan({ base: parentRow.parents[0], targetOid: row.oid, action: "squash" }),
+        },
+        {
+          label: "Move commit up",
+          disabled: row.parents.length === 0,
+          onClick: () =>
+            row.parents[0] && setRebasePlan({ base: row.parents[0], targetOid: row.oid, move: "up" }),
+        },
+        {
+          label: "Move commit down",
+          disabled: !parentRow?.parents[0],
+          onClick: () =>
+            parentRow?.parents[0] &&
+            setRebasePlan({ base: parentRow.parents[0], targetOid: row.oid, move: "down" }),
+        },
         { separator: true },
         { label: "Copy commit sha", onClick: () => copyText(row.oid) },
+        {
+          label: "Compare two commits",
+          disabled: chosenRows.length !== 2,
+          onClick: () =>
+            chosenRows.length === 2 &&
+            setComparison({ oldOid: chosenRows[1].oid, newOid: chosenRows[0].oid }),
+        },
+        { label: "Compare against working directory", onClick: () => selectOid(WORKING) },
       );
       if (originUrl) {
         const web = commitWebUrl(originUrl, row.oid);
@@ -237,7 +360,7 @@ export function GraphView() {
       );
       setMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [repo, qc, pushToast, originUrl, setConflict],
+    [repo, qc, pushToast, originUrl, setConflict, rows, selectedOids, selectOid],
   );
 
   const parentRef = useRef<HTMLDivElement>(null);
@@ -367,6 +490,12 @@ export function GraphView() {
     return () => window.removeEventListener("keydown", onKey);
   }, [rows, selectedOid, selectOid, virtualizer]);
 
+  useEffect(() => {
+    if (!data?.head) return;
+    const index = rows.findIndex((row) => row.oid === data.head);
+    if (index >= 0) virtualizer.scrollToIndex(index, { align: "center" });
+  }, [data?.head]);
+
   if (!repo) {
     return <div className="graph-empty">Open a repository to view its history.</div>;
   }
@@ -376,12 +505,87 @@ export function GraphView() {
   if (error) {
     return <div className="graph-empty error">{String(error)}</div>;
   }
-  if (rows.length === 0) {
+  if (rows.length === 0 && !status?.isDirty) {
     return <div className="graph-empty">No commits yet.</div>;
   }
 
-  const dirtyCount =
-    (status?.staged.length ?? 0) + (status?.unstaged.length ?? 0) + (status?.conflicted.length ?? 0);
+  const dirtyCount = new Set([
+    ...(status?.staged ?? []).map((entry) => entry.path),
+    ...(status?.unstaged ?? []).map((entry) => entry.path),
+    ...(status?.conflicted ?? []).map((entry) => entry.path),
+  ]).size;
+
+  const selectRow = (event: React.MouseEvent, row: GraphRow) => {
+    if ((event.metaKey || event.ctrlKey)) {
+      setSelectedOids((current) => {
+        const next = new Set(current);
+        if (next.has(row.oid)) next.delete(row.oid);
+        else next.add(row.oid);
+        return next;
+      });
+    } else if (event.shiftKey && selectionAnchor) {
+      const from = rows.findIndex((candidate) => candidate.oid === selectionAnchor);
+      const to = rows.findIndex((candidate) => candidate.oid === row.oid);
+      if (from >= 0 && to >= 0) {
+        const [start, end] = from < to ? [from, to] : [to, from];
+        setSelectedOids(new Set(rows.slice(start, end + 1).map((candidate) => candidate.oid)));
+      }
+    } else {
+      setSelectedOids(new Set([row.oid]));
+    }
+    setSelectionAnchor(row.oid);
+    selectOid(row.oid);
+  };
+
+  const dropOnRef = (event: React.DragEvent, target: string, isHead: boolean) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!repo) return;
+    const commitOid = event.dataTransfer.getData("application/x-mtgit-commit");
+    if (commitOid) {
+      if (!isHead) {
+        pushToast("info", "Check out the target branch before cherry-picking onto it.");
+        return;
+      }
+      const commit = rows.find((candidate) => candidate.oid === commitOid);
+      setPick({ oids: [commitOid], parents: commit?.parents ?? [] });
+      return;
+    }
+    const source = event.dataTransfer.getData("application/x-mtgit-ref");
+    if (!source || source === target) return;
+    const runDrop = async (action: "merge" | "rebase" | "ff") => {
+      try {
+        if (repo.head.branch !== target) await smartCheckout(repo.path, target);
+        if (action === "rebase") {
+          const result = await rebaseStandard(repo.path, source);
+          if (!result.success) {
+            setConflict({ repoPath: repo.path, kind: "rebase", files: result.conflicts, canSkip: true });
+          } else {
+            pushToast("success", `Rebased ${target} onto ${source}.`);
+          }
+        } else {
+          const result = await mergeAdvanced(repo.path, source, action === "ff" ? "ffOnly" : "noFf");
+          if (result.kind === "conflicts") {
+            setConflict({ repoPath: repo.path, kind: "merge", files: result.conflicts });
+          } else {
+            pushToast("success", action === "ff" ? `Fast-forwarded ${target} to ${source}.` : `Merged ${source} into ${target}.`);
+          }
+        }
+        qc.invalidateQueries({ predicate: (query) => query.queryKey[1] === repo.path });
+      } catch (error) {
+        toastError(error);
+      }
+    };
+    setMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        { label: `Merge ${source} into ${target}`, onClick: () => runDrop("merge") },
+        { label: `Rebase ${target} onto ${source}`, onClick: () => runDrop("rebase") },
+        { label: `Fast-forward ${target} to ${source}`, onClick: () => runDrop("ff") },
+      ],
+    });
+  };
 
   return (
     <div className="graph-container">
@@ -424,8 +628,8 @@ export function GraphView() {
           onClick={() => selectOid(WORKING)}
         >
           <span className="wip-dot" />
-          <span className="wip-label">Uncommitted changes</span>
-          <span className="wip-count">{dirtyCount} file{dirtyCount === 1 ? "" : "s"}</span>
+          <span className="wip-label">// WIP</span>
+          <span className="wip-count">✎ {dirtyCount} changed file{dirtyCount === 1 ? "" : "s"}</span>
         </div>
       )}
       <div className="graph-scroll" ref={parentRef}>
@@ -440,16 +644,55 @@ export function GraphView() {
                 top={vi.start}
                 gutter={gutterWidth}
                 nodeLeft={BRANCH_COL_WIDTH + laneX(row.lane)}
-                selected={row.oid === selectedOid}
+                selected={row.oid === selectedOid || selectedOids.has(row.oid)}
                 opts={graphOpts}
-                onSelect={() => selectOid(row.oid)}
+                onSelect={(event) => selectRow(event, row)}
                 onContextMenu={(e) => rowContextMenu(e, row)}
+                onCheckoutRef={(name) =>
+                  repo &&
+                  smartCheckout(repo.path, name)
+                    .then(() => {
+                      pushToast("success", `Checked out ${name}.`);
+                      qc.invalidateQueries({ predicate: (query) => query.queryKey[1] === repo.path });
+                    })
+                    .catch(toastError)
+                }
+                onRefDrop={dropOnRef}
+                hiddenRefs={hiddenRefs}
+                checkoutTarget={checkoutTarget}
               />
             );
           })}
         </div>
       </div>
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
+      {pick && repo && (
+        <CherryPickPopover
+          repoPath={repo.path}
+          branch={repo.head.branch ?? repo.head.oid?.slice(0, 7) ?? "HEAD"}
+          oids={pick.oids}
+          parents={pick.parents}
+          onClose={() => setPick(null)}
+        />
+      )}
+      {rebasePlan && repo && (
+        <RebasePlanDialog
+          repoPath={repo.path}
+          base={rebasePlan.base}
+          targetOid={rebasePlan.targetOid}
+          initialAction={rebasePlan.action}
+          initialMove={rebasePlan.move}
+          onClose={() => setRebasePlan(null)}
+        />
+      )}
+      {comparison && repo && (
+        <CompareDialog
+          repoPath={repo.path}
+          oldOid={comparison.oldOid}
+          newOid={comparison.newOid}
+          onClose={() => setComparison(null)}
+        />
+      )}
     </div>
   );
 }
@@ -463,6 +706,10 @@ function GraphRowView({
   opts,
   onSelect,
   onContextMenu,
+  onCheckoutRef,
+  onRefDrop,
+  hiddenRefs,
+  checkoutTarget,
 }: {
   row: GraphRow;
   top: number;
@@ -470,27 +717,75 @@ function GraphRowView({
   nodeLeft: number;
   selected: boolean;
   opts: { relativeDates: boolean; showAuthor: boolean };
-  onSelect: () => void;
+  onSelect: (event: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onCheckoutRef: (name: string) => void;
+  onRefDrop: (event: React.DragEvent, target: string, isHead: boolean) => void;
+  hiddenRefs: string[];
+  checkoutTarget: string | null;
 }) {
+  const localNames = new Set(row.refs.filter((ref) => ref.kind === "localBranch").map((ref) => ref.name));
+  const collapsedRemotes = new Set(
+    row.refs
+      .filter((ref) => ref.kind === "remoteBranch")
+      .map((ref) => ref.name.split("/").slice(1).join("/"))
+      .filter((name) => localNames.has(name)),
+  );
+  const displayRefs = row.refs.filter(
+    (ref) =>
+      !hiddenRefs.includes(ref.name) &&
+      (ref.kind !== "remoteBranch" ||
+        !collapsedRemotes.has(ref.name.split("/").slice(1).join("/"))),
+  );
   return (
     <div
       className={`graph-row${selected ? " selected" : ""}`}
       style={{ top, height: ROW_HEIGHT }}
       onClick={onSelect}
       onContextMenu={onContextMenu}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.setData("application/x-mtgit-commit", row.oid);
+        event.dataTransfer.effectAllowed = "copy";
+      }}
     >
       <div className="row-refs" style={{ width: BRANCH_COL_WIDTH }}>
-        {row.refs.map((r) => (
-          <span key={r.kind + r.name} className={`badge badge-${r.kind}${r.isHead ? " head" : ""}`} title={r.name}>
+        {displayRefs.map((r) => (
+          <span
+            key={r.kind + r.name}
+            className={`badge badge-${r.kind}${r.isHead ? " head" : ""}`}
+            style={
+              r.isHead
+                ? { backgroundColor: laneColor(row.color), borderColor: laneColor(row.color) }
+                : { borderColor: laneColor(row.color), boxShadow: `inset 0 0 0 1px ${laneColor(row.color)}33` }
+            }
+            title={`${r.name} — double-click to checkout`}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              if (r.kind !== "tag" && !r.isHead) onCheckoutRef(r.name);
+            }}
+            draggable
+            onDragStart={(event) => {
+              event.stopPropagation();
+              event.dataTransfer.setData("application/x-mtgit-ref", r.name);
+              event.dataTransfer.effectAllowed = "move";
+            }}
+            onDragOver={(event) => {
+              if (r.kind !== "tag") event.preventDefault();
+            }}
+            onDrop={(event) => r.kind !== "tag" && onRefDrop(event, r.name, r.isHead)}
+          >
             {r.kind === "tag" ? "🏷 " : ""}
+            {r.isHead ? "✓ 💻 " : ""}
+            {r.kind === "remoteBranch" || (r.kind === "localBranch" && collapsedRemotes.has(r.name)) ? "☁ " : ""}
+            {checkoutTarget === r.name ? "◌ " : ""}
             {r.name}
           </span>
         ))}
       </div>
       <div className="row-graph" style={{ width: gutter }} />
       <span
-        className="node-avatar"
+        className={`node-avatar${row.parents.length > 1 ? " merge-node" : ""}`}
         style={{ left: nodeLeft - AVATAR_SIZE / 2, borderColor: laneColor(row.color) }}
       >
         <Avatar email={row.email} name={row.author} size={AVATAR_SIZE} />

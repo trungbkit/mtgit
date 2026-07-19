@@ -1,7 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { getStatus, gitAvailable, listRefs } from "../../ipc/commands";
+import { cancelGitNetwork, getStatus, gitAvailable, listRefs } from "../../ipc/commands";
+import { toastError } from "../../stores/toasts";
 import { useSession } from "../../stores/session";
 import "./statusbar.css";
 
@@ -64,7 +65,21 @@ export function StatusBar() {
         )}
       </div>
 
-      <div className="sb-center">{progress}</div>
+      <div className="sb-center">
+        <span>{progress}</span>
+        {progress && repo && (
+          <button
+            className="sb-cancel"
+            onClick={() =>
+              cancelGitNetwork(repo.path)
+                .then(() => setProgress("Cancelling…"))
+                .catch(toastError)
+            }
+          >
+            Cancel
+          </button>
+        )}
+      </div>
 
       <div className="sb-right">
         {hasGit === false && <span className="sb-warn" title="System git not found on PATH">⚠ git missing</span>}

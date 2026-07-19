@@ -169,6 +169,10 @@
   overflow: hidden;
   background: var(--bg-app);
 }
+.node-avatar.merge-node {
+  border-radius: 5px;
+  box-shadow: 0 0 0 1px var(--bg-app);
+}
 
 .badge {
   display: inline-flex;

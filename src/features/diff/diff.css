@@ -57,12 +57,33 @@
 }
 
 .hunk-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 2px 10px;
   background: var(--bg-panel-2);
   color: var(--accent-text);
   font-size: 11px;
   position: sticky;
   left: 0;
+}
+.hunk-actions {
+  display: flex;
+  gap: 5px;
+  padding-left: 12px;
+}
+.hunk-actions button {
+  padding: 1px 6px;
+  font-size: 10px;
+  background: var(--bg-panel);
+}
+.dline.add,
+.dline.del {
+  cursor: pointer;
+}
+.dline.line-selected {
+  box-shadow: inset 3px 0 0 var(--accent);
+  filter: brightness(1.18);
 }
 
 .dline {

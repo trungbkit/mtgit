@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import type { DiffLine, FileDiff } from "../../ipc/types";
+import { useMemo, useState } from "react";
+import type { DiffLine, FileDiff, Hunk } from "../../ipc/types";
 import type { DiffMode } from "../../stores/session";
 import { langForPath, tokenizeLine, useHighlighter } from "./highlight";
 import { wordDiff, type WordTok } from "./wordDiff";
@@ -36,15 +36,30 @@ function enrich(lines: DiffLine[]): RLine[] {
   return out;
 }
 
-export function DiffView({ diff, mode }: { diff: FileDiff; mode: DiffMode }) {
+export function DiffView({
+  diff,
+  mode,
+  staging,
+  onHunkAction,
+  onLinesAction,
+  onDiscardHunk,
+}: {
+  diff: FileDiff;
+  mode: DiffMode;
+  staging?: "stage" | "unstage" | null;
+  onHunkAction?: (hunk: Hunk) => void;
+  onLinesAction?: (hunk: Hunk, selected: Set<number>) => void;
+  onDiscardHunk?: (hunk: Hunk) => void;
+}) {
   const hl = useHighlighter();
   const lang = langForPath(diff.path);
+  const [selected, setSelected] = useState<Record<number, Set<number>>>({});
 
   const totalLines = useMemo(() => diff.hunks.reduce((n, h) => n + h.lines.length, 0), [diff]);
   const canHighlight = totalLines <= MAX_HIGHLIGHT_LINES ? hl : null;
 
   const enriched = useMemo(
-    () => diff.hunks.map((h) => ({ header: h.header, lines: enrich(h.lines) })),
+    () => diff.hunks.map((h) => ({ header: h.header, lines: enrich(h.lines), original: h })),
     [diff],
   );
 
@@ -59,15 +74,33 @@ export function DiffView({ diff, mode }: { diff: FileDiff; mode: DiffMode }) {
   }
 
   return mode === "inline" ? (
-    <InlineDiff hunks={enriched} hl={canHighlight} lang={lang} />
+    <InlineDiff
+      hunks={enriched}
+      hl={canHighlight}
+      lang={lang}
+      staging={staging}
+      selected={selected}
+      setSelected={setSelected}
+      onHunkAction={onHunkAction}
+      onLinesAction={onLinesAction}
+      onDiscardHunk={onDiscardHunk}
+    />
   ) : (
-    <SplitDiff hunks={enriched} hl={canHighlight} lang={lang} />
+    <SplitDiff
+      hunks={enriched}
+      hl={canHighlight}
+      lang={lang}
+      staging={staging}
+      onHunkAction={onHunkAction}
+      onDiscardHunk={onDiscardHunk}
+    />
   );
 }
 
 interface EHunk {
   header: string;
   lines: RLine[];
+  original: Hunk;
 }
 
 function LineContent({ line, hl, lang }: { line: RLine; hl: Highlighter | null; lang: string | null }) {
@@ -99,14 +132,53 @@ function LineContent({ line, hl, lang }: { line: RLine; hl: Highlighter | null; 
   );
 }
 
-function InlineDiff({ hunks, hl, lang }: { hunks: EHunk[]; hl: Highlighter | null; lang: string | null }) {
+function InlineDiff({
+  hunks,
+  hl,
+  lang,
+  staging,
+  selected,
+  setSelected,
+  onHunkAction,
+  onLinesAction,
+  onDiscardHunk,
+}: {
+  hunks: EHunk[];
+  hl: Highlighter | null;
+  lang: string | null;
+  staging?: "stage" | "unstage" | null;
+  selected: Record<number, Set<number>>;
+  setSelected: React.Dispatch<React.SetStateAction<Record<number, Set<number>>>>;
+  onHunkAction?: (hunk: Hunk) => void;
+  onLinesAction?: (hunk: Hunk, selected: Set<number>) => void;
+  onDiscardHunk?: (hunk: Hunk) => void;
+}) {
   return (
     <div className="diff-code">
       {hunks.map((h, hi) => (
         <div key={hi}>
-          <div className="hunk-header">{h.header}</div>
+          <HunkHeader
+            hunk={h.original}
+            staging={staging}
+            selected={selected[hi]}
+            onHunkAction={onHunkAction}
+            onLinesAction={onLinesAction}
+            onDiscardHunk={onDiscardHunk}
+          />
           {h.lines.map((l, li) => (
-            <div key={li} className={`dline ${l.kind}`}>
+            <div
+              key={li}
+              className={`dline ${l.kind}${selected[hi]?.has(li) ? " line-selected" : ""}`}
+              onClick={() => {
+                if (!staging || l.kind === "context") return;
+                setSelected((current) => {
+                  const next = { ...current, [hi]: new Set(current[hi] ?? []) };
+                  if (next[hi].has(li)) next[hi].delete(li);
+                  else next[hi].add(li);
+                  return next;
+                });
+              }}
+            >
               <span className="gutter">{l.oldNo ?? ""}</span>
               <span className="gutter">{l.newNo ?? ""}</span>
               <span className="sign">{l.kind === "add" ? "+" : l.kind === "del" ? "−" : " "}</span>
@@ -121,12 +193,31 @@ function InlineDiff({ hunks, hl, lang }: { hunks: EHunk[]; hl: Highlighter | nul
   );
 }
 
-function SplitDiff({ hunks, hl, lang }: { hunks: EHunk[]; hl: Highlighter | null; lang: string | null }) {
+function SplitDiff({
+  hunks,
+  hl,
+  lang,
+  staging,
+  onHunkAction,
+  onDiscardHunk,
+}: {
+  hunks: EHunk[];
+  hl: Highlighter | null;
+  lang: string | null;
+  staging?: "stage" | "unstage" | null;
+  onHunkAction?: (hunk: Hunk) => void;
+  onDiscardHunk?: (hunk: Hunk) => void;
+}) {
   return (
     <div className="diff-code split">
       {hunks.map((h, hi) => (
         <div key={hi}>
-          <div className="hunk-header">{h.header}</div>
+          <HunkHeader
+            hunk={h.original}
+            staging={staging}
+            onHunkAction={onHunkAction}
+            onDiscardHunk={onDiscardHunk}
+          />
           {pairLines(h.lines).map((pair, pi) => (
             <div key={pi} className="split-row">
               <Side line={pair.left} side="left" hl={hl} lang={lang} />
@@ -135,6 +226,41 @@ function SplitDiff({ hunks, hl, lang }: { hunks: EHunk[]; hl: Highlighter | null
           ))}
         </div>
       ))}
+    </div>
+  );
+}
+
+function HunkHeader({
+  hunk,
+  staging,
+  selected,
+  onHunkAction,
+  onLinesAction,
+  onDiscardHunk,
+}: {
+  hunk: Hunk;
+  staging?: "stage" | "unstage" | null;
+  selected?: Set<number>;
+  onHunkAction?: (hunk: Hunk) => void;
+  onLinesAction?: (hunk: Hunk, selected: Set<number>) => void;
+  onDiscardHunk?: (hunk: Hunk) => void;
+}) {
+  return (
+    <div className="hunk-header">
+      <span>{hunk.header}</span>
+      {staging && (
+        <span className="hunk-actions">
+          {!!selected?.size && (
+            <button onClick={() => onLinesAction?.(hunk, selected)}>
+              {staging === "stage" ? "Stage" : "Unstage"} selected lines
+            </button>
+          )}
+          {onDiscardHunk && <button onClick={() => onDiscardHunk(hunk)}>Discard hunk</button>}
+          <button onClick={() => onHunkAction?.(hunk)}>
+            {staging === "stage" ? "Stage hunk" : "Unstage hunk"}
+          </button>
+        </span>
+      )}
     </div>
   );
 }

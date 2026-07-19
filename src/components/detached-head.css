@@ -1,0 +1,20 @@
+.detached-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--yellow) 60%, var(--border));
+  background: color-mix(in srgb, var(--yellow) 12%, var(--bg-panel));
+  color: var(--yellow);
+  font-size: 12px;
+}
+
+.detached-banner span {
+  flex: 1;
+}
+
+.detached-banner button {
+  padding: 3px 9px;
+  font-size: 11px;
+}

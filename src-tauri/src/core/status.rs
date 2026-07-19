@@ -12,6 +12,7 @@ use std::path::Path;
 pub struct StatusEntry {
     pub path: String,
     pub status: FileStatus,
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Clone, Default)]
@@ -41,16 +42,21 @@ pub fn status(repo: &Repository) -> Result<StatusReport> {
             continue;
         }
 
+        let size = repo
+            .workdir()
+            .and_then(|workdir| std::fs::metadata(workdir.join(&path)).ok())
+            .map(|metadata| metadata.len());
+
         if s.contains(Status::CONFLICTED) {
-            report.conflicted.push(StatusEntry { path: path.clone(), status: FileStatus::Conflicted });
+            report.conflicted.push(StatusEntry { path: path.clone(), status: FileStatus::Conflicted, size });
             continue;
         }
 
         if let Some(st) = index_status(s) {
-            report.staged.push(StatusEntry { path: path.clone(), status: st });
+            report.staged.push(StatusEntry { path: path.clone(), status: st, size });
         }
         if let Some(st) = worktree_status(s) {
-            report.unstaged.push(StatusEntry { path, status: st });
+            report.unstaged.push(StatusEntry { path, status: st, size });
         }
     }
 
@@ -154,7 +160,23 @@ pub fn discard_paths(repo: &Repository, paths: &[String]) -> Result<()> {
     }
 
     if any_checkout {
-        repo.checkout_head(Some(&mut checkout))?;
+        // Restore from the index, not HEAD, so a file that is staged and then
+        // modified again keeps its staged snapshot intact.
+        repo.checkout_index(None, Some(&mut checkout))?;
+    }
+    Ok(())
+}
+
+pub fn ignore_path(repo: &Repository, path: &str) -> Result<()> {
+    if path.contains('\n') || path.contains('\r') {
+        return Err(Error::Msg("invalid path for .gitignore".into()));
+    }
+    let workdir = repo.workdir().ok_or_else(|| Error::Msg("bare repo".into()))?;
+    let ignore = workdir.join(".gitignore");
+    let current = std::fs::read_to_string(&ignore).unwrap_or_default();
+    if !current.lines().any(|line| line == path) {
+        let separator = if current.is_empty() || current.ends_with('\n') { "" } else { "\n" };
+        std::fs::write(ignore, format!("{current}{separator}{path}\n"))?;
     }
     Ok(())
 }

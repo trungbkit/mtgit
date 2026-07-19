@@ -132,6 +132,7 @@ export interface FileDiff {
 export interface StatusEntry {
   path: string;
   status: FileStatus;
+  size: number | null;
 }
 
 export interface StatusReport {
@@ -177,6 +178,66 @@ export interface GitOpResult {
   output: string;
 }
 
+export interface CommandResult extends GitOpResult {
+  oid: string | null;
+  conflicts: string[];
+  skipped: number;
+}
+
+export type CheckoutRecovery = "normal" | "stash" | "discard";
+
+export interface CheckoutResult {
+  branch: string | null;
+  detached: boolean;
+  autoStashed: boolean;
+  stashConflicts: boolean;
+  previousHead: string;
+  submodulesChanged: boolean;
+}
+
+export type RebaseAction = "pick" | "reword" | "squash" | "fixup" | "drop";
+
+export interface RebasePlanItem {
+  oid: string;
+  action: RebaseAction;
+  message?: string;
+}
+
+export interface RewriteInfo {
+  commits: number;
+  pushed: number;
+  merges: number;
+}
+
+export interface RebaseCommit {
+  oid: string;
+  summary: string;
+}
+
+export interface OperationInfo {
+  kind: "merge" | "rebase" | "cherryPick" | "revert" | "operation";
+  conflicts: string[];
+  currentSha: string | null;
+  current: number;
+  total: number;
+  canContinue: boolean;
+  canSkip: boolean;
+}
+
+export interface ConflictFile {
+  path: string;
+  ours: string;
+  theirs: string;
+  output: string;
+  binary: boolean;
+}
+
+export interface HistoryStatus {
+  undoLabel: string | null;
+  redoLabel: string | null;
+  restoredMessage: string | null;
+}
+
 // ---- Worktrees, blame, file history, file content ----
 
 export interface WorktreeInfo {
@@ -184,6 +245,13 @@ export interface WorktreeInfo {
   path: string;
   branch: string | null;
   locked: boolean;
+}
+
+export interface SubmoduleInfo {
+  name: string;
+  path: string;
+  url: string | null;
+  oid: string | null;
 }
 
 export interface BlameLine {

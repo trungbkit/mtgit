@@ -33,6 +33,8 @@ interface SessionState {
   paletteOpen: boolean;
   sidebarCollapsed: boolean;
   graphOpts: GraphOpts;
+  hiddenRefs: Record<string, string[]>;
+  checkoutTarget: string | null;
 
   setRepo: (repo: RepoInfo) => void;
   switchTab: (path: string) => void;
@@ -44,6 +46,8 @@ interface SessionState {
   setPaletteOpen: (v: boolean) => void;
   toggleSidebar: () => void;
   setGraphOpts: (o: Partial<GraphOpts>) => void;
+  toggleHiddenRef: (repoPath: string, ref: string) => void;
+  setCheckoutTarget: (ref: string | null) => void;
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -57,6 +61,8 @@ export const useSession = create<SessionState>((set) => ({
   paletteOpen: false,
   sidebarCollapsed: false,
   graphOpts: { relativeDates: true, showAuthor: true },
+  hiddenRefs: {},
+  checkoutTarget: null,
 
   setRepo: (repo) =>
     set((s) => {
@@ -69,7 +75,14 @@ export const useSession = create<SessionState>((set) => ({
       const tabs = s.tabs.some((t) => t.path === repo.path)
         ? s.tabs.map((t) => (t.path === repo.path ? repo : t))
         : [...s.tabs, repo];
-      return { repo, tabs, recentRepos: recent, selectedOid: null, selectedFile: null };
+      const sameActiveRepo = s.repo?.path === repo.path;
+      return {
+        repo,
+        tabs,
+        recentRepos: recent,
+        selectedOid: sameActiveRepo ? s.selectedOid : null,
+        selectedFile: sameActiveRepo ? s.selectedFile : null,
+      };
     }),
 
   switchTab: (path) =>
@@ -92,4 +105,12 @@ export const useSession = create<SessionState>((set) => ({
   setPaletteOpen: (v) => set({ paletteOpen: v }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setGraphOpts: (o) => set((s) => ({ graphOpts: { ...s.graphOpts, ...o } })),
+  toggleHiddenRef: (repoPath, ref) =>
+    set((state) => {
+      const current = new Set(state.hiddenRefs[repoPath] ?? []);
+      if (current.has(ref)) current.delete(ref);
+      else current.add(ref);
+      return { hiddenRefs: { ...state.hiddenRefs, [repoPath]: [...current] } };
+    }),
+  setCheckoutTarget: (checkoutTarget) => set({ checkoutTarget }),
 }));
