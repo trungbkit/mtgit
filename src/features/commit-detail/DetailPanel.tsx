@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { commitAdvanced, getCommit, getCommitDiff, getStatus } from "../../ipc/commands";
+import { refreshRepo } from "../../ipc/repoState";
 import type { CommitDetail, FileStatus } from "../../ipc/types";
 import { useSession, WORKING } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -116,7 +117,7 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
       if (!result.success) throw new Error(result.output);
       pushToast("success", "Commit message updated.");
       setAmending(false);
-      qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === repoPath });
+      await refreshRepo(qc, repoPath);
       if (result.oid) selectOid(result.oid);
     } catch (e) {
       toastError(e);

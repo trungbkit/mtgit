@@ -20,7 +20,8 @@ import type { GraphRow } from "../../ipc/types";
 import type { RebaseAction } from "../../ipc/types";
 import { useSession, WORKING } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
-import { useConflict, type ConflictKind, conflictLabel } from "../../stores/conflict";
+import { refreshRepo } from "../../ipc/repoState";
+import { type ConflictKind, conflictLabel } from "../../stores/conflict";
 import { confirmDialog, promptDialog } from "../../stores/dialog";
 import { validateRefName } from "../../lib/refname";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
@@ -106,7 +107,6 @@ export function GraphView() {
 
   const qc = useQueryClient();
   const pushToast = useToasts((s) => s.push);
-  const setConflict = useConflict((s) => s.set);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [gearOpen, setGearOpen] = useState(false);
   const [selectedOids, setSelectedOids] = useState<Set<string>>(new Set());
@@ -134,19 +134,21 @@ export function GraphView() {
       if (!repo) return;
       const path = repo.path;
       const head = repo.head.branch ?? "HEAD";
-      const refresh = () => qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === path });
+      const refresh = () => refreshRepo(qc, path);
       const run = async (fn: () => Promise<unknown>, ok?: string) => {
         try {
           await fn();
           if (ok) pushToast("success", ok);
-          refresh();
+          await refresh();
         } catch (err) {
           toastError(err);
         }
       };
+      // Toast only. The banner is `refreshRepo`'s to raise, from git's own
+      // record, so that a conflict looks identical however it was caused —
+      // including one the user made in the terminal (overview §5.1).
       const reportConflicts = (kind: ConflictKind, c: { conflicts: string[] }, okMsg: string) => {
         if (c.conflicts.length > 0) {
-          setConflict({ repoPath: path, kind, files: c.conflicts });
           pushToast("error", `${conflictLabel(kind)} paused — ${c.conflicts.length} conflicted file(s).`);
         } else if (okMsg) {
           pushToast("success", okMsg);
@@ -377,7 +379,7 @@ export function GraphView() {
       );
       setMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [repo, qc, pushToast, originUrl, setConflict, rows, selectedOids, selectOid],
+    [repo, qc, pushToast, originUrl, rows, selectedOids, selectOid],
   );
 
   const parentRef = useRef<HTMLDivElement>(null);
@@ -584,20 +586,20 @@ export function GraphView() {
         if (repo.head.branch !== target) await smartCheckout(repo.path, target);
         if (action === "rebase") {
           const result = await rebaseStandard(repo.path, source);
-          if (!result.success) {
-            setConflict({ repoPath: repo.path, kind: "rebase", files: result.conflicts, canSkip: true });
-          } else {
+          if (result.success) {
             pushToast("success", `Rebased ${target} onto ${source}.`);
+          } else {
+            pushToast("error", `Rebase paused — ${result.conflicts.length} conflicted file(s).`);
           }
         } else {
           const result = await mergeAdvanced(repo.path, source, action === "ff" ? "ffOnly" : "noFf");
           if (result.kind === "conflicts") {
-            setConflict({ repoPath: repo.path, kind: "merge", files: result.conflicts });
+            pushToast("error", `Merge paused — ${result.conflicts.length} conflicted file(s).`);
           } else {
             pushToast("success", action === "ff" ? `Fast-forwarded ${target} to ${source}.` : `Merged ${source} into ${target}.`);
           }
         }
-        qc.invalidateQueries({ predicate: (query) => query.queryKey[1] === repo.path });
+        await refreshRepo(qc, repo.path);
       } catch (error) {
         toastError(error);
       }
@@ -679,7 +681,7 @@ export function GraphView() {
                   smartCheckout(repo.path, name)
                     .then(() => {
                       pushToast("success", `Checked out ${name}.`);
-                      qc.invalidateQueries({ predicate: (query) => query.queryKey[1] === repo.path });
+                      return refreshRepo(qc, repo.path);
                     })
                     .catch(toastError)
                 }

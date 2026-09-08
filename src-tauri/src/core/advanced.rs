@@ -773,6 +773,55 @@ mod tests {
         dir
     }
 
+    /// The frontend's conflict banner is driven *only* by `operation_info`
+    /// (`docs/feature-requirements/00-overview.md` §5.1): no call site derives
+    /// banner state from its own operation's return value any more, because
+    /// `git_network` has no conflict list to return and a conflict made in the
+    /// terminal panel has no return value at all. That makes this function the
+    /// single point of failure for STATUS A1, so it is pinned here for a
+    /// conflict nobody reported to us — one produced by plain `git`.
+    #[test]
+    fn operation_info_reports_a_conflict_it_was_never_told_about() {
+        let dir = repo_with_commits();
+        let path = dir.path().to_str().unwrap();
+        assert!(
+            operation_info(path).unwrap().is_none(),
+            "a clean repo must report no operation, or the banner never goes away"
+        );
+
+        git(dir.path(), &["checkout", "-q", "-b", "side", "HEAD~1"]);
+        fs::write(dir.path().join("file.txt"), "side\n").unwrap();
+        git(dir.path(), &["add", "file.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "side change"]);
+        git(dir.path(), &["checkout", "-q", "main"]);
+
+        // Conflict via the git binary directly: nothing in our own code ran, so
+        // the only way to know about it is to read the repository.
+        let merge = Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["merge", "side"])
+            .output()
+            .unwrap();
+        assert!(!merge.status.success(), "fixture must actually conflict");
+
+        let info = operation_info(path)
+            .unwrap()
+            .expect("a conflicted merge must be discoverable from the repo");
+        assert_eq!(info.kind, "merge");
+        assert_eq!(info.conflicts, vec!["file.txt".to_string()]);
+        assert!(info.can_continue);
+        // `i of n` has no git-side record for a merge, so it must still be a
+        // usable default rather than 0 — the banner renders it verbatim.
+        assert_eq!((info.current, info.total), (1, 1));
+
+        git(dir.path(), &["merge", "--abort"]);
+        assert!(
+            operation_info(path).unwrap().is_none(),
+            "abort must clear the state, or the banner outlives the operation"
+        );
+    }
+
     #[test]
     fn native_commit_uses_staged_snapshot() {
         let dir = repo_with_commits();

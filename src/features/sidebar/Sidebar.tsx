@@ -22,10 +22,10 @@ import {
   stashPop,
   updateSubmodules,
 } from "../../ipc/commands";
+import { refreshRepo } from "../../ipc/repoState";
 import type { BranchInfo } from "../../ipc/types";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
-import { useConflict } from "../../stores/conflict";
 import { choiceDialog, confirmDialog, promptDialog } from "../../stores/dialog";
 import { validateRefName } from "../../lib/refname";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
@@ -47,7 +47,6 @@ export function Sidebar() {
   const checkoutTarget = useSession((s) => s.checkoutTarget);
   const qc = useQueryClient();
   const pushToast = useToasts((s) => s.push);
-  const setConflict = useConflict((s) => s.set);
   const [filter, setFilter] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
@@ -90,7 +89,7 @@ export function Sidebar() {
   const path = repo.path;
   const headBranch = repo.head.branch;
 
-  const refresh = () => qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === path });
+  const refresh = () => refreshRepo(qc, path);
   async function run(fn: () => Promise<unknown>, ok?: string) {
     try {
       await fn();
@@ -283,9 +282,10 @@ export function Sidebar() {
     });
   }
 
+  // These only toast. The banner comes from `refreshRepo` re-reading git, so
+  // that a conflict looks the same whoever caused it (overview §5.1).
   function reportMerge(res: Awaited<ReturnType<typeof mergeAdvanced>>) {
     if (res.kind === "conflicts") {
-      setConflict({ repoPath: path, kind: "merge", files: res.conflicts });
       pushToast("error", `Merge paused — ${res.conflicts.length} conflicted file(s).`);
     } else if (res.kind === "upToDate") {
       pushToast("info", "Already up to date.");
@@ -298,7 +298,6 @@ export function Sidebar() {
     if (r.success) {
       pushToast("success", "Rebase complete");
     } else {
-      setConflict({ repoPath: path, kind: "rebase", files: r.conflicts });
       pushToast("error", `Rebase paused — ${r.conflicts.length} conflicted file(s).`);
     }
   }

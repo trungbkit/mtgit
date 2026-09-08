@@ -17,6 +17,7 @@ import {
   stashPop,
   undo,
 } from "../../ipc/commands";
+import { refreshRepo } from "../../ipc/repoState";
 import { push, type NetOp } from "../network/net";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -81,7 +82,10 @@ export function Toolbar() {
     return () => window.clearInterval(timer);
   }, [repo?.path]);
 
-  const refresh = () => repo && qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === repo.path });
+  // Invalidate + re-read the in-progress operation. Never invalidate alone
+  // here: `gitNetwork` cannot report conflicts, so a conflicting pull has no
+  // other way to raise the banner (STATUS A1).
+  const refresh = () => (repo ? refreshRepo(qc, repo.path) : Promise.resolve());
 
   async function run(fn: () => Promise<unknown>, ok?: string) {
     try {

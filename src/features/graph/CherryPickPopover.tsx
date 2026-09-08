@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { cherryPickMany } from "../../ipc/commands";
-import { useConflict } from "../../stores/conflict";
+import { refreshRepo } from "../../ipc/repoState";
 import { toastError, useToasts } from "../../stores/toasts";
 import "./cherry-pick.css";
 
@@ -20,6 +21,7 @@ export function CherryPickPopover({
   const [commitImmediately, setCommitImmediately] = useState(true);
   const [mainline, setMainline] = useState(parents.length > 1 ? 1 : undefined);
   const pushToast = useToasts((state) => state.push);
+  const qc = useQueryClient();
 
   async function run() {
     try {
@@ -31,22 +33,16 @@ export function CherryPickPopover({
             ? `Cherry-picked ${oids.length} commit${oids.length === 1 ? "" : "s"} onto ${branch}.`
             : `Applied ${oids.length} commit${oids.length === 1 ? "" : "s"} to the index.`,
         );
-        onClose();
       } else if (result.conflicts.length) {
-        useConflict.getState().set({
-          repoPath,
-          kind: "cherryPick",
-          files: result.conflicts,
-          currentSha: oids[0],
-          current: 1,
-          total: oids.length,
-          canSkip: true,
-        });
         pushToast("error", `Cherry-pick paused — ${result.conflicts.length} conflicted file(s).`);
-        onClose();
       } else {
         pushToast("error", result.output || "Cherry-pick failed.");
+        return;
       }
+      // Await before unmounting: the banner has to be up before this popover
+      // closes, or the paused sequence has no visible Continue/Abort at all.
+      await refreshRepo(qc, repoPath);
+      onClose();
     } catch (error) {
       toastError(error);
     }

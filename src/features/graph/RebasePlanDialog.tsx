@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { interactiveRebase, rebaseCommits, rewriteInfo } from "../../ipc/commands";
+import { refreshRepo } from "../../ipc/repoState";
 import type { RebaseAction, RebasePlanItem, RewriteInfo } from "../../ipc/types";
 import { toastError, useToasts } from "../../stores/toasts";
-import { useConflict } from "../../stores/conflict";
 import "./rebase-plan.css";
 
 type PlanRow = RebasePlanItem & { summary: string };
@@ -27,6 +28,7 @@ export function RebasePlanDialog({
   const [loading, setLoading] = useState(true);
   const [dragging, setDragging] = useState<number | null>(null);
   const pushToast = useToasts((state) => state.push);
+  const qc = useQueryClient();
 
   useEffect(() => {
     Promise.all([rebaseCommits(repoPath, base), rewriteInfo(repoPath, base)])
@@ -83,21 +85,16 @@ export function RebasePlanDialog({
       );
       if (result.success) {
         pushToast("success", `Interactive rebase complete (${plan.length - (counts.drop ?? 0)} commits replayed).`);
-        onClose();
       } else if (result.conflicts.length) {
-        useConflict.getState().set({
-          repoPath,
-          kind: "rebase",
-          files: result.conflicts,
-          current: 1,
-          total: plan.length,
-          canSkip: true,
-        });
         pushToast("error", `Rebase paused — ${result.conflicts.length} conflicted file(s).`);
-        onClose();
       } else {
         pushToast("error", result.output || "Interactive rebase failed.");
+        return;
       }
+      // Await before unmounting, so a mid-plan stop leaves a banner behind
+      // rather than a silently paused rebase.
+      await refreshRepo(qc, repoPath);
+      onClose();
     } catch (error) {
       toastError(error);
     }

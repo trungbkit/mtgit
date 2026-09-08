@@ -541,6 +541,7 @@ Two contract notes that are easy to get wrong:
 | **Line-level staging is fiddly.** Patch synthesis must get hunk headers, CRLF, and missing-trailing-newline right or it corrupts the index. | Ship hunk-level (git2 callback, no patch synthesis) first; gate line-level behind a broad test matrix and always apply via `git apply --cached`, which validates the patch for us. |
 | **Interactive rebase via `GIT_SEQUENCE_EDITOR`** depends on git's todo format. | Format is stable and documented; pin behavior with an e2e test per verb rather than unit tests. |
 | **Undo journal can drift** from repo reality if the user runs git in the terminal panel. | Validate each journal entry against current ref state before offering undo; invalidate the entry (and grey the button) on mismatch. |
+| **The mutation seam is a single point of failure.** Every banner in the app is now one `operation_info` call (`ipc/repoState.ts`), where it used to be seven independent derivations. A regression there is invisible in seven places at once rather than one. | The single writer is the point — seven copies were how A1 hid. Backed by `operation_info_reports_a_conflict_it_was_never_told_about`, which pins the contract using a conflict made by the `git` binary directly. The seam's own reconciliation is still unverified by machine until P7 lands a frontend runner; that is the strongest remaining argument for pulling Vitest forward. |
 | ~~**50k+ repo perf** is unmeasured because the gate is ignored.~~ Now measured: 269ms of a 500ms budget (debug build). | ✅ P0 turned the gate on. Still add a scroll-frame budget check per release, and watch for flake on slower CI runners. |
 | **Windows has never been built.** | CI on all three OSes lands in P7, but run a manual Windows build **now** — P0 is done, and the longer it waits the worse the path/CRLF debt. (P0 note: the D4 deadlock tests are `#[cfg(unix)]`, so that path is unverified on Windows.) |
 | **Scope creep into provider integrations.** | §2.5 is the contract: PR/issue panels are out until P7 ships. `docs/feature-requirements/00-overview.md` §8.2–§8.3 extends that contract over GitLens's whole account-gated tier, so "GitLens has it" is not an argument for building it. |
@@ -587,10 +588,14 @@ If you want the shortest path to "this feels like GitKraken":
 3. ~~**P3 undo** + toast affordance~~ ✅ done as a phase; the inline Undo *on toasts* is still
    outstanding (§3.3), and it is a half-day that changes how safe the app feels.
 4. ~~**P4** conflict editor~~ ✅ done; **P5** drag-drop and interactive rebase ✅ done.
-5. **The defects in `docs/feature-requirements/STATUS.md` §1 first.** ← **next.** A1 in
-   particular — a conflicting pull leaves the user in a conflicted tree with no banner, no
-   Abort and no Continue. Shipping more features on top of that is building on a floor with a
-   hole in it, and the fix is one call to `syncOperation` in the shared `refresh()`.
+5. ~~**The defects in `STATUS.md` §1 first**, A1 in particular.~~ ◐ **A1 done** — the mutation
+   seam (`src/ipc/repoState.ts`: `syncOperation` + `refreshRepo`) is in, and it is now the only
+   writer to the conflict store and the only `invalidateQueries` in `src/`. It was *not* the
+   "one call" this line used to claim: there was no shared `refresh()` to put it in (six copies)
+   and seven places derived conflict state independently, two of them optimistically.
+   `STATUS.md` §1.1 has the full record. **A2–A5 remain** ← **next**, and A2 is now two lines
+   against the seam. A3's paused-op gate is the one that benefits most: it needed a single
+   chokepoint for mutations, and `refreshRepo` is it.
 6. **P5-search (G10)** — the largest remaining gap users feel, and no longer a design problem:
    `08-search-and-filter.md` specifies it down to the operator tokens. Pair it with P8 item 3
    (scroll markers), because hits you cannot locate are half a search.

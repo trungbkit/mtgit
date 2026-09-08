@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { operationAbort, operationContinue, operationSkip } from "../ipc/commands";
+import { refreshRepo } from "../ipc/repoState";
 import { conflictLabel, useConflict } from "../stores/conflict";
 import { useSession, WORKING } from "../stores/session";
 import { toastError, useToasts } from "../stores/toasts";
@@ -12,7 +13,6 @@ import "./conflictbanner.css";
  */
 export function ConflictBanner() {
   const active = useConflict((s) => s.active);
-  const clear = useConflict((s) => s.clear);
   const repoPathActive = useSession((s) => s.repo?.path);
   const toggleTerminal = useSession((s) => s.toggleTerminal);
   const terminalOpen = useSession((s) => s.terminalOpen);
@@ -23,14 +23,17 @@ export function ConflictBanner() {
   // Only surface the banner for the repo currently in view.
   if (!active || active.repoPath !== repoPathActive) return null;
   const { repoPath, kind, files, currentSha, current, total, canSkip } = active;
-  const refresh = () => qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === repoPath });
+  // Clearing and re-setting the banner is `refreshRepo`'s job, not ours: the
+  // backend owns both the conflict list and the `i of n` counter (it bumps its
+  // sequence meta on continue/skip), so anything computed here would be a
+  // second, drifting copy of state git already has (overview §5.1).
+  const refresh = () => refreshRepo(qc, repoPath);
 
   async function run(fn: () => Promise<unknown>, ok: string) {
     try {
       await fn();
       pushToast("success", ok);
-      clear();
-      refresh();
+      await refresh();
     } catch (e) {
       toastError(e);
     }
@@ -41,20 +44,10 @@ export function ConflictBanner() {
       const res = await (skip ? operationSkip(repoPath) : operationContinue(repoPath));
       if (res.success) {
         pushToast("success", `${conflictLabel(kind)} ${skip ? "skipped the commit and continued" : "complete"}.`);
-        clear();
       } else {
         pushToast("error", `Still ${res.conflicts.length} conflicted file(s) — resolve, then continue.`);
-        useConflict.getState().set({
-          repoPath,
-          kind,
-          files: res.conflicts,
-          currentSha,
-          current: Math.min((current ?? 1) + 1, total ?? 1),
-          total,
-          canSkip,
-        });
       }
-      refresh();
+      await refresh();
     } catch (e) {
       toastError(e);
     }

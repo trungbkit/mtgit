@@ -40,11 +40,59 @@ analysis (its §2.6 and P8).
 
 | # | Defect | Where | Why it matters |
 |---|---|---|---|
-| **A1** | **A conflicting pull leaves no conflict banner.** `Toolbar.net()` reports the failure as a toast and invalidates queries, but never calls `syncOperation` / sets `useConflict`. Menu-driven merge/rebase/cherry-pick set it from their own result; pull cannot, because `gitNetwork` returns a `GitOpResult` with no conflict list. The fs watcher would eventually cover it, but `git_network` holds an op guard, so the watcher's 300 ms debounce fires *inside* the 600 ms quiet window and the event is dropped. | `features/toolbar/Toolbar.tsx:120-170`, `ipc/events.ts:14-36`, `state.rs` `QUIET_MS` | The user is left in a conflicted tree with no banner, no Abort, and no Continue until they happen to touch a file. Breaks `04-pull.md` B4 and overview §5.1. **Fix: every mutating path calls `syncOperation(path)` after it completes — put it in the shared `refresh()`, not at the call sites.** |
+| ~~**A1**~~ | ✅ **FIXED.** **A conflicting pull left no conflict banner.** `Toolbar.net()` reported the failure as a toast and invalidated queries, but never called `syncOperation` / set `useConflict`. Menu-driven merge/rebase/cherry-pick set it from their own result; pull could not, because `gitNetwork` returns a `GitOpResult` with no conflict list. The fs watcher would eventually have covered it, but `git_network` holds an op guard, so the watcher's 300 ms debounce fires *inside* the 600 ms quiet window and the event is dropped. | was `features/toolbar/Toolbar.tsx:120-170`, `ipc/events.ts:14-36`; now `ipc/repoState.ts` | The user was left in a conflicted tree with no banner, no Abort, and no Continue until they happened to touch a file. Broke `04-pull.md` B4 and overview §5.1. **See §1.1 — the fix was larger than this row described.** |
 | **A2** | **`DetachedHeadBanner` never invalidates queries.** Its "Create branch here" and "Return to previous branch" both await the backend and then rely on the watcher — which is suppressed for 600 ms after the guarded command. | `components/DetachedHeadBanner.tsx:22-40` | The banner stays on screen after it has been resolved, and the graph keeps the old HEAD. Same class of bug as A1. |
 | **A3** | **Nothing blocks a second operation while one is paused.** `05-merge.md` B6, `02-checkout.md` B6 and `07-cherry-pick.md` §5 all require checkout/pull/rebase/cherry-pick to be refused with a toast pointing at the banner. There is no such check anywhere in `src/`. | all mutating call sites | git itself refuses most of these, so the user gets a raw git error instead of the specified pointer — recoverable, but it is the one place the spec asks us to be gentler than git. |
 | **A4** | **Auto-fetch never runs at open and ignores its own setting until reopen.** The interval effect is keyed on `repo?.path` only, so writing `mtgit.autoFetch.<path>` does not restart it — the code says so in its own toast ("takes effect when the repository is reopened"). No fetch fires on mount either, so ahead/behind is stale for the first interval. | `features/toolbar/Toolbar.tsx:62-81` | Violates `04-pull.md` §2 ("Ahead/behind state is always visible without any user action"). **Fix: read the interval into state, key the effect on it, and fetch once immediately.** |
 | **A5** | **Sidebar filter placeholder lies.** Placeholder reads `Filter (⌘ Option + f)`; the handler binds `⌘/Ctrl+F`. | `features/sidebar/Sidebar.tsx:57-66, 352` | Trivial, but it is the discoverability affordance for the shortcut. |
+
+### 1.1 A1 — what actually shipped, and why the row above understated it
+
+This row said the fix was "one call to `syncOperation` in the shared `refresh()`". Both halves
+of that were wrong, and the correction is worth recording so the same mis-sizing does not
+happen to A3:
+
+- **There was no shared `refresh()`.** Six components each defined their own identical
+  `qc.invalidateQueries({ predicate: q => q.queryKey[1] === path })` — `Toolbar`, `Sidebar`,
+  `GraphView`, `StagingView`, `CommandPalette`, `ConflictBanner`.
+- **`syncOperation` was not callable.** It was a closure *inside* `useRepoEvents`, so no
+  mutation site could have reached it even if it had tried.
+- **Seven places derived conflict state independently**, and only `events.ts` did it the way
+  overview §5.1 requires. `Sidebar`, `GraphView`, `RebasePlanDialog`, `CherryPickPopover` and
+  `ConflictBanner` each rebuilt it from their own operation's return value, and
+  `StagingView` + `ConflictEditor` went further: they filtered the resolved file out of the
+  store's list locally — remembered state, never reconciled against git, which is exactly what
+  §5.1 prohibits.
+- **`CherryPickPopover` and `RebasePlanDialog` never invalidated at all**, so even a *successful*
+  cherry-pick or interactive rebase left a stale graph.
+
+**What landed** (`src/ipc/repoState.ts`, new):
+
+- `syncOperation(path)` — exported, reads `operation_info` and is the **only** writer to the
+  conflict store in the whole frontend.
+- `refreshRepo(qc, path)` — invalidate **+** `syncOperation`, welded together so a caller cannot
+  do one without the other. It replaced all six `refresh()` copies and all nine raw
+  `invalidateQueries` call sites; `grep` now finds exactly one of each in `src/`.
+- Every hand-rolled conflict derivation deleted, including both optimistic file-list filters.
+  The `i of n` counter now comes from the backend's sequence meta (which `operation_continue` /
+  `operation_skip` already bump) instead of `ConflictBanner` computing `min(current+1, total)`
+  on top of an already-correct value.
+- The two dialogs await `refreshRepo` **before** `onClose()`, so a paused sequence has its
+  banner up before the dialog unmounts.
+
+**Test:** `operation_info_reports_a_conflict_it_was_never_told_about` (`core/advanced.rs`) —
+conflicts a merge with the `git` binary directly, so nothing in our code ran and reading the
+repository is the only way to know, then asserts kind/conflicts/`can_continue`/`(current,
+total)` and that `merge --abort` clears it. It pins the contract rather than reproducing A1:
+the bug was frontend wiring, and there is still no frontend test runner (P7), so **the
+reconciliation logic itself is unverified by machine** — `refreshRepo` was typechecked and
+built but not clicked through in the running app. `scripts/make-fixture.sh` ships a
+deliberately conflicting branch, which is the fastest manual check.
+
+**Also closed incidentally:** the successful-cherry-pick and successful-interactive-rebase
+staleness above, and the §5.1 violation in `StagingView` / `ConflictEditor`. **A2 was not
+touched** — `DetachedHeadBanner` still does not refresh, and is now a two-line fix
+(`refreshRepo(qc, repo.path)` in each handler) against the seam that exists.
 
 ## 2. Missing entry points (capability exists, no way to reach it)
 

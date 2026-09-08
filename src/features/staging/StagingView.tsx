@@ -13,6 +13,7 @@ import {
   stagePaths,
   unstagePaths,
 } from "../../ipc/commands";
+import { refreshRepo } from "../../ipc/repoState";
 import type { StatusEntry } from "../../ipc/types";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -20,7 +21,6 @@ import { confirmDialog } from "../../stores/dialog";
 import { FileViewer } from "../diff/FileViewer";
 import { FileList } from "../commit-detail/FileList";
 import { ConflictEditor } from "./ConflictEditor";
-import { useConflict } from "../../stores/conflict";
 import { ContextMenu, type MenuState } from "../../components/ContextMenu";
 import { copyText } from "../../lib/clipboard";
 import "./staging.css";
@@ -91,8 +91,7 @@ export function StagingView() {
     queryFn: () => getWorktreeDiff(repo.path, sel!.staged, sel!.path),
   });
 
-  const refresh = () =>
-    qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === repo.path });
+  const refresh = () => refreshRepo(qc, repo.path);
 
   async function run(fn: () => Promise<unknown>) {
     try {
@@ -165,11 +164,7 @@ export function StagingView() {
                     title="Resolve using ours"
                     onClick={(event) => {
                       event.stopPropagation();
-                      run(async () => {
-                        await resolveConflictSide(repo.path, file.path, "ours");
-                        const active = useConflict.getState().active;
-                        if (active) useConflict.getState().set({ ...active, files: active.files.filter((path) => path !== file.path) });
-                      });
+                      run(() => resolveConflictSide(repo.path, file.path, "ours"));
                     }}
                   >
                     O
@@ -178,11 +173,7 @@ export function StagingView() {
                     title="Resolve using theirs"
                     onClick={(event) => {
                       event.stopPropagation();
-                      run(async () => {
-                        await resolveConflictSide(repo.path, file.path, "theirs");
-                        const active = useConflict.getState().active;
-                        if (active) useConflict.getState().set({ ...active, files: active.files.filter((path) => path !== file.path) });
-                      });
+                      run(() => resolveConflictSide(repo.path, file.path, "theirs"));
                     }}
                   >
                     T

@@ -3,6 +3,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { useQueryClient } from "@tanstack/react-query";
 import type { FileDiff, Hunk } from "../../ipc/types";
 import { applyPatch } from "../../ipc/commands";
+import { refreshRepo } from "../../ipc/repoState";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import { confirmDialog } from "../../stores/dialog";
@@ -61,7 +62,7 @@ export function FileViewer({
     try {
       await applyPatch(repoPath, buildPatch(diff, hunk, selected), cached, reverse);
       pushToast("success", reverse ? (cached ? "Hunk unstaged." : "Hunk discarded.") : "Hunk staged.");
-      qc.invalidateQueries({ predicate: (query) => query.queryKey[1] === repoPath });
+      await refreshRepo(qc, repoPath);
     } catch (error) {
       toastError(error);
     }

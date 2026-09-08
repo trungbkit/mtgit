@@ -2,6 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { createBranch, listRefs, openRepo } from "../../ipc/commands";
+import { refreshRepo } from "../../ipc/repoState";
 import { smartCheckout } from "../../lib/checkout";
 import { push, runNet } from "../network/net";
 import { useSession } from "../../stores/session";
@@ -34,7 +35,7 @@ export function CommandPalette() {
     queryFn: () => listRefs(repo!.path),
   });
 
-  const refresh = () => repo && qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === repo.path });
+  const refresh = () => (repo ? refreshRepo(qc, repo.path) : Promise.resolve());
   const wrap = (fn: () => Promise<unknown>, ok?: string) => async () => {
     setOpen(false);
     try {

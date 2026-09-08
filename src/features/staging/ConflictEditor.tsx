@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { getConflictFile, resolveConflictContent, resolveConflictSide } from "../../ipc/commands";
-import { useConflict } from "../../stores/conflict";
+import { refreshRepo } from "../../ipc/repoState";
 import { toastError, useToasts } from "../../stores/toasts";
 import "./conflict-editor.css";
 
@@ -11,6 +12,7 @@ export function ConflictEditor({ repoPath, file }: { repoPath: string; file: str
   const [binary, setBinary] = useState(false);
   const [loading, setLoading] = useState(true);
   const pushToast = useToasts((s) => s.push);
+  const qc = useQueryClient();
   const hunks = useMemo(() => parseConflictMarkers(output), [output]);
 
   useEffect(() => {
@@ -26,12 +28,10 @@ export function ConflictEditor({ repoPath, file }: { repoPath: string; file: str
       .finally(() => setLoading(false));
   }, [repoPath, file]);
 
-  const markResolved = () => {
-    const active = useConflict.getState().active;
-    if (active?.repoPath === repoPath) {
-      useConflict.getState().set({ ...active, files: active.files.filter((path) => path !== file) });
-    }
-  };
+  // Re-read the index rather than dropping the file from the store's list: a
+  // resolution that only partially staged, or one the user undid in the
+  // terminal, would leave the optimistic version claiming the file was clean.
+  const markResolved = () => refreshRepo(qc, repoPath);
 
   async function save() {
     try {
