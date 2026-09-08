@@ -201,8 +201,26 @@ Frontend reports them with `toastError(e)`. Note that `gitNetwork` *resolves* wi
 
 ## Roadmap
 
-`GITKRAKEN_PARITY_PLAN.md` is the live plan: gap analysis vs GitKraken, phases P0–P7, and a
-status marker per phase. **P0 (correctness/perf defects) is done; P2 (hunk staging) is next.**
+`GITKRAKEN_PARITY_PLAN.md` is the live plan: gap analysis vs GitKraken, phases P0–P8, and a
+status marker per phase. **P0 and P2–P4 are done, P5 is done except commit search; P1
+(clone/init/remotes/start screen), P6–P7 and P8 (the GitLens-derived surfaces, G16–G28) are
+unstarted.** Its §8 says what to pick up next, and the answer is currently the defects in
+STATUS.md §1 rather than a phase.
+
+`docs/feature-requirements/` is the spec for the seven core features (commit, checkout, push,
+pull, merge, rebase, cherry-pick) plus `08-search-and-filter.md` (commit search, unbuilt), and
+`docs/feature-requirements/STATUS.md` audits the code against it — per-criterion verdicts plus
+the outstanding defects. Start there before picking up feature work; it is more current than the
+phase plan.
+
+Both the specs and the plan treat **two** references as "GitKraken", because two GitKraken
+products ship the same commit graph: GitKraken Desktop and **GitLens**
+(`gitkraken/vscode-gitlens`). GitLens is MIT outside its `plus/` tree, so it is a readable
+source for exact behaviour — the search grammar in `08-search-and-filter.md` came from it.
+`00-overview.md` §0 sets the precedence rule (Desktop wins on shell and gesture, GitLens on
+grammar and detail) and §8 records which GitLens features are in scope, adapted, or out; the
+`plus/` tree is not MIT and stays deferred. Don't re-open those verdicts per PR.
+
 `PLAN.md` and `VERIFY_HARDEN_PLAN.md` are historical — delivered, kept for context.
 
 When you finish a phase or a numbered item, update its status in the plan rather than leaving

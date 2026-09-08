@@ -28,7 +28,7 @@ Dragging onto a branch that is *not* checked out offers only "Checkout B then me
 
 | # | Rule |
 |---|---|
-| B1 | Merge runs `git merge --no-ff`? **No** — default is git's default (ff when possible) *unless* the user picked an explicit action: "Merge A into B" always creates a merge commit (`--no-ff`); "Fast-forward" runs `--ff-only`. |
+| B1 | The action the user picked decides the mode; MTGit never guesses. **"Merge A into B"** runs `--no-ff` and always produces a merge commit — a user who chose "merge" and got a silently fast-forwarded branch has lost the record of the merge. **"Fast-forward B to A"** runs `--ff-only` and never produces one. Git's own default (ff when possible) is used only where no explicit action was chosen — e.g. the merge half of a `pull`. |
 | B2 | Dirty working tree: allowed if git allows it; if git refuses, offer auto-stash like checkout B3. |
 | B3 | Conflicts → shared conflict state (overview §5), banner "Merge in progress". **Continue** creates the merge commit with staged resolutions; **Abort** = `git merge --abort`, restoring pre-merge state exactly. |
 | B4 | Merging an already-merged/ancestor branch: toast "Already up to date", no commit. |
@@ -37,16 +37,27 @@ Dragging onto a branch that is *not* checked out offers only "Checkout B then me
 
 ## 5. Conflict Editor Specifics (merge)
 
-- "Ours" = checked-out branch (B), "Theirs" = incoming (A); both labeled with branch names + lane colors, not just ours/theirs.
-- Hunk checkboxes: take left, take right, or both (order: left then right); output pane editable; per-file "Take all left / Take all right" bulk buttons.
-- File-level shortcuts in the conflicted list: "Resolve using Ours / Theirs" without opening the editor.
-- Non-text conflicts (binary, delete/modify): present as file-level choices only ("Keep ours / Keep theirs / Keep deleted").
+- Left pane = checked-out branch (B), right pane = incoming (A); both labeled with branch names + lane colors, never the bare words "ours"/"theirs" (overview §5.2 gives the labels for every operation).
+- Hunk controls: take left, take right, or both (order: left then right). These are *actions*, so render them as buttons — a checkbox implies a state that persists and can be unticked, which is not what applying a side to the output does. Output pane editable; per-file "Take all left / Take all right" bulk buttons.
+- **One panel, every file.** GitLens collects all conflicted files into a single panel showing both sides, rather than making resolution a per-file mode you enter and leave. Ours should too: the file list and the three panes live in the same view, selecting a file swaps the panes, and the resolved count updates in place. The reason is not tidiness — a rebase that stops with eleven conflicted files is navigated dozens of times, and a mode boundary per file is dozens of round trips.
+- File-level shortcuts in the conflicted list: "Resolve using \<branch\> / \<incoming\>" without opening the editor — labelled by ref, per overview §5.2, never "Ours / Theirs".
+- Region navigation with `n` / `p` across the *whole* set, not per file: `p` at the first conflict of a file moves to the last conflict of the previous one. The counter reads "conflict 3 of 17 · file 2 of 5".
+- Non-text conflicts (binary, delete/modify): present as file-level choices only. A delete/modify conflict gets all three — "Keep ours / Keep theirs / Keep deleted" — spelled out with what each side actually is ("Keep the file as modified on `feature`" / "Delete it, as on `main`"); a binary conflict gets the two content choices.
 
 ## 6. Acceptance Criteria
 
-- [ ] Drag-and-drop merge works from left panel and graph pills, with the drop menu exactly as specified; Escape cancels.
-- [ ] Explicit "Merge" always produces a merge commit; "Fast-forward" never does; availability of ff option computed correctly.
-- [ ] Conflict flow: banner, file list, three-pane editor with hunk checkboxes and editable output, Continue/Abort both correct.
-- [ ] "Already up to date" and dirty-tree cases behave per B2/B4.
-- [ ] Undo restores pre-merge tip after a clean merge.
-- [ ] All merge actions available via context menu (no DnD-only functionality).
+> Status audited 2026-09-08 — see `STATUS.md`.
+
+- [◐] Drag-and-drop merge works from left panel and graph pills, with the drop menu exactly as specified; Escape cancels. — works from both; the graph uses a cursor menu with Escape, the sidebar a modal `choiceDialog` (STATUS C5), and neither highlights only *legal* targets
+- [◐] Explicit "Merge" always produces a merge commit; "Fast-forward" never does; availability of ff option computed correctly. — modes are right (`--no-ff` / `--ff-only`); the ff entry is offered unconditionally (STATUS C6)
+- [◐] Conflict flow: banner, file list, three-pane editor with hunk controls and editable output, Continue/Abort both correct. — all present; panes are labelled "Ours"/"Theirs" (STATUS C4) and the hunk controls are checkboxes acting as buttons
+- [x] "Already up to date" and dirty-tree cases behave per B2/B4. — `--autostash`; `MergeKind::UpToDate`
+- [x] Undo restores pre-merge tip after a clean merge.
+- [x] All merge actions available via context menu (no DnD-only functionality). — sidebar branch menu; graph *pills* still have no ref menu (STATUS B1)
+- [ ] A paused operation blocks merge with a pointer to the banner (B6).
+
+**New in this revision (GitLens-derived) — none implemented:**
+
+- [ ] All conflicted files live in one panel; selecting a file swaps the panes without leaving the view (§5).
+- [ ] `n` / `p` navigate conflict regions across every conflicted file, with an `i of n · file j of k` counter.
+- [ ] Take-side shortcuts and pane headers are labelled by ref, not "Ours"/"Theirs" (STATUS C4).

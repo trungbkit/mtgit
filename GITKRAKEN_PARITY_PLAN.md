@@ -3,6 +3,21 @@
 Goal: close the gap between MTGit today and **GitKraken's core feature set**, with a UI/UX
 that reads as the same product family.
 
+**"GitKraken" here means the family, not one product.** Two GitKraken products ship the same
+Commit Graph: **GitKraken Desktop**, the standalone client this plan started from, and
+**GitLens** (`github.com/gitkraken/vscode-gitlens`), its git extension for VS Code. GitLens
+matters to us out of proportion to its form factor for one reason: it is *readable*. Everything
+in that repo outside a directory named `plus/` is MIT-licensed, so its search grammar, column
+model, conflict panel and rebase editor can be specified from source instead of inferred from
+screenshots — which is what §2.6 and P8 below are built on. Everything under `plus/` (Launchpad,
+the AI features, agent sessions, Cloud Patches) is under `LICENSE.plus`, is not MIT, and is
+listed in §2.5 as deferred. Matching behaviour is free; copying MIT *code* still owes
+attribution, so cite the file in a comment if you ever do.
+
+Where the two references disagree, **Desktop wins on shell and gesture, GitLens wins on grammar
+and detail**. `docs/feature-requirements/00-overview.md` §8 is the authoritative list of which
+GitLens features are in scope, adapted, or out — decided once there rather than per PR.
+
 This plan supersedes neither `PLAN.md` (the original MVP roadmap, now largely delivered) nor
 `VERIFY_HARDEN_PLAN.md` (P0/P1 hardening, cleared). It started from what was actually in the
 tree and describes work that was *not yet done* at the time of writing; phases are struck
@@ -12,11 +27,22 @@ through and annotated as they land.
 
 ## 1. Baseline — verified state of the repo
 
-> **Status: P0 complete (2026-09-08).** Sections 2.4 and 4/P0 below record what landed.
-> The rest of the plan is unchanged and unstarted.
+> **Status: P0 complete; P2–P5 substantially delivered against
+> `docs/feature-requirements/` (audited 2026-09-08 — read
+> `docs/feature-requirements/STATUS.md` for the per-criterion verdict and the outstanding
+> gaps).** P1 (clone / init / remote management / start screen) and P6–P7 are unstarted, and
+> P5's commit search (G10) has not been built. Sections 2.4 and 4/P0 record the P0 work; the
+> P2–P5 sections below describe what was intended, not what shipped — where the two differ,
+> STATUS.md is the record.
+>
+> **Revised after the GitLens pass:** §2.6 adds G16–G28 (gaps visible only once GitLens is
+> treated as a reference) and P8 sequences them; §2.5 grew to cover GitLens's account-gated
+> tier. The old "P2 is next" marker in §8 was stale — P2 through P5 had already landed — and is
+> corrected. Nothing in §2.1–§2.4 changed: the GitLens material is additive, and the P0 defect
+> record stands as written.
 
 Measured, not assumed: `pnpm exec tsc --noEmit` exits 0, `vite build` succeeds, `cargo clippy
---all-targets -- -D warnings` is clean, and `cargo test` reports **37 passed, 0 failed,
+--all-targets -- -D warnings` is clean, and `cargo test` reports **40 passed, 0 failed,
 0 ignored** — the 50k-commit perf gate now runs in the default suite. ~9k lines across
 `src/` + `src-tauri/src/`.
 
@@ -41,9 +67,11 @@ Measured, not assumed: `pnpm exec tsc --noEmit` exits 0, `vite build` succeeds, 
 
 ---
 
-## 2. Gap analysis vs GitKraken core
+## 2. Gap analysis vs the GitKraken family
 
-Grouped by how much it hurts a user who switches from GitKraken to MTGit today.
+§2.1–§2.5 are the original analysis against **GitKraken Desktop**, grouped by how much it hurts
+a user who switches from it to MTGit today. §2.6 adds the gaps that only become visible with
+**GitLens** as a second reference. Gap IDs are stable — G1–G15 are Desktop, G16–G28 are GitLens.
 
 ### 2.1 Blocking — a GitKraken user cannot start work
 
@@ -92,6 +120,48 @@ sparse checkout, GPG key management, cloud workspaces, AI commit messages. These
 GitKraken features but not *core git client* features; they are listed here so the boundary
 is explicit rather than accidental.
 
+**GitLens's account-gated tier lands in the same bucket, and almost exactly maps onto it.**
+Everything GitLens puts behind a sign-in is also everything under its non-MIT `plus/` tree:
+**Launchpad** (cross-repo PR triage) and the in-graph Pull Requests panel, **agent sessions**
+and the Agent Kanban, **GitKraken MCP**, **Cloud Patches**, **Cloud Workspaces**, and the AI
+features — Review Changes, Compose / Recompose Commits, Explain Changes, Generate Commit
+Message, Generate Stash Message, Generate PR Title/Description, Generate Changelog,
+**Automatic Rebase** (AI conflict resolution), and natural-language graph search. Each drags in
+an account system, a network boundary, or a model provider; none is a git operation.
+
+Two are worth naming as the first candidates if that boundary ever moves, because they need no
+account of ours and no new data: **Generate commit message** and **Explain changes** are single
+prompts over a diff `core/diff.rs` already produces. Also deferred but *not* for licensing
+reasons — they are simply feature-sized projects of their own — are GitLens's **Visual File
+History** timeline and its three **treemaps** (files, commits, agent activity).
+
+### 2.6 Gap analysis vs GitLens
+
+Gaps that only become visible once GitLens counts as a reference. G10 (commit search) is
+already above; GitLens does not add it, it *specifies* it — the grammar in
+`docs/feature-requirements/08-search-and-filter.md` was read out of GitLens's source, which
+turns G10 from a design problem into an implementation one.
+
+| # | Gap | Detail |
+|---|---|---|
+| G16 | **Graph has three fixed columns** | GitLens's graph carries BRANCH/TAG, GRAPH, MESSAGE, **Author, Changes, Date, SHA** — reorderable by dragging headers, toggleable by right-clicking them, persisted per repo. The Changes column (green added / red deleted diffstat bar) is the highest-value of the missing ones: it shows the shape of a commit without selecting it. |
+| G17 | **No minimap, no scroll markers** | The scrollbar gutter carries no marks for the checked-out branch, the selection, or search hits, so anything off-screen is unlocatable. This is a hard prerequisite for search being usable, not a garnish. |
+| G18 | **Worktrees exist in the backend and nowhere in the UI** | `core/worktree.rs` lists and adds; the sidebar has no WORKTREES section, the graph shows no per-worktree WIP row, and "Open in worktree…" is offered nowhere checkout is. GitLens treats a worktree as the *default* answer to "look at another branch". Almost entirely UI work over backend that already ships. |
+| G19 | **No terminal links** | MTGit has an xterm panel (`pty.rs`). GitLens makes SHAs, branch names, tags and `a..b` ranges printed in a terminal clickable → reveal in the graph. Best value-per-hour item in this table: a regex plus a call into the existing graph-selection path. |
+| G20 | **No autolinks** | Issue references in commit messages (`#123`, `ABC-456`) are inert text in the message column and the detail panel. Link out only — resolving issue *state* is provider integration (§2.5). |
+| G21 | **File viewer has no annotations** | Blame exists (`core/blame.rs`) as a list. Missing: the age **heatmap** gutter, a **recent-changes** annotation in the file-at-commit viewer, and **rich hovers** (message, author, dates, file count, actions) over blame rows, graph rows and ref pills — one shared hover component, not three. |
+| G22 | **History does not follow renames; no revision navigation** | `core/history.rs` has no `--follow`, and there is no line history (`-L`). Blame across a refactor is therefore untrustworthy. No prev/next stepping through a file's own versions. |
+| G23 | **No merge-target concept, no jump-to navigation** | Ahead/behind is computed against the upstream only. GitLens also tracks the **merge target** — the branch this one is destined to merge into — and offers jump-to-HEAD / upstream / merge-target. Being 40 behind the merge target while level with the upstream is currently invisible. |
+| G24 | **Detail panel is a single slot** | Selecting a branch or opening a comparison destroys the commit the user was reading. GitLens stacks details as sheets with a back affordance; it is also what makes "compare two commits" usable rather than a mode. |
+| G25 | **Conflict resolution is a per-file mode** | P4 shipped a 3-pane editor per file. GitLens collects every conflicted file into one panel with cross-file region navigation. An eleven-file rebase stop is navigated dozens of times, and a mode boundary per file is dozens of round trips. Subsumes STATUS C4 (panes labelled "Ours"/"Theirs"). |
+| G26 | **Interactive rebase does not predict conflicts** | GitLens marks, before execution, which rows will conflict. It is the feature that changes how the plan editor feels — reordering is otherwise a guess about which guess costs twenty minutes. The only genuinely new *algorithm* in this table: trial-apply the plan against a scratch index without moving any ref. |
+| G27 | **Command palette is a flat action list** | GitLens's Git Command Palette walks the user through a command's arguments step by step. Ours fires actions with no argument-gathering, so anything needing a target is unreachable from `⌘K`. |
+| G28 | **No contributors view** | No way to see who has committed and how much. It is also the natural picker for `author:` search (G10) and for co-author trailers (G7), which is why it is cheap to justify. |
+
+`docs/feature-requirements/00-overview.md` §8.2 records what was ruled **out** — Git CodeLens
+and caret-line blame (MTGit has no editing surface), VS Code panel/layout management, the
+treemaps and Visual File History. Read that before proposing any of them again.
+
 ---
 
 ## 3. UI/UX fidelity plan
@@ -113,6 +183,10 @@ runs alongside the phases, not an afterthought.
   can retune lanes.
 - **Density tokens.** `--row-height` (28px now) should be switchable across compact / normal /
   comfortable, and `--lane-width` should follow it.
+- **A heatmap ramp** (G21). Blame age needs a two-ended scale, not a lane colour: GitLens ships
+  `#f66a0a` hot / `#0a60f6` cold as defaults. Define `--heat-hot` / `--heat-cold` and interpolate;
+  do not reuse the lane ring, whose whole job is to be *categorical*, and which therefore reads
+  as "different branch" rather than "older".
 
 ### 3.2 Layout
 
@@ -122,13 +196,14 @@ Target GitKraken's chrome, top to bottom:
 ┌─ tab strip ── [repo A] [repo B] [+] ───────────────────────────────────┐
 ├─ toolbar ── repo▾  branch▾  ⟳ │ ↶ ↷ │ Pull Push Branch Stash Pop │ ⚙ 🔍 ▥ ┤
 ├──────────┬─────────────────────────────────────────┬───────────────────┤
-│ sidebar  │ graph  (BRANCH/TAG │ GRAPH │ MESSAGE …) │ commit detail     │
-│ Local    │  ◌ // WIP                               │  avatar + author  │
-│ Remote   │  ● merge feature into main              │  sha, date        │
-│ PRs      │  ● fix: …                               │  Files changed(N) │
-│ Tags     │                                         │   [Path|Tree]     │
-│ Stashes  │                                         │                   │
-│ Worktrees│                                         │                   │
+│ sidebar  │ graph  (BRANCH/TAG│GRAPH│MSG│AUTH│±│DATE)│ detail stack      │
+│ Local    │  ◌ // WIP                            ▏│ │  ‹ back           │
+│ Remote   │  ● merge feature into main           ▏│ │  avatar + author  │
+│ PRs      │  ● fix: …                            ▏│ │  sha, date        │
+│ Tags     │                            search hit ▎│ │  Files changed(N) │
+│ Stashes  │                                       │ │   [Path|Tree]     │
+│ Worktrees│                          scroll marks ↑│ │                   │
+│ Contrib. │                          + minimap     │ │                   │
 ├──────────┴─────────────────────────────────────────┴───────────────────┤
 │ terminal (collapsible)                                                 │
 ├────────────────────────────────────────────────────────────────────────┤
@@ -138,11 +213,17 @@ Target GitKraken's chrome, top to bottom:
 
 Changes from today's shell:
 1. **Tab strip always visible** with a `+` that opens the start screen in a new tab (G12, G3).
-2. **Sidebar sections in GitKraken order** with per-remote grouping and provider icons (G4).
-3. **Graph column headers stay**, plus a search field in the header and a density control in
-   the gear popover (G10).
-4. **Right panel becomes a stack**: commit header → files → (optionally) inline diff, with the
-   center panel able to take over for full-width diff — GitKraken's "focus view".
+2. **Sidebar sections in GitKraken order** with per-remote grouping and provider icons (G4),
+   plus WORKTREES and CONTRIBUTORS (G18, G28). Sidebar ref selection *is* the graph's `ref:`
+   filter — one code path, two entry points, not two parallel filter mechanisms.
+3. **Graph column headers become a real column model** (G16): draggable to reorder,
+   right-clickable to toggle, with Author / Changes / Date / SHA available beyond the three we
+   have. Plus a search field in the header (G10), scroll markers and an on-search minimap in
+   the scrollbar gutter (G17), and a density control in the gear popover.
+4. **Right panel becomes a stack** (G24): commit header → files → (optionally) inline diff,
+   pushed as sheets with a back affordance so selecting a branch or opening a comparison does
+   not destroy what the user was reading — with the center panel able to take over for
+   full-width diff (GitKraken's "focus view").
 
 ### 3.3 Component-level details that carry the look
 
@@ -150,8 +231,13 @@ Changes from today's shell:
   plus a HEAD marker; remote branches get a cloud/provider glyph; tags get the tag glyph.
   Overflow collapses to `+N` with a hover popover.
 - **Graph nodes.** Keep the avatar-in-node (already done, and it is the most GitKraken-ish
-  detail in the app). Add: hollow dashed node for the WIP row, larger ring on the selected row,
-  and hover-dimming of unrelated lanes so a commit's ancestry path pops.
+  detail in the app). Add: hollow dashed node for the WIP row — **one per worktree** (G18) —
+  larger ring on the selected row, hover-dimming of unrelated lanes so a commit's ancestry path
+  pops, and **ghost refs on row hover**: the nearest containing branch/tag, dimmed, so a commit
+  deep in a branch still says which branch it belongs to.
+- **Ahead/behind markers per row** (G23). Rows between the upstream tip and the local tip are
+  marked unpushed; rows a pull would bring in are marked unpulled. The push badge says *how
+  many*; the graph says *which*, which is the question you have before a force push.
 - **Edges.** Current bezier is right. Add merge-edge taper and make the color follow the
   *destination* lane consistently (already the intent in `graph.rs`; verify visually).
 - **Drop affordances.** While dragging, show a floating pill under the cursor ("Merge `feat/x`
@@ -232,9 +318,11 @@ is green (37 passed, 0 ignored) with the perf gate active, and clippy is clean a
 
 **Exit:** a user can install MTGit, clone a repo from a URL, and work — without ever using the CLI.
 
-### P2 — Hunk and line staging (1 week) → closes G5
+### P2 — Hunk and line staging — ✅ **DONE** → closed G5
 
-The highest-value single feature in the plan.
+The highest-value single feature in the plan. Shipped as `applyPatch` plus per-hunk and
+per-line UI; `docs/feature-requirements/01-commit.md` §3.3 is the current spec, and STATUS §5
+records the test coverage this still owes (CRLF, no-trailing-newline, added-lines-only).
 
 - Backend, hunk level: use git2's `Repository::apply` with `ApplyLocation::Index` and an
   `ApplyOptions` **hunk callback** that accepts only the selected hunk indices. Reverse the
@@ -251,7 +339,11 @@ The highest-value single feature in the plan.
 
 **Exit:** a mixed-change file can be split into two commits entirely in the UI.
 
-### P3 — Commit experience + undo (1 week) → closes G7, G9
+### P3 — Commit experience + undo — ✅ **DONE** → closed G7, G9
+
+Shipped as summary/description, amend, hook handling, and the undo/redo journal. Outstanding
+against the specs: the co-author picker and `commit.template` (G7's last two items, now
+criteria in `01-commit.md`), and the inline Undo on mutation toasts (§3.3).
 
 - Commit form: summary input (with 50-char soft counter) + description textarea (72-col guide),
   amend prefills the previous message, co-author trailer picker, `commit.template` support,
@@ -267,7 +359,11 @@ The highest-value single feature in the plan.
 **Exit:** every mutating action in the app is either undoable in one click or explicitly
 labelled as not undoable.
 
-### P4 — Conflict resolution editor (1–1.5 weeks) → closes G6
+### P4 — Conflict resolution editor — ✅ **DONE** → closed G6
+
+Shipped as a 3-pane editor with per-file take-side. Outstanding: pane labels still read
+"Ours"/"Theirs" (STATUS C4) and resolution is a per-file mode rather than one unified panel
+(G25) — both now criteria in `05-merge.md` §5, and both carried into P8.
 
 - Backend: `conflict_detail(file)` reading index stages 1/2/3 (`index.conflicts()`) → base /
   ours / theirs blobs, plus a 3-way merged buffer with markers; `resolve_conflict(file, content)`
@@ -281,11 +377,26 @@ labelled as not undoable.
 
 **Exit:** a conflicting merge and a conflicting rebase can both be completed without leaving MTGit.
 
-### P5 — Graph power tools (1–1.5 weeks) → closes G10, G11, G8
+### P5 — Graph power tools — ◐ **drag-drop + interactive rebase DONE; search unstarted** → closes G10, G11, G8
 
-- **Search & filter:** a graph-header search that filters by message / author / sha / touched
-  file (backend `search_commits(query, filters, limit)` over the cached rows plus a pathspec
-  revwalk), and a branch-scoped "solo" mode that seeds the revwalk from selected refs only.
+- **Search & filter (G10) — the remaining item.** A graph-header search, specified in full in
+  `docs/feature-requirements/08-search-and-filter.md`. **Use GitLens's grammar rather than
+  inventing one**: `message:`/`=:`, `-message:`, `author:`/`@:` (with `@me`), `committer:`,
+  `commit:`/`#:`, `file:`/`?:`, `change:`/`~:` (pickaxe), `type:`/`is:` (`stash`/`tip`/`merge`),
+  `after:`/`since:`/`>:`, `before:`/`until:`/`<:`, `ref:`/`^:` — read out of
+  `packages/git/src/models/search.ts` in `gitkraken/vscode-gitlens` (MIT). These map nearly
+  one-to-one onto `git log` flags, which is why they are the right shape, and a user arriving
+  from either GitKraken product already knows them.
+  Backend `search_commits(query, opts, limit)` **parses the grammar in Rust** (git logic belongs
+  on the git side — invariant 5's principle) and returns `{oid, page_hint}` rather than rows,
+  which the graph cache already holds. Cache results against `graph::refs_digest()` (invariant
+  4). Three result modes — highlight (default), filter, select — because filtering a lane graph
+  to a subset draws edges between rows that are not parent and child, and that is a lie about
+  history unless asked for. A branch-scoped "solo" mode is just `ref:`, seeded from the sidebar.
+  Two traps worth knowing before starting: `--invert-grep` inverts *every* `--grep` in the
+  command, so `message:` and `-message:` in one query cannot be expressed as one `git log`; and
+  a value beginning with `-` reaching `shellout.rs` is command injection, not a formatting bug
+  (invariant 6 — we run the real `git`).
 - **Graph drag-and-drop:** drag a sidebar branch or a graph row onto another row/branch → drop
   menu offering merge / rebase / reset / cherry-pick, with legal-target highlighting and the
   floating intent pill.
@@ -323,6 +434,47 @@ interactive rebase — are present.
 
 **Exit:** a tagged release that a stranger can install on all three platforms.
 
+### P8 — GitLens-derived surfaces (2–2.5 weeks) → closes G16–G28
+
+Everything in §2.6. It is one phase because the items share the graph and the detail panel, not
+because they ship together — most are independently landable, and the ordering below is by
+dependency, not priority. `docs/feature-requirements/STATUS.md` §6 is the criterion-level
+backlog; each item there is already marked against its own doc.
+
+1. **Worktrees in the UI (G18)** — first, because the backend exists (`core/worktree.rs`) and
+   four other docs' criteria hang off it. Sidebar WORKTREES section; `graph.rs` emits **one WIP
+   row per worktree** on that worktree's lane (synthetic rows, invariant 5 — not arithmetic in
+   `GraphView`); "Open in worktree…" wherever Checkout is offered; active worktree shown in the
+   toolbar, because a user who forgets which worktree they are in commits to the wrong branch.
+2. **Unified conflict panel (G25)** — reworks P4's per-file editor into one panel with cross-file
+   region navigation (`n`/`p` crossing file boundaries, `conflict i of n · file j of k`), and
+   relabels the panes by ref with lane colour, closing STATUS C4. Prerequisite for item 5.
+3. **Graph column model + gutter (G16, G17)** — configurable/reorderable/toggleable columns with
+   Author / Changes / Date / SHA; scroll markers and an on-search minimap. Do this *before* or
+   *with* search: a search whose hits cannot be located in the scrollbar is half a feature.
+4. **Detail stack (G24)** — push details as sheets with a back affordance; makes
+   compare-two-commits a sheet rather than a mode.
+5. **Interactive-rebase conflict prediction (G26)** — the one new algorithm here. Trial-apply the
+   plan against a scratch index (temp worktree, or in-memory `git2` merge per step) and mark the
+   rows that will clash, recomputing on every reorder. **No ref moves and nothing is written to
+   the repo to find out.** It is an estimate; label it as one — a clean prediction must not read
+   as a guarantee.
+6. **The cheap independent wins**, in value-per-hour order:
+   **terminal links (G19)** — a regex over xterm output plus the existing graph-selection call,
+   and the thing that makes the terminal panel feel integrated rather than embedded;
+   **blame heatmap + rich hovers + recent-changes annotation (G21)** — CSS and one shared hover
+   component over data we already fetch;
+   **autolinks (G20)** — per-repo patterns, link out only, no API calls;
+   **merge target + jump-to navigation (G23)** and per-row ahead/behind markers;
+   **contributors view (G28)**, which is also the `author:` and co-author picker;
+   **`--follow` / `-L` history and revision navigation (G22)** — without `--follow`, blame
+   across a refactor is quietly wrong, which makes this a correctness item, not a polish one;
+   **guided command palette (G27)**.
+
+**Exit:** the graph answers the three questions it cannot answer today — *which* commits are
+unpushed, *where* is the commit I am looking for, and *what will this rebase cost me* — and no
+GitLens feature is absent by accident rather than by the §2.5 / overview §8.2 decision.
+
 ---
 
 ## 5. New backend command surface
@@ -353,9 +505,32 @@ resolve_conflict(file, content) / take_ours(file) / take_theirs(file)
 # graph
 get_graph(skip, limit)                  # DONE — paginated by the frontend since P0
 graph::refs_digest()                    # DONE — internal, backs the D1 cache fix
-search_commits(query, filters, limit)
+search_commits(query, opts, limit) -> [{ oid, pageHint }]   # grammar parsed in Rust; see P5
 rebase_interactive(onto, todo[])
+
+# P8 — GitLens-derived (§2.6)
+list_worktrees() / add_worktree(path, ref, detach) / remove_worktree(path, force)
+                                        # list/add exist in core/worktree.rs; remove does not
+graph_wip_rows()                        # folded into get_graph: one synthetic WIP row per worktree
+predict_rebase_conflicts(onto, todo[]) -> [{ index, files[] }]   # trial-apply, moves no refs
+conflict_set() -> [{ file, kind, regions[] }]                    # every conflicted file at once
+blame_file(file, at)                    # DONE — add age buckets for the heatmap ramp
+file_log(file, limit, follow)           # follow: --follow (G22)
+line_log(file, start, end, limit)       # -L (G22)
+merge_target(branch) -> { ref, ahead, behind }
+contributors() -> [{ name, email, commits, lastCommit }]
+resolve_terminal_token(token) -> { kind, oid }   # SHA / branch / tag / a..b from xterm output
+autolink_patterns()                     # per-repo patterns + a built-in for origin's host
 ```
+
+Two contract notes that are easy to get wrong:
+
+- `search_commits` returns SHAs and page hints, **not rows**. The rows are already in the graph
+  cache; re-serialising them doubles the payload for nothing. Results cache against
+  `refs_digest()` so a fetch cannot leave a hit list pointing at a rewritten commit.
+- `predict_rebase_conflicts` is read-only and therefore takes **no op guard** (invariant 2), and
+  must leave no trace: no ref moves, no index writes, no `ORIG_HEAD`. If it needs a worktree, it
+  needs a temporary one it removes.
 
 ---
 
@@ -368,7 +543,10 @@ rebase_interactive(onto, todo[])
 | **Undo journal can drift** from repo reality if the user runs git in the terminal panel. | Validate each journal entry against current ref state before offering undo; invalidate the entry (and grey the button) on mismatch. |
 | ~~**50k+ repo perf** is unmeasured because the gate is ignored.~~ Now measured: 269ms of a 500ms budget (debug build). | ✅ P0 turned the gate on. Still add a scroll-frame budget check per release, and watch for flake on slower CI runners. |
 | **Windows has never been built.** | CI on all three OSes lands in P7, but run a manual Windows build **now** — P0 is done, and the longer it waits the worse the path/CRLF debt. (P0 note: the D4 deadlock tests are `#[cfg(unix)]`, so that path is unverified on Windows.) |
-| **Scope creep into provider integrations.** | §2.5 is the contract: PR/issue panels are out until P7 ships. |
+| **Scope creep into provider integrations.** | §2.5 is the contract: PR/issue panels are out until P7 ships. `docs/feature-requirements/00-overview.md` §8.2–§8.3 extends that contract over GitLens's whole account-gated tier, so "GitLens has it" is not an argument for building it. |
+| **GitLens as a reference is licence-shaped.** Its `plus/` tree (Launchpad, AI, agents, Cloud Patches) is under `LICENSE.plus`, not MIT — and that is precisely the half whose features are most tempting to copy. | Read `plus/` for understanding only; never lift code from it. For the MIT half, matching *behaviour* is free but copying *code* owes attribution — cite the source file in a comment. §2.5 keeps the whole `plus/` feature set deferred anyway, which makes this mostly self-enforcing. |
+| **Conflict prediction (G26) can be wrong**, and a wrong prediction is worse than none: a clean forecast that then conflicts destroys trust in the plan editor. | Label it an estimate in the UI, recompute on every reorder, and never gate Start Rebase on it. Test it against a fixture with a known-conflicting reorder, and against one where the conflict only appears *after* a squash — the case a naive per-commit check misses. |
+| **Search values reach the real `git` binary** (invariant 6), so a term beginning with `-` is command injection rather than a formatting bug. | Drop or `--`-guard every value before it reaches `shellout.rs`, with a test per operator. GitLens's own source drops leading-`-` values for `ref:` for exactly this reason — copy the guard, not just the grammar. |
 
 ---
 
@@ -377,18 +555,27 @@ rebase_interactive(onto, todo[])
 | Phase | Scope | Duration |
 |---|---|---|
 | ~~P0~~ | ~~Defect fixes (D1–D5)~~ | ✅ **done** |
-| P1 | Clone/init/remotes/start screen/tabs | 1 wk |
-| P2 | Hunk + line staging | 1 wk |
-| P3 | Commit form + undo journal | 1 wk |
-| P4 | Conflict editor | 1–1.5 wk |
-| P5 | Search, drag-drop, interactive rebase | 1–1.5 wk |
-| P6 | Settings, light theme, keybindings, icons | 1 wk |
-| P7 | CI, tests, packaging | 1 wk |
-| **Remaining** | P1–P7 | **~7–8 wk** (one dev) · **~4–5 wk** (two, splitting Rust core / React shell) |
+| P1 | Clone/init/remotes/start screen/tabs | 1 wk — **unstarted** |
+| ~~P2~~ | ~~Hunk + line staging~~ | ✅ **done** (`applyPatch` + per-hunk/per-line UI) |
+| ~~P3~~ | ~~Commit form + undo journal~~ | ✅ **done** (summary/description, amend, hooks, undo/redo) |
+| ~~P4~~ | ~~Conflict editor~~ | ✅ **done** (3-pane + per-file take-side); labels and region nav outstanding |
+| P5 | Search, drag-drop, interactive rebase | ◐ drag-drop + interactive rebase **done**; **commit search (G10) unstarted** — now fully specified in `08-search-and-filter.md`, so it is implementation, not design |
+| P6 | Settings, light theme, keybindings, icons | 1 wk — **unstarted** |
+| P7 | CI, tests, packaging | 1 wk — **unstarted** |
+| P8 | GitLens-derived surfaces (G16–G28) | 2–2.5 wk — **unstarted** |
+| **Remaining** | P1, P5-search, P6, P7, P8 + the gaps in `docs/feature-requirements/STATUS.md` | **~5.5–7 wk** (one dev) |
 
 The UI/UX fidelity work in §3 is distributed across P1 (shell + start screen), P3 (undo toasts),
-P5 (drop affordances), and P6 (tokens, density, icons) rather than batched — a separate
-"make it look like GitKraken" phase at the end would mean rebuilding components twice.
+P5 (drop affordances), P6 (tokens, density, icons) and P8 (columns, gutter, detail stack) rather
+than batched — a separate "make it look like GitKraken" phase at the end would mean rebuilding
+components twice.
+
+P8 is deliberately sequenced **after** P7 rather than before it, despite containing items
+cheaper than anything in P6. The reason is that P7 stands up CI and the first frontend test
+runner, and P8 is the largest body of *frontend* work left in the plan — landing it against a
+suite that exists is worth more than landing it a fortnight sooner. The exception is anything in
+P8 that is a correctness fix rather than a feature: `--follow` in file history (G22), and the
+argument-injection guard that comes with search, should not wait for a phase boundary.
 
 ## 8. Suggested order of attack
 
@@ -396,7 +583,20 @@ If you want the shortest path to "this feels like GitKraken":
 
 1. ~~**P0.D1 + P0.D2** — a stale or laggy graph undermines everything else.~~ ✅ done (all of
    P0 landed, not just D1/D2).
-2. **P2** — hunk staging is the feature users notice missing within five minutes. ← **next**
-3. **P1** — clone/start screen, so the app is self-sufficient.
-4. **P3 undo** + toast affordance — this is what makes the app feel safe.
-5. Then P4 → P5 → P6 → P7 in order.
+2. ~~**P2** — hunk staging is the feature users notice missing within five minutes.~~ ✅ done.
+3. ~~**P3 undo** + toast affordance~~ ✅ done as a phase; the inline Undo *on toasts* is still
+   outstanding (§3.3), and it is a half-day that changes how safe the app feels.
+4. ~~**P4** conflict editor~~ ✅ done; **P5** drag-drop and interactive rebase ✅ done.
+5. **The defects in `docs/feature-requirements/STATUS.md` §1 first.** ← **next.** A1 in
+   particular — a conflicting pull leaves the user in a conflicted tree with no banner, no
+   Abort and no Continue. Shipping more features on top of that is building on a floor with a
+   hole in it, and the fix is one call to `syncOperation` in the shared `refresh()`.
+6. **P5-search (G10)** — the largest remaining gap users feel, and no longer a design problem:
+   `08-search-and-filter.md` specifies it down to the operator tokens. Pair it with P8 item 3
+   (scroll markers), because hits you cannot locate are half a search.
+7. **P1** — clone/start screen, so the app is self-sufficient without the CLI.
+8. **P8 item 1 (worktrees)** — cheapest large-surface win in the plan: the backend already
+   exists, and it unblocks criteria in four of the seven feature docs.
+9. **P8 item 6's cheap wins** opportunistically — **terminal links** is the best
+   value-per-hour item in this document.
+10. Then P6 → P7 → the rest of P8 in order.

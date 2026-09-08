@@ -10,12 +10,13 @@ Committing in GitKraken is centered on the **WIP node** in the graph and the **c
 
 - Click the `// WIP` row in the graph (appears whenever the working tree is dirty).
 - Click the "N file changes in working directory — View Changes" banner at the top of the right panel.
-- Keyboard: `⌘/Ctrl+Shift+C` focuses the commit message box.
+- Keyboard: `⌘/Ctrl+Shift+C` selects the WIP row (opening the commit panel if it is closed) and focuses the Summary field.
 
 ## 3. UI Requirements
 
 ### 3.1 WIP node (graph)
 - Appears as the topmost row on the checked-out branch's lane when there are uncommitted changes (unstaged, staged, or untracked). Dashed circle node, italic `// WIP` text, pencil icon + count of changed files.
+- **One row per worktree** (overview §1.1). Each worktree has its own index and working tree, so each gets its own WIP row on the lane of whatever *it* has checked out, labelled with the worktree name once there is more than one. Selecting a worktree's WIP row opens the commit panel for **that** worktree — staging and committing there must not act on the main one.
 - Disappears immediately after a commit that empties the working tree, or after stash/discard.
 - Updates live via filesystem watcher (debounced ≤ 500 ms); no manual refresh.
 
@@ -24,13 +25,17 @@ Vertical layout, top to bottom:
 1. **Unstaged Files** section — header with file count and bulk actions: **Stage all**, **Discard all** (confirmation required). Each file row: status icon (A/M/D/R, colored), path (directory dimmed, filename bright), and hover actions: **Stage file**, **Discard changes** (confirm), open context menu (stage, discard, ignore — adds to `.gitignore`, copy path, open in external editor).
 - Path/Tree view toggle like the commit detail panel.
 2. **Staged Files** section — same row design, hover action **Unstage file**, header action **Unstage all**.
+- The section headers also carry **Stash** (all changes, or staged only) and, when a second worktree exists, **Copy changes to worktree…** — GitLens treats moving uncommitted work between worktrees as a first-class action, and it is the whole point of having worktrees: you started in the wrong one.
 3. **Commit Message** — two inputs: single-line **Summary** (counter turns amber past 50 chars, never blocks) and multi-line **Description**. Both persist per-repo across app restarts until committed.
+- **Co-author picker**: a button appends `Co-authored-by:` trailers, offering the CONTRIBUTORS list (overview §2) rather than free text, so the trailer is spelled the way git and the forge expect.
+- **`commit.template` is honoured**: when configured and the fields are empty, the template pre-fills the Description.
+- **Autolinks render in the preview**: an issue reference in the message (`#123`, `ABC-456`) is shown as a link, using the same per-repo patterns as the graph message column (overview §8.1). This is a preview affordance only — it does not rewrite the message.
 4. **Commit button** — full-width: `Commit changes to N files`. Disabled when staged list is empty or summary is blank; tooltip explains why. `⌘/Ctrl+Enter` in either text field triggers commit.
 5. **Amend checkbox** — toggles "Amend last commit": pre-fills message fields from HEAD; button becomes `Amend Previous Commit`. Warn inline (not modal) if HEAD is already pushed.
 
 ### 3.3 Hunk-level staging
 - Clicking a file in Unstaged/Staged opens its diff in the center view with per-hunk **Stage hunk / Unstage hunk / Discard hunk** buttons in each hunk header, and line-level staging via gutter selection (select lines → "Stage selected lines").
-- Discard hunk requires confirmation (destructive, but undoable via Undo within session).
+- Discard hunk requires confirmation, and the confirmation is the *only* guard: Undo restores refs and the index, not working-tree content that was never committed, so a discarded hunk is gone. Say so in the dialog ("This cannot be undone") rather than implying Undo will cover it.
 
 ## 4. Behavior
 
@@ -54,10 +59,26 @@ Vertical layout, top to bottom:
 
 ## 6. Acceptance Criteria
 
-- [ ] Dirty working tree always produces a WIP row; clean tree never does; updates are automatic (watcher).
-- [ ] Stage/unstage at file, hunk, and line level all work and are reflected in `git status` ground truth.
-- [ ] Commit disabled states + tooltips correct; `⌘Enter` commits.
-- [ ] Amend pre-fills, rewrites HEAD, and warns when HEAD is pushed.
-- [ ] Failed hook shows output and offers `--no-verify` retry.
-- [ ] Undo restores pre-commit state exactly (index + message).
-- [ ] Discard actions always confirm and never touch files not listed.
+> Status audited 2026-09-08 — see `STATUS.md`.
+
+- [x] Dirty working tree always produces a WIP row; clean tree never does; updates are automatic (watcher). — row is a strip above the list, not a lane row (§1.1)
+- [x] Stage/unstage at file, hunk, and line level all work and are reflected in `git status` ground truth. — `applyPatch` + `git apply --unidiff-zero`; untested for CRLF / no-trailing-newline
+- [x] Commit disabled states + tooltips correct; `⌘Enter` commits.
+- [x] Amend pre-fills, rewrites HEAD, and warns when HEAD is pushed.
+- [x] Failed hook shows output and offers `--no-verify` retry.
+- [x] Undo restores pre-commit state exactly (index + message). — message replayed via the `mtgit-restore-commit-message` event
+- [x] Discard actions always confirm and never touch files not listed.
+- [ ] Commit button becomes **Continue \<operation\>** while a merge / rebase / cherry-pick is paused. — Continue exists only in the banner
+- [ ] `⌘⇧C` works with the commit panel closed. — handler lives in `StagingView`, which is unmounted until WIP is selected
+
+**New in this revision (GitLens-derived) — none implemented:**
+
+- [ ] A dirty second worktree produces its **own** WIP row, and committing from it touches only that worktree (§3.1).
+- [ ] Co-author picker appends well-formed `Co-authored-by:` trailers from the contributor list.
+- [ ] `commit.template` pre-fills the Description when the fields are empty.
+- [ ] Issue references render as autolinks in the message preview and the graph message column.
+- [ ] **Stash** and **Copy changes to worktree…** are reachable from the commit panel headers.
+
+> Deferred (overview §8.3): **Generate commit message** and **Compose commits** — GitLens's AI
+> features. Named here so their absence is a decision. Of the two, generate-message is the one
+> that needs nothing we do not already have: it is one prompt over the staged diff.
