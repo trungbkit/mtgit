@@ -1,4 +1,5 @@
 import { gitNetwork, pushTarget } from "../../ipc/commands";
+import { requireNoPausedOperation } from "../../ipc/repoState";
 import type { RepoInfo } from "../../ipc/types";
 import { confirmDialog } from "../../stores/dialog";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -20,6 +21,10 @@ export async function runNet(
 ): Promise<boolean> {
   const toast = useToasts.getState().push;
   try {
+    // Only pull. Fetch touches no ref the paused operation cares about, and a
+    // push of the pre-operation tip is still a legal thing to want — §5.3 names
+    // pull because it is the one that merges into a conflicted tree.
+    if (op === "pull") await requireNoPausedOperation(repo.path, "pull");
     const res = await gitNetwork(repo.path, op, undefined, extra);
     if (res.success) {
       toast("success", successMessage ?? `${op} complete`);

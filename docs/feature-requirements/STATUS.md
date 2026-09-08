@@ -4,6 +4,12 @@ Audit of `docs/feature-requirements/*` against the code at `12e1909`. Every clai
 read out of the source, not inferred from the plan. The gate is green at this commit:
 40 Rust tests pass, `clippy -D warnings` clean, `tsc --noEmit` clean.
 
+> **§1 is now closed.** A1 landed with the mutation seam (`6e16ed8`); A2–A5 landed after it, and
+> each row below carries its own record. The gate is green with all five fixed: **42 Rust tests**,
+> clippy clean at `-D warnings`, `tsc --noEmit` clean, `vite build` succeeds. §2–§4 were never
+> defects — they are missing entry points, simplified dialogs and polish — so **§8 of
+> `GITKRAKEN_PARITY_PLAN.md` now points at P5-search (G10) rather than at this section.**
+
 > **Scope note (revised after the GitLens pass).** This audit covers the docs *as they stood on
 > 2026-09-08*, before `gitkraken/vscode-gitlens` was folded in as a second reference
 > (`00-overview.md` §0). The specs have since grown a set of GitLens-derived criteria, each
@@ -36,15 +42,15 @@ analysis (its §2.6 and P8).
 
 ---
 
-## 1. Defects — wrong behaviour, not missing polish
+## 1. Defects — wrong behaviour, not missing polish — ✅ all five fixed
 
 | # | Defect | Where | Why it matters |
 |---|---|---|---|
 | ~~**A1**~~ | ✅ **FIXED.** **A conflicting pull left no conflict banner.** `Toolbar.net()` reported the failure as a toast and invalidated queries, but never called `syncOperation` / set `useConflict`. Menu-driven merge/rebase/cherry-pick set it from their own result; pull could not, because `gitNetwork` returns a `GitOpResult` with no conflict list. The fs watcher would eventually have covered it, but `git_network` holds an op guard, so the watcher's 300 ms debounce fires *inside* the 600 ms quiet window and the event is dropped. | was `features/toolbar/Toolbar.tsx:120-170`, `ipc/events.ts:14-36`; now `ipc/repoState.ts` | The user was left in a conflicted tree with no banner, no Abort, and no Continue until they happened to touch a file. Broke `04-pull.md` B4 and overview §5.1. **See §1.1 — the fix was larger than this row described.** |
-| **A2** | **`DetachedHeadBanner` never invalidates queries.** Its "Create branch here" and "Return to previous branch" both await the backend and then rely on the watcher — which is suppressed for 600 ms after the guarded command. | `components/DetachedHeadBanner.tsx:22-40` | The banner stays on screen after it has been resolved, and the graph keeps the old HEAD. Same class of bug as A1. |
-| **A3** | **Nothing blocks a second operation while one is paused.** `05-merge.md` B6, `02-checkout.md` B6 and `07-cherry-pick.md` §5 all require checkout/pull/rebase/cherry-pick to be refused with a toast pointing at the banner. There is no such check anywhere in `src/`. | all mutating call sites | git itself refuses most of these, so the user gets a raw git error instead of the specified pointer — recoverable, but it is the one place the spec asks us to be gentler than git. |
-| **A4** | **Auto-fetch never runs at open and ignores its own setting until reopen.** The interval effect is keyed on `repo?.path` only, so writing `mtgit.autoFetch.<path>` does not restart it — the code says so in its own toast ("takes effect when the repository is reopened"). No fetch fires on mount either, so ahead/behind is stale for the first interval. | `features/toolbar/Toolbar.tsx:62-81` | Violates `04-pull.md` §2 ("Ahead/behind state is always visible without any user action"). **Fix: read the interval into state, key the effect on it, and fetch once immediately.** |
-| **A5** | **Sidebar filter placeholder lies.** Placeholder reads `Filter (⌘ Option + f)`; the handler binds `⌘/Ctrl+F`. | `features/sidebar/Sidebar.tsx:57-66, 352` | Trivial, but it is the discoverability affordance for the shortcut. |
+| ~~**A2**~~ | ✅ **FIXED.** **`DetachedHeadBanner` never invalidates queries.** Its "Create branch here" and "Return to previous branch" both awaited the backend and then relied on the watcher — which is suppressed for 600 ms after the guarded command. | `components/DetachedHeadBanner.tsx` | The banner stayed on screen after it had been resolved, and the graph kept the old HEAD. Same class of bug as A1, and the two-line fix §1.1 predicted: `await refreshRepo(qc, path)` in each handler. Both handlers also gained A3's gate, since both move HEAD. |
+| ~~**A3**~~ | ✅ **FIXED.** **Nothing blocks a second operation while one is paused.** `05-merge.md` B6, `02-checkout.md` B6, `07-cherry-pick.md` §5 and overview §5.3 all require checkout/pull/merge/rebase/cherry-pick/reset to be refused with a toast pointing at the banner. There was no such check anywhere in `src/`. | `ipc/repoState.ts:requireNoPausedOperation` + 11 call sites | git itself refused most of these, so the user got a raw git error instead of the specified pointer — recoverable, but it is the one place the spec asks us to be gentler than git. **See §1.2.** |
+| ~~**A4**~~ | ✅ **FIXED.** **Auto-fetch never runs at open and ignores its own setting until reopen.** The interval effect was keyed on `repo?.path` only, so writing `mtgit.autoFetch.<path>` did not restart it — the code said so in its own toast ("takes effect when the repository is reopened"). No fetch fired on mount either, so ahead/behind was stale for the first interval. | `features/toolbar/Toolbar.tsx` | Violated `04-pull.md` §2 ("Ahead/behind state is always visible without any user action"). Fixed as prescribed — `autoFetchMinutes` is state, the timer effect is keyed on it, `configureAutoFetch` sets it directly, and one fetch fires on open. A `lastAutoFetch` ref (attempt time, distinct from the tooltip's `lastFetch` success time) keeps StrictMode's second effect pass, and a mere interval change, from re-fetching. |
+| ~~**A5**~~ | ✅ **FIXED.** **Sidebar filter placeholder lies.** Placeholder read `Filter (⌘ Option + f)`; the handler binds `⌘/Ctrl+F`. | `features/sidebar/Sidebar.tsx` | Trivial, but it is the discoverability affordance for the shortcut. The placeholder now reads `⌘F` or `Ctrl+F` per platform; the handler was left alone, since it already binds what the spec's other shortcuts bind. |
 
 ### 1.1 A1 — what actually shipped, and why the row above understated it
 
@@ -90,9 +96,55 @@ built but not clicked through in the running app. `scripts/make-fixture.sh` ship
 deliberately conflicting branch, which is the fastest manual check.
 
 **Also closed incidentally:** the successful-cherry-pick and successful-interactive-rebase
-staleness above, and the §5.1 violation in `StagingView` / `ConflictEditor`. **A2 was not
-touched** — `DetachedHeadBanner` still does not refresh, and is now a two-line fix
-(`refreshRepo(qc, repo.path)` in each handler) against the seam that exists.
+staleness above, and the §5.1 violation in `StagingView` / `ConflictEditor`. A2 was not touched
+by that pass and was fixed afterwards, as the two-line change against the seam this paragraph
+predicted.
+
+### 1.2 A3 — where the gate lives, and what it deliberately does not stop
+
+§1.1 warned that A1 was mis-sized and predicted A3 would benefit most from a single chokepoint.
+It did, but the chokepoint is not `refreshRepo`: that runs *after* a mutation, and a gate has to
+run before one. What landed instead is one function in the same seam module —
+`ipc/repoState.ts:requireNoPausedOperation(path, action)` — called from eleven places.
+
+- **It re-reads git before answering** (§5.1). The conflict store is only as fresh as the last
+  refresh, and a stale "no operation" would pass the action through to the raw git error the gate
+  exists to replace. `syncOperation` swallows its own errors, so a repo we cannot interrogate
+  fails **open**: a gate that has lost its footing must not become a wall.
+- **It throws rather than returning a verdict.** Every mutating call site in `src/` already
+  funnels failures into `toastError`, so a throw reports itself exactly once, and in a composite
+  flow (check out the target, *then* merge) it stops the rest of the sequence for free.
+- **Two of the eleven are real chokepoints, not repetition.** `lib/checkout.ts:smartCheckout`
+  covers all seven checkout entry points — sidebar, graph rows, ref pills, toolbar, palette and
+  both drop flows — and `net.ts:runNet` covers the palette's pull. The rest are one helper per
+  operation per file (`Sidebar.doMerge` / `doRebase`, `GraphView.doReset` / `standardRebase` /
+  `runDrop`, `RebasePlanDialog.start`, `CherryPickPopover.run`), which is why three merge menu
+  items and three reset menu items share one call each rather than six.
+- **What is *not* gated is the point of the design.** Staging, commit, and the banner's own
+  Continue / Skip / Abort stay open, because they are how the user gets *out* of the paused
+  state. Fetch and push stay open too: fetch touches no ref the paused operation cares about,
+  and pushing the pre-operation tip is still a legal thing to want. §5.3 names pull because it
+  is the one that merges into a conflicted tree.
+- **The refusal points at the banner, as §5.3 asks.** `revealConflictBanner()` dispatches an
+  event the banner listens for; it flashes and calls `scrollIntoView`. The flash is the
+  load-bearing half today — the banner sits outside any scroll container — and the scroll is
+  insurance for the day the shell grows one. Without it the user is told to look at something
+  that never moved.
+
+**Test:** `operation_info_still_reports_a_paused_operation_with_no_conflicts_left`
+(`core/advanced.rs`). The gate asks exactly one question, so it is only as good as
+`operation_info`'s willingness to report an operation whose conflicts have all been resolved
+and staged — and *that* is the dangerous half of the paused state, not the harmless one: a
+rebase stopped mid-plan with a clean index still has replays pending, and a checkout there
+abandons them. The conflict list is empty at that point, so anything keying off
+`conflicts.is_empty()` would wave the checkout through. The test was confirmed to fail against
+exactly that simulated regression before being kept.
+
+**Still unverified by machine**, for the same reason A1's fix was: the gate itself is frontend
+wiring and there is no frontend test runner (P7, §5 below). The Rust test pins the contract the
+gate depends on, not the eleven call sites that consult it. `scripts/make-fixture.sh` ships a
+deliberately conflicting branch, which is the fastest manual check — merge it, then try to check
+out another branch.
 
 ## 2. Missing entry points (capability exists, no way to reach it)
 

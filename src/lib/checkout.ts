@@ -1,4 +1,5 @@
 import { checkoutAdvanced } from "../ipc/commands";
+import { requireNoPausedOperation } from "../ipc/repoState";
 import type { CheckoutResult } from "../ipc/types";
 import { choiceDialog, confirmDialog } from "../stores/dialog";
 import { useToasts } from "../stores/toasts";
@@ -16,6 +17,12 @@ function finish(result: CheckoutResult): CheckoutResult {
 
 /** Checkout with Git's normal carry-forward behavior and collision recovery. */
 export async function smartCheckout(path: string, target: string): Promise<CheckoutResult> {
+  // Every checkout in the app comes through here — sidebar, graph rows, ref
+  // pills, toolbar, palette and the drop flows — which makes this the one place
+  // §5.3's refusal has to live for checkout. It must sit *outside* the try in
+  // `smartCheckoutInner`, whose catch matches error text for collision recovery
+  // and would otherwise read a refusal as something to recover from.
+  await requireNoPausedOperation(path, `check out ${target}`);
   useSession.getState().setCheckoutTarget(target);
   try {
     return await smartCheckoutInner(path, target);

@@ -50,6 +50,7 @@ Apply one or more commits from anywhere in the graph onto the checked-out branch
 - [x] Merge-commit pick requires and applies mainline parent selection. — radio list of parents → `-m <n>`
 - [x] Already-applied commits are skipped with notice. — `cherry-pick --skip` + "already applied" in the toast
 - [x] Undo restores the pre-pick tip.
+- [x] A pick attempted while another operation is paused is refused with a pointer to the banner (§5).
 - [ ] Dirty-tree stash fallback (B4) — a refused pick surfaces git's error instead.
 - [ ] `-x` settings flag (B1) — `appendOrigin` is plumbed through the whole stack and hardcoded `false` at the call site.
 - [ ] Per-commit sequence progress and the "picked" flash on source commits (§3).

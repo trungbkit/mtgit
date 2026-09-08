@@ -17,10 +17,10 @@ import {
   revertCommit,
 } from "../../ipc/commands";
 import type { GraphRow } from "../../ipc/types";
-import type { RebaseAction } from "../../ipc/types";
+import type { RebaseAction, ResetMode } from "../../ipc/types";
 import { useSession, WORKING } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
-import { refreshRepo } from "../../ipc/repoState";
+import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
 import { type ConflictKind, conflictLabel } from "../../stores/conflict";
 import { confirmDialog, promptDialog } from "../../stores/dialog";
 import { validateRefName } from "../../lib/refname";
@@ -166,6 +166,7 @@ export function GraphView() {
 
       const standardRebase = async () => {
         try {
+          await requireNoPausedOperation(path, `rebase ${head} onto ${short}`);
           const info = await rewriteInfo(path, row.oid);
           if (info.pushed || info.merges) {
             const notes = [
@@ -218,6 +219,14 @@ export function GraphView() {
         run(() => createPatch(path, row.oid, out), "Patch created");
       };
 
+      // §5.3 lists reset among the entry points a paused operation refuses: a
+      // reset out from under a conflicted merge is how the index gets orphaned.
+      const doReset = (mode: ResetMode) =>
+        run(async () => {
+          await requireNoPausedOperation(path, `reset ${head} to ${short}`);
+          return resetTo(path, row.oid, mode);
+        }, `Reset (${mode})`);
+
       const items: MenuItem[] = [];
       if (localBadge) {
         items.push({
@@ -261,8 +270,8 @@ export function GraphView() {
         {
           label: `Reset ${head} to this commit`,
           submenu: [
-            { label: "Soft (keep index & working tree)", onClick: () => run(() => resetTo(path, row.oid, "soft"), "Reset (soft)") },
-            { label: "Mixed (keep working tree)", onClick: () => run(() => resetTo(path, row.oid, "mixed"), "Reset (mixed)") },
+            { label: "Soft (keep index & working tree)", onClick: () => doReset("soft") },
+            { label: "Mixed (keep working tree)", onClick: () => doReset("mixed") },
             {
               label: "Hard (discard changes)",
               danger: true,
@@ -275,7 +284,7 @@ export function GraphView() {
                     danger: true,
                   })
                 ) {
-                  run(() => resetTo(path, row.oid, "hard"), "Reset (hard)");
+                  doReset("hard");
                 }
               },
             },
@@ -283,7 +292,11 @@ export function GraphView() {
         },
         {
           label: "Revert commit",
-          onClick: () => run(() => revertCommit(path, row.oid).then((r) => reportConflicts("revert", r, "Reverted"))),
+          onClick: () =>
+            run(async () => {
+              await requireNoPausedOperation(path, `revert ${short}`);
+              reportConflicts("revert", await revertCommit(path, row.oid), "Reverted");
+            }),
         },
         {
           label: "Edit commit message",
@@ -583,6 +596,9 @@ export function GraphView() {
     if (!source || source === target) return;
     const runDrop = async (action: "merge" | "rebase" | "ff") => {
       try {
+        // The checkout below gates itself, but it only happens when the target
+        // is not already HEAD — so the drop needs its own refusal too (§5.3).
+        await requireNoPausedOperation(repo.path, action === "rebase" ? `rebase ${target}` : `merge ${source}`);
         if (repo.head.branch !== target) await smartCheckout(repo.path, target);
         if (action === "rebase") {
           const result = await rebaseStandard(repo.path, source);

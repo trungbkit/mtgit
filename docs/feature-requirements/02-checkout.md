@@ -52,11 +52,11 @@ Checkout is the most frequent operation and must be near-instant and confirmatio
 - [x] Double-click checkout works from left panel and graph pills, for local and remote branches.
 - [x] Clean checkout requires zero dialogs and completes with visual confirmation (checkmark moves, graph scrolls to HEAD). — no post-scroll highlight flash
 - [x] Collision dialog offers Stash-and-continue / Discard / Cancel and each path behaves as specified. — `lib/checkout.ts`
-- [x] Detached HEAD banner appears with working "Create branch here" and "Return to previous branch" actions. — neither action invalidates queries, so the banner outlives its own fix (STATUS A2); previous branch is not named
+- [◐] Detached HEAD banner appears with working "Create branch here" and "Return to previous branch" actions. — both actions now `refreshRepo` (STATUS A2 fixed); the previous branch is still not named in the label
 - [x] Remote checkout creates a correctly named local branch with upstream set. — `switch --track -c`, incl. the `name-1` conflict path
 - [x] Undo restores previous HEAD including auto-stashed changes.
 - [ ] Mutating controls are gated while a checkout runs (§3). — only the target pill reflects it
-- [ ] Checkout is refused with a pointer to the banner while an operation is paused (B6).
+- [x] Checkout is refused with a pointer to the banner while an operation is paused (B6). — `requireNoPausedOperation` in `lib/checkout.ts:smartCheckout`, which every checkout entry point goes through
 - [ ] Large checkouts show a progress toast with a file counter (§5).
 
 **New in this revision (GitLens-derived) — none implemented:**

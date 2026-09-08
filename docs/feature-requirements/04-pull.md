@@ -45,10 +45,10 @@ Fetch is continuous and invisible; Pull is a deliberate toolbar action with sele
 
 > Status audited 2026-09-08 — see `STATUS.md`.
 
-- [◐] Auto-fetch updates counts/pills silently on the configured interval and prunes deleted refs. — silent and pruning are correct; no fetch at open, and an interval change needs a reopen (STATUS A4)
+- [x] Auto-fetch updates counts/pills silently on the configured interval and prunes deleted refs. — the interval is state, so saving it restarts the timer, and one fetch fires at open (STATUS A4 fixed)
 - [x] All three pull strategies work and the default is persisted per repo. — `localStorage`, per repo path
 - [◐] Dirty-tree pull auto-stashes and restores, with the conflict-on-pop fallback. — `--autostash` is passed; the pop-conflict case has no dedicated feedback
-- [ ] Pull conflicts use the shared conflict UI; Abort restores the exact pre-pull state. — **Abort works, but the banner never appears** (STATUS A1); this is the highest-priority defect in the set
+- [x] Pull conflicts use the shared conflict UI; Abort restores the exact pre-pull state. — the banner now comes from `refreshRepo`'s re-read of `operation_info`, not from the op's return value (STATUS A1 fixed)
 - [x] No-upstream pull shows the upstream dialog. — remote-branch chooser; "set as upstream" is implicit, not a checkbox
 - [x] Offline auto-fetch degrades silently with a warning icon; manual operations surface errors fully. — icon tooltip carries the error and last success time
 - [ ] Sidebar entry points: **Pull (fast-forward)** on the current branch, **Fetch \<remote\>** on remote nodes (§2) — the REMOTE section has no per-remote root node.

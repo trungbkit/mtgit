@@ -1,7 +1,8 @@
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { operationAbort, operationContinue, operationSkip } from "../ipc/commands";
 import { refreshRepo } from "../ipc/repoState";
-import { conflictLabel, useConflict } from "../stores/conflict";
+import { REVEAL_BANNER_EVENT, conflictLabel, useConflict } from "../stores/conflict";
 import { useSession, WORKING } from "../stores/session";
 import { toastError, useToasts } from "../stores/toasts";
 import "./conflictbanner.css";
@@ -19,6 +20,26 @@ export function ConflictBanner() {
   const selectOid = useSession((s) => s.selectOid);
   const pushToast = useToasts((s) => s.push);
   const qc = useQueryClient();
+  const bannerRef = useRef<HTMLDivElement>(null);
+  const flashTimer = useRef<number | null>(null);
+  const [flash, setFlash] = useState(false);
+
+  // A refused operation points here (§5.3). The refusal already toasted; this
+  // is the other half of "points at the banner" — without it the user is told
+  // to look at something that never moved.
+  useEffect(() => {
+    const reveal = () => {
+      bannerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      setFlash(true);
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => setFlash(false), 950);
+    };
+    window.addEventListener(REVEAL_BANNER_EVENT, reveal);
+    return () => {
+      window.removeEventListener(REVEAL_BANNER_EVENT, reveal);
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    };
+  }, []);
 
   // Only surface the banner for the repo currently in view.
   if (!active || active.repoPath !== repoPathActive) return null;
@@ -54,7 +75,7 @@ export function ConflictBanner() {
   }
 
   return (
-    <div className="conflict-banner">
+    <div className={`conflict-banner${flash ? " flash" : ""}`} ref={bannerRef}>
       <span className="cb-icon">⚠</span>
       <span className="cb-text">
         <strong>{conflictLabel(kind)} in progress</strong>

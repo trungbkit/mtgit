@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { interactiveRebase, rebaseCommits, rewriteInfo } from "../../ipc/commands";
-import { refreshRepo } from "../../ipc/repoState";
+import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
 import type { RebaseAction, RebasePlanItem, RewriteInfo } from "../../ipc/types";
 import { toastError, useToasts } from "../../stores/toasts";
 import "./rebase-plan.css";
@@ -78,6 +78,7 @@ export function RebasePlanDialog({
 
   async function start() {
     try {
+      await requireNoPausedOperation(repoPath, "start an interactive rebase");
       const result = await interactiveRebase(
         repoPath,
         base,

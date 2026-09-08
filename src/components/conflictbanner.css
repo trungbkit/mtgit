@@ -73,3 +73,14 @@
 .cb-btn.danger:hover {
   filter: brightness(1.08);
 }
+
+/* A refused operation flashes the banner it just pointed the user at (§5.3). */
+.conflict-banner.flash {
+  animation: cb-flash 0.47s ease-in-out 2;
+}
+
+@keyframes cb-flash {
+  50% {
+    background: color-mix(in srgb, var(--danger, #e5534b) 45%, var(--bg-elevated, #2b3038));
+  }
+}

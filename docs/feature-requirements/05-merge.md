@@ -54,7 +54,7 @@ Dragging onto a branch that is *not* checked out offers only "Checkout B then me
 - [x] "Already up to date" and dirty-tree cases behave per B2/B4. — `--autostash`; `MergeKind::UpToDate`
 - [x] Undo restores pre-merge tip after a clean merge.
 - [x] All merge actions available via context menu (no DnD-only functionality). — sidebar branch menu; graph *pills* still have no ref menu (STATUS B1)
-- [ ] A paused operation blocks merge with a pointer to the banner (B6).
+- [x] A paused operation blocks merge with a pointer to the banner (B6). — `requireNoPausedOperation`, applied to all six entry points §5.3 names, not merge alone
 
 **New in this revision (GitLens-derived) — none implemented:**
 

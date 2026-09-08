@@ -822,6 +822,60 @@ mod tests {
         );
     }
 
+    /// STATUS A3 / overview §5.3: while an operation is paused, the frontend
+    /// refuses checkout / pull / merge / rebase / cherry-pick / reset and points
+    /// at the banner instead of letting git produce the refusal. That gate asks
+    /// exactly one question — `operation_info(path).is_some()` — so it is only
+    /// as good as this function's willingness to report an operation whose
+    /// conflicts have all been resolved and staged.
+    ///
+    /// That is the dangerous half of the paused state, not the harmless one: a
+    /// rebase stopped mid-plan with a clean index still has replays pending, and
+    /// a checkout there abandons them. The conflict *list* is empty at that
+    /// point, so anything keying off `conflicts.is_empty()` would wave the
+    /// checkout through — hence the assertion below.
+    #[test]
+    fn operation_info_still_reports_a_paused_operation_with_no_conflicts_left() {
+        let dir = repo_with_commits();
+        let path = dir.path().to_str().unwrap();
+
+        git(dir.path(), &["checkout", "-q", "-b", "side", "HEAD~1"]);
+        fs::write(dir.path().join("file.txt"), "side\n").unwrap();
+        git(dir.path(), &["add", "file.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "side change"]);
+        git(dir.path(), &["checkout", "-q", "main"]);
+
+        let merge = Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["merge", "side"])
+            .output()
+            .unwrap();
+        assert!(!merge.status.success(), "fixture must actually conflict");
+
+        // Resolve and stage every conflict, but do not commit — the merge is
+        // still in progress, which is precisely what the user cannot see once
+        // the file list empties out.
+        fs::write(dir.path().join("file.txt"), "resolved\n").unwrap();
+        git(dir.path(), &["add", "file.txt"]);
+
+        let info = operation_info(path)
+            .unwrap()
+            .expect("a merge with every conflict staged is still a merge in progress");
+        assert_eq!(info.kind, "merge");
+        assert!(
+            info.conflicts.is_empty(),
+            "the fixture is meant to have nothing left to resolve"
+        );
+        assert!(info.can_continue, "the banner's Continue is the way out of this state");
+
+        git(dir.path(), &["commit", "-q", "--no-edit"]);
+        assert!(
+            operation_info(path).unwrap().is_none(),
+            "committing the merge ends it, and the gate must reopen"
+        );
+    }
+
     #[test]
     fn native_commit_uses_staged_snapshot() {
         let dir = repo_with_commits();

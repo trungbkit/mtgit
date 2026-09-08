@@ -204,8 +204,8 @@ Frontend reports them with `toastError(e)`. Note that `gitNetwork` *resolves* wi
 `GITKRAKEN_PARITY_PLAN.md` is the live plan: gap analysis vs GitKraken, phases P0–P8, and a
 status marker per phase. **P0 and P2–P4 are done, P5 is done except commit search; P1
 (clone/init/remotes/start screen), P6–P7 and P8 (the GitLens-derived surfaces, G16–G28) are
-unstarted.** Its §8 says what to pick up next, and the answer is currently the defects in
-STATUS.md §1 rather than a phase.
+unstarted.** Its §8 says what to pick up next; STATUS.md §1's defects (A1–A5) are all cleared,
+so the answer is now P5's commit search.
 
 `docs/feature-requirements/` is the spec for the seven core features (commit, checkout, push,
 pull, merge, rebase, cherry-pick) plus `08-search-and-filter.md` (commit search, unbuilt), and

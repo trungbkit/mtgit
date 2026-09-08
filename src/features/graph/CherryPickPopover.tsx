@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cherryPickMany } from "../../ipc/commands";
-import { refreshRepo } from "../../ipc/repoState";
+import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
 import { toastError, useToasts } from "../../stores/toasts";
 import "./cherry-pick.css";
 
@@ -25,6 +25,7 @@ export function CherryPickPopover({
 
   async function run() {
     try {
+      await requireNoPausedOperation(repoPath, "cherry-pick");
       const result = await cherryPickMany(repoPath, oids, commitImmediately, mainline);
       if (result.success) {
         pushToast(

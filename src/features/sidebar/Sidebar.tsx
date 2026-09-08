@@ -22,7 +22,7 @@ import {
   stashPop,
   updateSubmodules,
 } from "../../ipc/commands";
-import { refreshRepo } from "../../ipc/repoState";
+import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
 import type { BranchInfo } from "../../ipc/types";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -34,6 +34,10 @@ import { smartCheckout } from "../../lib/checkout";
 import "./sidebar.css";
 
 const EMPTY_HIDDEN_REFS: string[] = [];
+
+// The placeholder is the only place this shortcut is advertised, so it has to
+// name the keys the handler below actually binds (STATUS A5).
+const FILTER_HINT = /mac/i.test(navigator.userAgent) ? "⌘F" : "Ctrl+F";
 
 export function Sidebar() {
   const repo = useSession((s) => s.repo);
@@ -104,7 +108,16 @@ export function Sidebar() {
     await run(() => smartCheckout(path, name), `Checked out ${name}`);
   }
 
+  // Merge and rebase both funnel through one helper apiece so §5.3's refusal has
+  // a single home per operation rather than one per menu item. Checkout needs
+  // none of this: `smartCheckout` carries the gate itself.
+  async function doMerge(source: string, mode: "noFf" | "ffOnly") {
+    await requireNoPausedOperation(path, `merge ${source}`);
+    reportMerge(await mergeAdvanced(path, source, mode));
+  }
+
   async function doRebase(target: string) {
+    await requireNoPausedOperation(path, `rebase onto ${target}`);
     const info = await rewriteInfo(path, target);
     if (
       (info.pushed > 0 || info.merges > 0) &&
@@ -225,12 +238,12 @@ export function Sidebar() {
         },
         {
           label: `Merge into ${headBranch ?? "HEAD"}`,
-          onClick: () => run(() => mergeAdvanced(path, b.name, "noFf").then(reportMerge)),
+          onClick: () => run(() => doMerge(b.name, "noFf")),
           disabled: b.isHead,
         },
         {
           label: `Merge into ${headBranch ?? "HEAD"} (ff-only)`,
-          onClick: () => run(() => mergeAdvanced(path, b.name, "ffOnly").then(reportMerge)),
+          onClick: () => run(() => doMerge(b.name, "ffOnly")),
           disabled: b.isHead,
         },
         {
@@ -249,7 +262,7 @@ export function Sidebar() {
       items.push(
         {
           label: "Merge into current",
-          onClick: () => run(() => mergeAdvanced(path, b.name, "noFf").then(reportMerge)),
+          onClick: () => run(() => doMerge(b.name, "noFf")),
         },
         { separator: true },
         {
@@ -352,7 +365,7 @@ export function Sidebar() {
         <input
           ref={filterRef}
           className="sidebar-filter"
-          placeholder="Filter (⌘ Option + f)"
+          placeholder={`Filter (${FILTER_HINT})`}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
@@ -391,7 +404,7 @@ export function Sidebar() {
             run(async () => {
               if (headBranch !== target) await smartCheckout(path, target);
               if (action === "rebase") return doRebase(source);
-              return mergeAdvanced(path, source, action === "ff" ? "ffOnly" : "noFf").then(reportMerge);
+              return doMerge(source, action === "ff" ? "ffOnly" : "noFf");
             });
           }}
           hiddenRefs={hiddenRefs}

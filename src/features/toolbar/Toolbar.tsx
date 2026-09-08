@@ -1,6 +1,6 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createBranch,
   createTag,
@@ -17,7 +17,7 @@ import {
   stashPop,
   undo,
 } from "../../ipc/commands";
-import { refreshRepo } from "../../ipc/repoState";
+import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
 import { push, type NetOp } from "../network/net";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -26,6 +26,15 @@ import { validateRefName } from "../../lib/refname";
 import { smartCheckout } from "../../lib/checkout";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
 import "./toolbar.css";
+
+const DEFAULT_AUTO_FETCH_MINUTES = 1;
+
+/** Minutes between background fetches; 0 when auto-fetch is off or unparseable. */
+function readAutoFetch(path: string): number {
+  const raw = localStorage.getItem(`mtgit.autoFetch.${path}`);
+  const minutes = raw === null ? DEFAULT_AUTO_FETCH_MINUTES : Number(raw);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
+}
 
 export function Toolbar() {
   const repo = useSession((s) => s.repo);
@@ -42,6 +51,8 @@ export function Toolbar() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<number | null>(null);
   const [remoteMutation, setRemoteMutation] = useState(false);
+  const [autoFetchMinutes, setAutoFetchMinutes] = useState(0);
+  const lastAutoFetch = useRef<{ path: string; at: number } | null>(null);
 
   const { data: refs } = useQuery({
     queryKey: ["refs", repo?.path],
@@ -60,14 +71,25 @@ export function Toolbar() {
 
   useEffect(() => setRemoteMutation(false), [repo?.path]);
 
+  // The interval lives in state, not in a value read once inside the timer
+  // effect. Keyed on `repo.path` alone, saving a new interval could not restart
+  // the timer — the code apologised for it in its own toast (STATUS A4).
   useEffect(() => {
-    if (!repo) return;
-    const raw = localStorage.getItem(`mtgit.autoFetch.${repo.path}`);
-    const minutes = raw === null ? 1 : Number(raw);
-    if (!Number.isFinite(minutes) || minutes <= 0) return;
+    setAutoFetchMinutes(repo ? readAutoFetch(repo.path) : 0);
+  }, [repo?.path]);
+
+  useEffect(() => {
+    if (!repo || autoFetchMinutes <= 0) return;
+    const path = repo.path;
+    let cancelled = false;
     const fetchNow = () => {
-      gitAutoFetch(repo.path)
+      // Attempt time, not success time: this is what keeps StrictMode's second
+      // effect invocation (and a mere interval change) from re-fetching, while
+      // `lastFetch` stays the *successful* fetch the tooltip reports.
+      lastAutoFetch.current = { path, at: Date.now() };
+      gitAutoFetch(path)
         .then((result) => {
+          if (cancelled) return;
           if (result.success) {
             setFetchError(null);
             setLastFetch(Date.now());
@@ -76,11 +98,20 @@ export function Toolbar() {
             setFetchError(result.output);
           }
         })
-        .catch((error) => setFetchError(String(error)));
+        .catch((error) => !cancelled && setFetchError(String(error)));
     };
-    const timer = window.setInterval(fetchNow, minutes * 60_000);
-    return () => window.clearInterval(timer);
-  }, [repo?.path]);
+    // `04-pull.md` §2 — ahead/behind must be right without the user asking, so
+    // the first fetch cannot wait out a full interval after opening the repo.
+    const previous = lastAutoFetch.current;
+    if (!previous || previous.path !== path || Date.now() - previous.at >= autoFetchMinutes * 60_000) {
+      fetchNow();
+    }
+    const timer = window.setInterval(fetchNow, autoFetchMinutes * 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [repo?.path, autoFetchMinutes]);
 
   // Invalidate + re-read the in-progress operation. Never invalidate alone
   // here: `gitNetwork` cannot report conflicts, so a conflicting pull has no
@@ -120,6 +151,9 @@ export function Toolbar() {
   async function net(op: NetOp, extra?: string[]) {
     if (!repo) return;
     try {
+      // This path does not go through `net.ts:runNet`, so it needs §5.3's pull
+      // refusal of its own. Fetch and push are deliberately not gated.
+      if (op === "pull") await requireNoPausedOperation(repo.path, "pull");
       let args = [...(extra ?? [])];
       // An unpublished branch goes through net.ts's publish flow (D5): it asks
       // the backend for the real remote instead of inferring it from the
@@ -315,7 +349,12 @@ export function Toolbar() {
     });
     if (value !== null) {
       localStorage.setItem(`mtgit.autoFetch.${repo.path}`, value);
-      pushToast("info", "Auto-fetch setting saved. It takes effect when the repository is reopened.");
+      const minutes = readAutoFetch(repo.path);
+      setAutoFetchMinutes(minutes);
+      pushToast(
+        "info",
+        minutes > 0 ? `Auto-fetching every ${minutes} minute${minutes === 1 ? "" : "s"}.` : "Auto-fetch turned off.",
+      );
     }
   }
 

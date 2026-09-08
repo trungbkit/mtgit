@@ -1,6 +1,11 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { operationInfo } from "./commands";
-import { useConflict, type ConflictKind } from "../stores/conflict";
+import {
+  conflictLabel,
+  revealConflictBanner,
+  useConflict,
+  type ConflictKind,
+} from "../stores/conflict";
 
 /**
  * Re-read the repository's in-progress operation straight from git and push it
@@ -38,6 +43,38 @@ export async function syncOperation(path: string): Promise<void> {
   } catch {
     /* operation discovery is best-effort */
   }
+}
+
+/**
+ * Refuse a mutating action while a merge / rebase / cherry-pick / revert is
+ * paused, and point the user at the banner (`00-overview.md` §5.3).
+ *
+ * Refusing here rather than letting git refuse is the entire point: git's own
+ * message is correct but never says where the Abort button is. The list §5.3
+ * names — checkout, pull, merge, rebase, cherry-pick, reset — is the list of
+ * callers; staging, commit and the banner's own continue/skip/abort must stay
+ * open, because they are how the user gets *out* of the paused state.
+ *
+ * This throws instead of returning a verdict. Every mutating call site in
+ * `src/` already funnels failures into `toastError`, so a throw reports itself
+ * exactly once and, in a composite flow (check out the target, *then* merge),
+ * stops the rest of the sequence for free.
+ *
+ * The state is re-read from git before the check (§5.1). The banner is only as
+ * fresh as the last refresh, and a stale "no operation" would pass the action
+ * through to the raw git error this gate exists to replace. `syncOperation`
+ * swallows its own errors, so a repo we cannot interrogate fails *open* — a
+ * gate that has lost its footing must not become a wall.
+ */
+export async function requireNoPausedOperation(path: string, action: string): Promise<void> {
+  await syncOperation(path);
+  const active = useConflict.getState().active;
+  if (!active || active.repoPath !== path) return;
+  revealConflictBanner();
+  throw new Error(
+    `Cannot ${action} while a ${conflictLabel(active.kind).toLowerCase()} is in progress — ` +
+      "finish it with Continue, or Abort, in the banner above the graph.",
+  );
 }
 
 /**

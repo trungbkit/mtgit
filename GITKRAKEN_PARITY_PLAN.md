@@ -588,15 +588,17 @@ If you want the shortest path to "this feels like GitKraken":
 3. ~~**P3 undo** + toast affordance~~ ✅ done as a phase; the inline Undo *on toasts* is still
    outstanding (§3.3), and it is a half-day that changes how safe the app feels.
 4. ~~**P4** conflict editor~~ ✅ done; **P5** drag-drop and interactive rebase ✅ done.
-5. ~~**The defects in `STATUS.md` §1 first**, A1 in particular.~~ ◐ **A1 done** — the mutation
-   seam (`src/ipc/repoState.ts`: `syncOperation` + `refreshRepo`) is in, and it is now the only
-   writer to the conflict store and the only `invalidateQueries` in `src/`. It was *not* the
-   "one call" this line used to claim: there was no shared `refresh()` to put it in (six copies)
-   and seven places derived conflict state independently, two of them optimistically.
-   `STATUS.md` §1.1 has the full record. **A2–A5 remain** ← **next**, and A2 is now two lines
-   against the seam. A3's paused-op gate is the one that benefits most: it needed a single
-   chokepoint for mutations, and `refreshRepo` is it.
-6. **P5-search (G10)** — the largest remaining gap users feel, and no longer a design problem:
+5. ~~**The defects in `STATUS.md` §1 first**, A1 in particular.~~ ✅ **done — all five.** The
+   mutation seam (`src/ipc/repoState.ts`: `syncOperation` + `refreshRepo`) closed A1 and is now
+   the only writer to the conflict store and the only `invalidateQueries` in `src/`. A2–A5
+   followed: `DetachedHeadBanner` refreshes (A2), auto-fetch keys its timer on the interval and
+   fetches once at open (A4), the sidebar placeholder names the keys the handler binds (A5), and
+   overview §5.3's one-operation-at-a-time rule is enforced by
+   `requireNoPausedOperation` — the same seam module, called from eleven sites, two of which
+   (`smartCheckout`, `runNet`) are genuine chokepoints rather than repetition (A3).
+   `STATUS.md` §1.1–§1.2 have the full record, including what the gate deliberately does *not*
+   stop and the one Rust test that pins the contract it rests on.
+6. **P5-search (G10)** ← **next.** The largest remaining gap users feel, and no longer a design problem:
    `08-search-and-filter.md` specifies it down to the operator tokens. Pair it with P8 item 3
    (scroll markers), because hits you cannot locate are half a search.
 7. **P1** — clone/start screen, so the app is self-sufficient without the CLI.
