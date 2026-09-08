@@ -22,6 +22,8 @@ pub fn run() {
             commands::git_available,
             commands::list_refs,
             commands::get_graph,
+            commands::search_commits,
+            commands::cancel_search,
             commands::get_commit,
             commands::get_commit_diff,
             commands::get_worktree_diff,

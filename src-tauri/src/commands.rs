@@ -1,16 +1,16 @@
 use crate::core::{
-    advanced, blame, branch, commit as commit_mod, diff, graph, history, ops, refs, repo, stash,
-    status, worktree,
+    advanced, blame, branch, commit as commit_mod, diff, graph, history, ops, refs, repo, search,
+    stash, status, worktree,
 };
 use crate::error::{Error, Result};
 use crate::state::{
-    AppState, CachedGraph, HistoryEntry, RepoSnapshot, RestoreMode,
+    AppState, CachedGraph, CachedSearch, HistoryEntry, RepoSnapshot, RestoreMode,
 };
 use crate::{shellout, watcher};
 use git2::Repository;
 use serde::Serialize;
-use std::collections::HashMap;
-use tauri::{AppHandle, State};
+use std::collections::{HashMap, HashSet};
+use tauri::{AppHandle, Emitter, State};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -182,6 +182,24 @@ fn graph_page(
     skip: usize,
     limit: usize,
 ) -> Result<graph::GraphPage> {
+    let cached = ensure_cached_rows(repo, cache, path)?;
+    let total = cached.rows.len();
+    let end = skip.saturating_add(limit).min(total);
+    let rows = if skip < total { cached.rows[skip..end].to_vec() } else { Vec::new() };
+    let head = repo.head().ok().and_then(|h| h.target()).map(|o| o.to_string());
+    Ok(graph::GraphPage { rows, total, head })
+}
+
+/// Return the cached full layout, rebuilding it when the ref set has moved.
+///
+/// Shared by `get_graph` and `search_commits`: a search's page hints are row
+/// indices *in this list*, so both have to be looking at the same layout, and
+/// keying them both on `refs_digest` is what guarantees it (invariant 4).
+fn ensure_cached_rows<'c>(
+    repo: &Repository,
+    cache: &'c mut HashMap<String, CachedGraph>,
+    path: &str,
+) -> Result<&'c CachedGraph> {
     let key = graph::refs_digest(repo);
     let needs_rebuild = cache.get(path).map(|c| c.key != key).unwrap_or(true);
     if needs_rebuild {
@@ -190,13 +208,197 @@ fn graph_page(
         let rows = graph::build_rows(repo, &layouts, &badges)?;
         cache.insert(path.to_string(), CachedGraph { key, rows });
     }
+    Ok(cache.get(path).expect("just inserted"))
+}
 
-    let cached = cache.get(path).expect("just inserted");
-    let total = cached.rows.len();
-    let end = skip.saturating_add(limit).min(total);
-    let rows = if skip < total { cached.rows[skip..end].to_vec() } else { Vec::new() };
-    let head = repo.head().ok().and_then(|h| h.target()).map(|o| o.to_string());
-    Ok(graph::GraphPage { rows, total, head })
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SearchProgress {
+    /// Commits matched so far. The walk reports as it goes because a pickaxe
+    /// search over a large history is slow enough to look like a hang.
+    count: usize,
+    done: bool,
+}
+
+/// Search history for commits matching a GitLens-grammar query.
+///
+/// Read-only, so it deliberately takes **no** op guard (invariant 2): a search
+/// changes nothing the watcher needs to be shielded from.
+#[tauri::command]
+pub fn search_commits(
+    app: AppHandle,
+    path: String,
+    query: String,
+    opts: Option<search::SearchOptions>,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<search::SearchResults> {
+    let opts = opts.unwrap_or_default();
+    let repo = open(&path)?;
+    let parsed = search::parse(&query)?;
+    let summary = parsed.describe();
+    if parsed.terms.is_empty() {
+        return Ok(search::SearchResults { summary, ..Default::default() });
+    }
+
+    // Results are only valid for the ref set they were computed against: a
+    // fetch or a branch move can rewrite the very commits a hit points at
+    // (B3), and it also renumbers every row index below.
+    let key = graph::refs_digest(&repo);
+    let fingerprint = search_fingerprint(&query, &opts, limit);
+    if let Ok(cache) = state.search_cache.lock() {
+        if let Some(hit) = cached_search(&cache, &path, &key, &fingerprint) {
+            return Ok(hit);
+        }
+    }
+
+    let pids = &state.search_pids;
+    let outcome = search::execute(
+        &repo,
+        &path,
+        &parsed,
+        &opts,
+        limit,
+        |pid| {
+            if let Ok(mut active) = pids.lock() {
+                active.insert(path.clone(), pid);
+            }
+        },
+        |count| {
+            let _ = app.emit("search-progress", SearchProgress { count, done: false });
+        },
+    );
+    if let Ok(mut active) = pids.lock() {
+        active.remove(&path);
+    }
+    let _ = app.emit("search-progress", SearchProgress { count: 0, done: true });
+    let outcome = outcome?;
+
+    // Turn oids into row indices, and order the hits the way the graph does —
+    // hit navigation walks this list, so "next" has to mean "next row down".
+    let mut cache = state
+        .graph_cache
+        .lock()
+        .map_err(|_| Error::Msg("graph cache poisoned".into()))?;
+    let cached = ensure_cached_rows(&repo, &mut cache, &path)?;
+    let hits = place_hits(&cached.rows, &outcome.oids, opts.page_size);
+    drop(cache);
+
+    let results = search::SearchResults {
+        hits,
+        truncated: outcome.truncated,
+        cancelled: outcome.cancelled,
+        summary,
+        notes: outcome.notes,
+    };
+    // A cancelled search is a partial answer; caching it would make the
+    // partial list look authoritative on the next identical query.
+    if !results.cancelled {
+        if let Ok(mut cache) = state.search_cache.lock() {
+            store_search(&mut cache, &path, key, fingerprint, &results);
+        }
+    }
+    Ok(results)
+}
+
+/// Identify one query's results: the query text, the modifiers that change
+/// what git is asked, and the cap that decided where the list stopped.
+fn search_fingerprint(query: &str, opts: &search::SearchOptions, limit: usize) -> String {
+    format!(
+        "{query}\u{1}{}{}{}{}\u{1}{limit}",
+        opts.match_case as u8,
+        opts.match_all as u8,
+        opts.match_regex as u8,
+        opts.match_whole_word as u8
+    )
+}
+
+/// Cached results for this query, or `None` if the ref set has moved since —
+/// in which case every row index in them is stale too (B3).
+fn cached_search(
+    cache: &HashMap<String, CachedSearch>,
+    path: &str,
+    key: &str,
+    fingerprint: &str,
+) -> Option<search::SearchResults> {
+    let cached = cache.get(path)?;
+    if cached.key != key {
+        return None;
+    }
+    cached.entries.get(fingerprint).cloned()
+}
+
+fn store_search(
+    cache: &mut HashMap<String, CachedSearch>,
+    path: &str,
+    key: String,
+    fingerprint: String,
+    results: &search::SearchResults,
+) {
+    let entry = cache
+        .entry(path.to_string())
+        .or_insert_with(|| CachedSearch { key: key.clone(), entries: HashMap::new() });
+    if entry.key != key {
+        entry.key = key;
+        entry.entries.clear();
+    }
+    entry.entries.insert(fingerprint, results.clone());
+}
+
+/// Order matching oids the way the graph orders its rows, and record which
+/// page each one falls on.
+///
+/// Hit navigation steps through this list, so "next hit" has to mean "next row
+/// down" — `git log`'s own order is close to that but not identical, because
+/// the graph walks topologically. Oids the graph does not contain (a stash
+/// commit, or one no ref reaches) still count as hits; they simply cannot be
+/// scrolled to, and carry no index to say otherwise.
+fn place_hits(
+    rows: &[graph::GraphRow],
+    oids: &[String],
+    page_size: usize,
+) -> Vec<search::SearchHit> {
+    let matched: HashSet<&str> = oids.iter().map(String::as_str).collect();
+    let mut hits: Vec<search::SearchHit> = Vec::with_capacity(oids.len());
+    for (index, row) in rows.iter().enumerate() {
+        if matched.contains(row.oid.as_str()) {
+            hits.push(search::SearchHit {
+                oid: row.oid.clone(),
+                index: Some(index),
+                page_hint: Some(index.checked_div(page_size).unwrap_or(0)),
+            });
+        }
+    }
+    let placed: HashSet<&str> = hits.iter().map(|hit| hit.oid.as_str()).collect();
+    let unplaced: Vec<&String> = oids.iter().filter(|oid| !placed.contains(oid.as_str())).collect();
+    for oid in unplaced {
+        hits.push(search::SearchHit { oid: oid.clone(), index: None, page_hint: None });
+    }
+    hits
+}
+
+/// Kill an in-flight search. Partial results are kept (§4: a long search is
+/// cancellable, not discardable).
+#[tauri::command]
+pub fn cancel_search(path: String, state: State<'_, AppState>) -> Result<()> {
+    let pid = state
+        .search_pids
+        .lock()
+        .map_err(|_| Error::Msg("search process lock poisoned".into()))?
+        .get(&path)
+        .copied()
+        .ok_or_else(|| Error::Msg("no search is running".into()))?;
+    #[cfg(unix)]
+    let status = std::process::Command::new("kill").args(["-TERM", &pid.to_string()]).status()?;
+    #[cfg(windows)]
+    let status = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(Error::Msg("could not cancel the search".into()))
+    }
 }
 
 // ---- M2: commit detail + diff ------------------------------------------------
@@ -939,5 +1141,97 @@ mod tests {
 
         let past_end = graph_page(&t.repo, &mut cache, &path, 99, 2).unwrap();
         assert!(past_end.rows.is_empty());
+    }
+
+    /// B2: a hit is a sha plus the page it lives on. The order is the graph's,
+    /// not `git log`'s, because hit navigation means "next row down".
+    #[test]
+    fn search_hits_are_ordered_by_row_with_a_page_hint_each() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let b = t.commit("b", &[a]);
+        let c = t.commit("c", &[b]);
+        let path = t.dir.path().to_str().unwrap().to_string();
+        let mut cache: HashMap<String, CachedGraph> = HashMap::new();
+        let rows = graph_page(&t.repo, &mut cache, &path, 0, 100).unwrap().rows;
+
+        // Hand them over oldest-first; they must come back newest-first, the
+        // order the rows are in.
+        let hits = place_hits(&rows, &[a.to_string(), c.to_string()], 2);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].oid, c.to_string(), "row 0 first: {hits:?}");
+        assert_eq!(hits[0].index, Some(0));
+        assert_eq!(hits[0].page_hint, Some(0));
+        assert_eq!(hits[1].oid, a.to_string());
+        assert_eq!(hits[1].index, Some(2));
+        assert_eq!(hits[1].page_hint, Some(1), "row 2 with 2-row pages is page 1");
+        assert!(!hits.iter().any(|h| h.oid == b.to_string()));
+
+        // A commit the graph does not hold (a stash) still counts, with no
+        // index — silently dropping it would under-report the hit count.
+        let orphan = "0".repeat(40);
+        let hits = place_hits(&rows, std::slice::from_ref(&orphan), 2);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].index, None);
+        assert_eq!(hits[0].page_hint, None);
+    }
+
+    /// B3: results are only true of the ref set they were computed against.
+    /// A branch move rewrites row indices even when it rewrites no commit, so
+    /// the search cache has to fall with the graph cache, not outlive it.
+    #[test]
+    fn search_cache_is_invalidated_by_a_branch_move() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let path = t.dir.path().to_str().unwrap().to_string();
+        let opts = search::SearchOptions::default();
+        let fingerprint = search_fingerprint("fix", &opts, 0);
+        let mut cache: HashMap<String, CachedSearch> = HashMap::new();
+
+        let key = graph::refs_digest(&t.repo);
+        let results = search::SearchResults {
+            hits: vec![search::SearchHit { oid: a.to_string(), index: Some(0), page_hint: Some(0) }],
+            summary: "matching fix".into(),
+            ..Default::default()
+        };
+        store_search(&mut cache, &path, key.clone(), fingerprint.clone(), &results);
+        assert!(
+            cached_search(&cache, &path, &key, &fingerprint).is_some(),
+            "the same ref set must hit the cache, or every keystroke re-walks history",
+        );
+
+        // Move a branch without touching HEAD — D1's exact shape.
+        let b = t.commit("b", &[a]);
+        t.repo.branch("topic", &t.repo.find_commit(b).unwrap(), true).unwrap();
+        let moved = graph::refs_digest(&t.repo);
+        assert_ne!(key, moved);
+        assert!(
+            cached_search(&cache, &path, &moved, &fingerprint).is_none(),
+            "stale hits must not survive a ref move",
+        );
+
+        // Storing under the new digest evicts the old entries rather than
+        // letting the map grow a generation per fetch.
+        store_search(&mut cache, &path, moved.clone(), fingerprint.clone(), &results);
+        assert_eq!(cache.get(&path).unwrap().entries.len(), 1);
+    }
+
+    /// The modifiers change what git is asked, so they have to change the
+    /// cache key — otherwise turning on `regex` returns the fixed-string hits.
+    #[test]
+    fn every_search_modifier_changes_the_cache_key() {
+        let base = search::SearchOptions::default();
+        let key = search_fingerprint("a.b", &base, 0);
+        let variants = [
+            search::SearchOptions { match_case: true, ..base.clone() },
+            search::SearchOptions { match_all: true, ..base.clone() },
+            search::SearchOptions { match_regex: true, ..base.clone() },
+            search::SearchOptions { match_whole_word: true, ..base.clone() },
+        ];
+        for opts in &variants {
+            assert_ne!(key, search_fingerprint("a.b", opts, 0), "{opts:?}");
+        }
+        assert_ne!(key, search_fingerprint("a.b", &base, 100), "the cap is part of the answer");
+        assert_ne!(key, search_fingerprint("a.c", &base, 0));
     }
 }

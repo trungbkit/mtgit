@@ -44,6 +44,16 @@ pub struct CachedGraph {
     pub rows: Vec<GraphRow>,
 }
 
+/// Commit-search results for one repository, keyed on the same ref-set digest
+/// as [`CachedGraph`]. A fetch or a branch move can rewrite the commits a hit
+/// points at *and* renumber every row index, so the two caches have to fall
+/// together (`08-search-and-filter.md` B3).
+pub struct CachedSearch {
+    pub key: String,
+    /// query + modifiers + limit -> results
+    pub entries: HashMap<String, crate::core::search::SearchResults>,
+}
+
 /// How long after one of our own operations finishes the fs watcher stays
 /// quiet. Must comfortably exceed the watcher's 300ms debounce so the final
 /// batch of writes an operation produced is still swallowed.
@@ -115,6 +125,10 @@ pub struct AppState {
     pub pending_history: Mutex<HashMap<String, (String, RepoSnapshot, RestoreMode)>>,
     /// Active network-process PID by repository, used by progress Cancel.
     pub network_pids: Mutex<HashMap<String, u32>>,
+    /// repo path -> cached search results
+    pub search_cache: Mutex<HashMap<String, CachedSearch>>,
+    /// Active `git log` PID by repository, used by search Cancel.
+    pub search_pids: Mutex<HashMap<String, u32>>,
     /// suppresses watcher events caused by our own operations
     pub ops: Arc<OpSuppressor>,
 }

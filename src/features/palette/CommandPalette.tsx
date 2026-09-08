@@ -6,6 +6,7 @@ import { refreshRepo } from "../../ipc/repoState";
 import { smartCheckout } from "../../lib/checkout";
 import { push, runNet } from "../network/net";
 import { useSession } from "../../stores/session";
+import { seedSearch } from "../../stores/search";
 import { toastError, useToasts } from "../../stores/toasts";
 import { promptDialog } from "../../stores/dialog";
 import { validateRefName } from "../../lib/refname";
@@ -66,6 +67,16 @@ export function CommandPalette() {
         { id: "pull", label: "Pull", run: wrap(() => runNet(repo, "pull", undefined, "Pulled")) },
         { id: "push", label: "Push", run: wrap(() => push(repo)) },
         { id: "term", label: "Toggle terminal", run: () => { setOpen(false); toggleTerminal(); } },
+        {
+          id: "search",
+          label: "Search commits…",
+          run: () => {
+            setOpen(false);
+            // Seeds and focuses the graph header's field rather than opening a
+            // search of its own — one search surface (overview §7).
+            seedSearch(repo.path, "", true);
+          },
+        },
         {
           id: "newbranch",
           label: "Create branch…",

@@ -9,6 +9,8 @@ import { StagingView } from "../staging/StagingView";
 import { FileViewer } from "../diff/FileViewer";
 import { FileList } from "./FileList";
 import { Avatar } from "../../components/Avatar";
+import { ContextMenu, type MenuState } from "../../components/ContextMenu";
+import { seedSearch } from "../../stores/search";
 import { copyText } from "../../lib/clipboard";
 import { formatTimestamp } from "../../lib/time";
 import "./detail.css";
@@ -82,6 +84,7 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
   const [amending, setAmending] = useState(false);
   const [amendMsg, setAmendMsg] = useState("");
   const [closedFile, setClosedFile] = useState(false);
+  const [fileMenu, setFileMenu] = useState<MenuState | null>(null);
 
   const { data: detail } = useQuery({
     queryKey: ["commit", repoPath, oid],
@@ -204,6 +207,26 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
             setClosedFile(false);
             selectFile(p);
           }}
+          onContextMenu={(event, file) => {
+            event.preventDefault();
+            setFileMenu({
+              x: event.clientX,
+              y: event.clientY,
+              items: [
+                {
+                  // §2: a file row is one of the search field's entry points.
+                  label: "Search commits touching this file",
+                  onClick: () => seedSearch(repoPath, `file:${file.path}`),
+                },
+                {
+                  label: "Search commits that changed this file's content",
+                  onClick: () => seedSearch(repoPath, `file:${file.path} change:`),
+                },
+                { separator: true },
+                { label: "Copy path", onClick: () => copyText(file.path) },
+              ],
+            });
+          }}
         />
         <div className="detail-diff">
           {activeDiff ? (
@@ -221,6 +244,7 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
           )}
         </div>
       </div>
+      <ContextMenu menu={fileMenu} onClose={() => setFileMenu(null)} />
     </section>
   );
 }

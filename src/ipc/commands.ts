@@ -24,6 +24,8 @@ import type {
   RefList,
   RepoInfo,
   ResetMode,
+  SearchOptions,
+  SearchResults,
   StashEntry,
   StatusReport,
   SubmoduleInfo,
@@ -38,6 +40,10 @@ export const gitAvailable = () => invoke<boolean>("git_available");
 export const listRefs = (path: string) => invoke<RefList>("list_refs", { path });
 export const getGraph = (path: string, skip: number, limit: number) =>
   invoke<GraphPage>("get_graph", { path, skip, limit });
+/** Search history. The grammar is parsed in Rust; `limit` of 0 is unbounded. */
+export const searchCommits = (path: string, query: string, opts: SearchOptions, limit: number) =>
+  invoke<SearchResults>("search_commits", { path, query, opts, limit });
+export const cancelSearch = (path: string) => invoke<void>("cancel_search", { path });
 
 // M2
 export const getCommit = (path: string, oid: string) => invoke<CommitDetail>("get_commit", { path, oid });

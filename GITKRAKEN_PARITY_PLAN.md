@@ -27,12 +27,11 @@ through and annotated as they land.
 
 ## 1. Baseline — verified state of the repo
 
-> **Status: P0 complete; P2–P5 substantially delivered against
-> `docs/feature-requirements/` (audited 2026-09-08 — read
-> `docs/feature-requirements/STATUS.md` for the per-criterion verdict and the outstanding
-> gaps).** P1 (clone / init / remote management / start screen) and P6–P7 are unstarted, and
-> P5's commit search (G10) has not been built. Sections 2.4 and 4/P0 record the P0 work; the
-> P2–P5 sections below describe what was intended, not what shipped — where the two differ,
+> **Status: P0 and P2–P5 complete against `docs/feature-requirements/`** (audited 2026-09-08 —
+> read `docs/feature-requirements/STATUS.md` for the per-criterion verdict and the outstanding
+> gaps). **P5 closed with commit search (G10)**, the last item in it; P1 (clone / init / remote
+> management / start screen) and P6–P8 are unstarted. Sections 2.4 and 4/P0 record the P0 work;
+> the P2–P5 sections below describe what was intended, not what shipped — where the two differ,
 > STATUS.md is the record.
 >
 > **Revised after the GitLens pass:** §2.6 adds G16–G28 (gaps visible only once GitLens is
@@ -43,8 +42,9 @@ through and annotated as they land.
 
 Measured, not assumed: `pnpm exec tsc --noEmit` exits 0, `vite build` succeeds, `cargo clippy
 --all-targets -- -D warnings` is clean, and `cargo test` reports **40 passed, 0 failed,
-0 ignored** — the 50k-commit perf gate now runs in the default suite. ~9k lines across
-`src/` + `src-tauri/src/`.
+0 ignored** at the time of that audit — the 50k-commit perf gate runs in the default suite.
+The suite is at **67 passed** after P5's search (25 tests for the grammar and its git mapping).
+~9k lines across `src/` + `src-tauri/src/`.
 
 **Already working end-to-end:**
 
@@ -91,7 +91,7 @@ a user who switches from it to MTGit today. §2.6 adds the gaps that only become
 | G7 | **Thin commit form** | One textarea. Missing summary/description split, 50/72 guidance, amend-message prefill, co-author trailer, commit template, GPG signing toggle, "stage all and commit". |
 | G8 | **No interactive rebase** | No reorder / squash / fixup / drop / edit / reword. |
 | G9 | **No undo/redo** | Toolbar buttons are hardcoded `disabled`. GitKraken's undo is a signature safety feature. |
-| G10 | **No commit search / filter** | No search by message, author, sha, or file; no branch-scoped ("solo") graph view; no date range. |
+| ~~G10~~ | ~~**No commit search / filter**~~ ✅ **closed in P5** | GitLens's grammar, parsed in Rust (`core/search.rs`), with highlight / filter / select modes, hit navigation across unloaded pages, scroll markers, and `ref:` as the branch-scoped ("solo") view. Outstanding: the minimap (P8 item 3) and value autocomplete for contributors and paths — `docs/feature-requirements/08-search-and-filter.md` §7.1. |
 
 ### 2.3 Interaction fidelity
 
@@ -145,7 +145,7 @@ turns G10 from a design problem into an implementation one.
 | # | Gap | Detail |
 |---|---|---|
 | G16 | **Graph has three fixed columns** | GitLens's graph carries BRANCH/TAG, GRAPH, MESSAGE, **Author, Changes, Date, SHA** — reorderable by dragging headers, toggleable by right-clicking them, persisted per repo. The Changes column (green added / red deleted diffstat bar) is the highest-value of the missing ones: it shows the shape of a commit without selecting it. |
-| G17 | **No minimap, no scroll markers** | The scrollbar gutter carries no marks for the checked-out branch, the selection, or search hits, so anything off-screen is unlocatable. This is a hard prerequisite for search being usable, not a garnish. |
+| G17 | **No minimap** (scroll markers ◐ **done**) | P5's search shipped the markers this row demanded — hits, HEAD and the selection at their proportional positions in the whole history (`ScrollMarkers`), sampled to 400 marks so a 5,000-hit query does not become a solid bar. The **minimap** proper — activity over the whole history beside the markers — is still unbuilt, and stays in P8 item 3. |
 | G18 | **Worktrees exist in the backend and nowhere in the UI** | `core/worktree.rs` lists and adds; the sidebar has no WORKTREES section, the graph shows no per-worktree WIP row, and "Open in worktree…" is offered nowhere checkout is. GitLens treats a worktree as the *default* answer to "look at another branch". Almost entirely UI work over backend that already ships. |
 | G19 | **No terminal links** | MTGit has an xterm panel (`pty.rs`). GitLens makes SHAs, branch names, tags and `a..b` ranges printed in a terminal clickable → reveal in the graph. Best value-per-hour item in this table: a regex plus a call into the existing graph-selection path. |
 | G20 | **No autolinks** | Issue references in commit messages (`#123`, `ABC-456`) are inert text in the message column and the detail panel. Link out only — resolving issue *state* is provider integration (§2.5). |
@@ -377,9 +377,28 @@ Shipped as a 3-pane editor with per-file take-side. Outstanding: pane labels sti
 
 **Exit:** a conflicting merge and a conflicting rebase can both be completed without leaving MTGit.
 
-### P5 — Graph power tools — ◐ **drag-drop + interactive rebase DONE; search unstarted** → closes G10, G11, G8
+### P5 — Graph power tools — ✅ **DONE** → closed G10, G11, G8
 
-- **Search & filter (G10) — the remaining item.** A graph-header search, specified in full in
+- **Search & filter (G10)** — ✅ **done.** Shipped as specified below. What landed, and the two
+  decisions worth knowing before touching it:
+  - `core/search.rs` holds the grammar, its `git log` mapping and its execution; `search_commits`
+    returns `{oid, index, pageHint}` per hit, ordered by **graph row** rather than `git log`
+    order, because hit navigation means "next row down". `cancel_search` SIGTERMs the walk and
+    keeps the partial result. Results cache against `refs_digest()` alongside the graph.
+  - Both traps in the note below bit exactly as predicted. `--invert-grep` inverts *every*
+    `--grep`, so a query mixing `message:` and `-message:` runs a second, identically scoped
+    negative walk and subtracts it — neither term is dropped. And the injection guard is per
+    operator, not global: values attach to their flag (`--grep=-x` is one argv word and cannot
+    be read as an option) or land after `--`, while `ref:` and `commit:` — the two that must be
+    standalone words — reject a leading `-` outright.
+  - **Filter mode draws no edges.** With rows hidden, consecutive rows are no longer parent and
+    child, and an edge between them asserts a parentage that does not exist. The footer says the
+    topology is not continuous, and entering filter mode pulls the rest of the history in,
+    because "showing 37 of 12,481" must not be counting our own pagination.
+  - Outstanding: the minimap (P8 item 3) and value autocomplete for contributors and paths
+    (needs G28). `docs/feature-requirements/08-search-and-filter.md` §7.1 is the list.
+
+  The original specification, kept because it is still the contract: a graph-header search, specified in full in
   `docs/feature-requirements/08-search-and-filter.md`. **Use GitLens's grammar rather than
   inventing one**: `message:`/`=:`, `-message:`, `author:`/`@:` (with `@me`), `committer:`,
   `commit:`/`#:`, `file:`/`?:`, `change:`/`~:` (pickaxe), `type:`/`is:` (`stash`/`tip`/`merge`),
@@ -405,7 +424,7 @@ Shipped as a 3-pane editor with per-file take-side. Outstanding: pane labels sti
   our generated todo file into place. This reuses the existing conflict banner + P4 editor for
   the stop-and-resolve loop, so the interactive part is mostly UI.
 
-**Exit:** the three GitKraken interactions users reach for daily — search, drag-to-merge,
+**Exit — met:** the three GitKraken interactions users reach for daily — search, drag-to-merge,
 interactive rebase — are present.
 
 ### P6 — Settings, theming, keyboard (1 week) → closes G13–G15
@@ -450,8 +469,10 @@ backlog; each item there is already marked against its own doc.
    region navigation (`n`/`p` crossing file boundaries, `conflict i of n · file j of k`), and
    relabels the panes by ref with lane colour, closing STATUS C4. Prerequisite for item 5.
 3. **Graph column model + gutter (G16, G17)** — configurable/reorderable/toggleable columns with
-   Author / Changes / Date / SHA; scroll markers and an on-search minimap. Do this *before* or
-   *with* search: a search whose hits cannot be located in the scrollbar is half a feature.
+   Author / Changes / Date / SHA; ~~scroll markers~~ and an on-search minimap. The scroll markers
+   landed **with** search in P5, for the reason this line gives: a search whose hits cannot be
+   located in the scrollbar is half a feature. `ScrollMarkers` in `GraphView` is where they live,
+   and the minimap belongs beside them.
 4. **Detail stack (G24)** — push details as sheets with a back affordance; makes
    compare-two-commits a sheet rather than a mode.
 5. **Interactive-rebase conflict prediction (G26)** — the one new algorithm here. Trial-apply the
@@ -505,7 +526,9 @@ resolve_conflict(file, content) / take_ours(file) / take_theirs(file)
 # graph
 get_graph(skip, limit)                  # DONE — paginated by the frontend since P0
 graph::refs_digest()                    # DONE — internal, backs the D1 cache fix
-search_commits(query, opts, limit) -> [{ oid, pageHint }]   # grammar parsed in Rust; see P5
+search_commits(query, opts, limit) -> { hits: [{ oid, index, pageHint }], truncated, cancelled,
+                                        summary, notes }   # DONE in P5; grammar parsed in Rust
+cancel_search()                         # DONE — SIGTERMs the walk, keeps partial results
 rebase_interactive(onto, todo[])
 
 # P8 — GitLens-derived (§2.6)
@@ -527,7 +550,10 @@ Two contract notes that are easy to get wrong:
 
 - `search_commits` returns SHAs and page hints, **not rows**. The rows are already in the graph
   cache; re-serialising them doubles the payload for nothing. Results cache against
-  `refs_digest()` so a fetch cannot leave a hit list pointing at a rewritten commit.
+  `refs_digest()` so a fetch cannot leave a hit list pointing at a rewritten commit. It grew one
+  field beyond the sketch: a row `index` as well as a `pageHint`, because the frontend needs the
+  index to scroll to the hit *after* loading the page the hint named — and a `null` index is how
+  a hit the graph does not contain (a stash commit) reports itself instead of being dropped.
 - `predict_rebase_conflicts` is read-only and therefore takes **no op guard** (invariant 2), and
   must leave no trace: no ref moves, no index writes, no `ORIG_HEAD`. If it needs a worktree, it
   needs a temporary one it removes.
@@ -547,7 +573,7 @@ Two contract notes that are easy to get wrong:
 | **Scope creep into provider integrations.** | §2.5 is the contract: PR/issue panels are out until P7 ships. `docs/feature-requirements/00-overview.md` §8.2–§8.3 extends that contract over GitLens's whole account-gated tier, so "GitLens has it" is not an argument for building it. |
 | **GitLens as a reference is licence-shaped.** Its `plus/` tree (Launchpad, AI, agents, Cloud Patches) is under `LICENSE.plus`, not MIT — and that is precisely the half whose features are most tempting to copy. | Read `plus/` for understanding only; never lift code from it. For the MIT half, matching *behaviour* is free but copying *code* owes attribution — cite the source file in a comment. §2.5 keeps the whole `plus/` feature set deferred anyway, which makes this mostly self-enforcing. |
 | **Conflict prediction (G26) can be wrong**, and a wrong prediction is worse than none: a clean forecast that then conflicts destroys trust in the plan editor. | Label it an estimate in the UI, recompute on every reorder, and never gate Start Rebase on it. Test it against a fixture with a known-conflicting reorder, and against one where the conflict only appears *after* a squash — the case a naive per-commit check misses. |
-| **Search values reach the real `git` binary** (invariant 6), so a term beginning with `-` is command injection rather than a formatting bug. | Drop or `--`-guard every value before it reaches `shellout.rs`, with a test per operator. GitLens's own source drops leading-`-` values for `ref:` for exactly this reason — copy the guard, not just the grammar. |
+| ~~**Search values reach the real `git` binary** (invariant 6), so a term beginning with `-` is command injection rather than a formatting bug.~~ | ✅ **Discharged in P5.** `no_operator_lets_a_leading_dash_reach_git_as_an_option` asserts, per operator, that a value beginning with `-` is either attached to its flag, after `--`, or rejected. `ref:` and `commit:` reject; the rest attach. Note that search does **not** go through `shellout.rs` — that path accepts fetch/pull/push only — so the guard lives in `core/search.rs::guard_standalone`. |
 
 ---
 
@@ -560,11 +586,11 @@ Two contract notes that are easy to get wrong:
 | ~~P2~~ | ~~Hunk + line staging~~ | ✅ **done** (`applyPatch` + per-hunk/per-line UI) |
 | ~~P3~~ | ~~Commit form + undo journal~~ | ✅ **done** (summary/description, amend, hooks, undo/redo) |
 | ~~P4~~ | ~~Conflict editor~~ | ✅ **done** (3-pane + per-file take-side); labels and region nav outstanding |
-| P5 | Search, drag-drop, interactive rebase | ◐ drag-drop + interactive rebase **done**; **commit search (G10) unstarted** — now fully specified in `08-search-and-filter.md`, so it is implementation, not design |
+| ~~P5~~ | ~~Search, drag-drop, interactive rebase~~ | ✅ **done** (search grammar in Rust + three result modes + scroll markers; drag-drop; interactive rebase) |
 | P6 | Settings, light theme, keybindings, icons | 1 wk — **unstarted** |
 | P7 | CI, tests, packaging | 1 wk — **unstarted** |
 | P8 | GitLens-derived surfaces (G16–G28) | 2–2.5 wk — **unstarted** |
-| **Remaining** | P1, P5-search, P6, P7, P8 + the gaps in `docs/feature-requirements/STATUS.md` | **~5.5–7 wk** (one dev) |
+| **Remaining** | P1, P6, P7, P8 + the gaps in `docs/feature-requirements/STATUS.md` | **~5–6.5 wk** (one dev) |
 
 The UI/UX fidelity work in §3 is distributed across P1 (shell + start screen), P3 (undo toasts),
 P5 (drop affordances), P6 (tokens, density, icons) and P8 (columns, gutter, detail stack) rather
@@ -598,10 +624,13 @@ If you want the shortest path to "this feels like GitKraken":
    (`smartCheckout`, `runNet`) are genuine chokepoints rather than repetition (A3).
    `STATUS.md` §1.1–§1.2 have the full record, including what the gate deliberately does *not*
    stop and the one Rust test that pins the contract it rests on.
-6. **P5-search (G10)** ← **next.** The largest remaining gap users feel, and no longer a design problem:
-   `08-search-and-filter.md` specifies it down to the operator tokens. Pair it with P8 item 3
-   (scroll markers), because hits you cannot locate are half a search.
-7. **P1** — clone/start screen, so the app is self-sufficient without the CLI.
+6. ~~**P5-search (G10)**~~ ✅ **done**, together with the half of P8 item 3 it depended on: the
+   scroll markers landed with it, because hits you cannot locate are half a search. The minimap
+   did not, and stays in P8.
+7. **P1** ← **next.** Clone / init / remotes / start screen, so the app is self-sufficient
+   without the CLI. It is now the only phase standing between MTGit and a user who has never
+   opened a terminal — every other remaining phase improves a repo they must already have
+   cloned by hand.
 8. **P8 item 1 (worktrees)** — cheapest large-surface win in the plan: the backend already
    exists, and it unblocks criteria in four of the seven feature docs.
 9. **P8 item 6's cheap wins** opportunistically — **terminal links** is the best

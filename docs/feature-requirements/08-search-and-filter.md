@@ -122,26 +122,63 @@ Modifiers, as toggles beside the field: **match case**, **match whole word**, **
 
 ## 7. Acceptance Criteria
 
-> New in this revision — GitLens-derived. **Nothing here is implemented yet**; `search_commits`
-> does not exist. See `STATUS.md` §6.
+> **Implemented 2026-09-08** (`core/search.rs`, `search_commits` / `cancel_search`,
+> `features/graph/SearchBar.tsx`, `stores/search.ts`). 25 Rust tests cover the grammar and its
+> git mapping; the four unchecked boxes below are the honest remainder, and each says what it
+> waits on. There is still no frontend test runner (P7), so every UI criterion here was
+> typechecked and built but not clicked through in the running app.
 
-- [ ] Every operator and alias in §3 parses, including quoted values, and maps to the stated git
+- [x] Every operator and alias in §3 parses, including quoted values, and maps to the stated git
       behaviour, verified against a fixture repo per operator.
-- [ ] Bare terms search messages; `match all` / `match case` / `regex` / `whole word` all work.
-- [ ] `@me` resolves to the configured git identity.
-- [ ] A value beginning with `-` can never reach `git` as an option (test per operator).
-- [ ] Mixing `message:` and `-message:` either returns the correct set or is rejected with an
-      explanation — never silently drops a term.
-- [ ] `type:` handles `stash`, `tip` and `merge`.
-- [ ] Highlight / filter / select modes behave per §4, and exiting filter mode restores
-      selection and scroll exactly.
-- [ ] Hit navigation with `F3`/`⌘G`, wrapping, `n of m` counter, selection follows.
-- [ ] Hits are found in history that has never been scrolled into view, and navigating to one
-      loads its page.
-- [ ] A pickaxe search over the 50k-commit fixture is cancellable and reports progress.
-- [ ] Results invalidate with `refs_digest()` — a branch move cannot leave a stale hit list.
-- [ ] Truncation at the result cap is stated, never silent.
+      (`every_operator_and_alias_parses`, `quoted_values_survive_and_are_never_operators`, plus a
+      behavioural test per operator family.)
+- [x] Bare terms search messages; `match all` / `match case` / `regex` / `whole word` all work.
+      (`fixed_strings_is_the_default_so_dots_are_literal`,
+      `match_case_and_match_all_map_to_their_flags`, `whole_word_adds_boundaries_and_escapes_the_value`.)
+- [x] `@me` resolves to the configured git identity, and is left alone when there is none.
+- [x] A value beginning with `-` can never reach `git` as an option (test per operator:
+      `no_operator_lets_a_leading_dash_reach_git_as_an_option`). Values are attached to their
+      flag, pushed after `--`, or — for `ref:` and `commit:`, the two that must be standalone
+      argv words — rejected with an explanation.
+- [x] Mixing `message:` and `-message:` returns the correct set: the positive walk runs and a
+      second, identically scoped negative walk is subtracted. Neither term is dropped.
+- [x] `type:` handles `stash`, `tip` and `merge`. `tip` and `commit:` are filters over the
+      walk's output; `stash` walks the stash reflog instead of the ref set.
+- [x] Highlight / filter / select modes behave per §4, and exiting filter mode restores
+      selection and scroll exactly. Filter mode also draws **no edges** — with rows hidden,
+      consecutive rows are no longer parent and child, and an edge between them would assert a
+      parentage that does not exist.
+- [x] Hit navigation with `F3`/`⌘G` and `⇧F3`/`⇧⌘G`, wrapping, an `n of m` counter, selection
+      follows. The counter reads `37 results` until a hit is made current, because landing on
+      one immediately would scroll the graph out from under someone still typing.
+- [x] Hits are found in history that has never been scrolled into view, and navigating to one
+      loads its page. `search_commits` returns a row index and a page hint per hit; the frontend
+      pulls pages until the row exists, then scrolls to it.
+- [x] A pickaxe search is cancellable and reports progress — `search-progress` events into the
+      status bar with a Cancel that SIGTERMs the `git log`, keeping the partial result. Pickaxe
+      terms wait for Enter rather than running as you type.
+      *Not* measured against the 50k-commit fixture; the perf gate covers layout, not search.
+- [x] Results invalidate with `refs_digest()` — a branch move cannot leave a stale hit list
+      (`search_cache_is_invalidated_by_a_branch_move`). Every modifier and the result cap are
+      part of the cache key (`every_search_modifier_changes_the_cache_key`).
+- [x] Truncation at the result cap is stated, never silent — the footer says where it stopped
+      and offers **Keep going**, which re-runs the same query uncapped.
 - [ ] Autocomplete offers operators, contributors, paths and refs as described.
-- [ ] Recent queries listed; pinned queries persist per repo.
-- [ ] Search is reachable from the graph header, `⌘F`/`⌘⇧F`, the command palette, an author
+      **Operators and refs only.** Contributors need the CONTRIBUTORS data (`GITKRAKEN_PARITY_PLAN.md`
+      G28) and paths need the selection's tree; both are additions to the same `suggestions` list.
+- [x] Recent queries listed; pinned queries persist per repo (`localStorage`, per repo path,
+      migrating into the settings file when P6 lands one).
+- [x] Search is reachable from the graph header, `⌘F`/`⌘⇧F`, the command palette, an author
       cell, and a file row — and the sidebar's `⌘F` still filters refs without conflict.
+      Focus decides `⌘F`: the graph owns it while the graph pane has focus, the sidebar owns it
+      everywhere else, and `⇧⌘F` is always the graph's. Clicking a graph row focuses the pane,
+      so that rule is about a real state rather than a notional one.
+
+### 7.1 Outstanding, with what each waits on
+
+| Item | State | Waits on |
+|---|---|---|
+| **Minimap** | Not built. Scroll markers *are* — hits, HEAD and the selection at their proportional positions in the whole history (`ScrollMarkers`), sampled to 400 marks. | The minimap proper (activity over time beside the markers) is `GITKRAKEN_PARITY_PLAN.md` P8 item 3. |
+| **Contributor and path autocomplete** | Operators and refs complete; values for `author:` and `file:` do not. | CONTRIBUTORS (G28) and a path source for the current selection. |
+| **Sidebar eye toggle unified with `ref:`** | The context menu's **Show only this in the graph** and **Search commits on this branch** write a `ref:` term, as §2 requires. The hover **eye** toggle still drives `hiddenRefs`, which hides *badges* rather than rows. | A decision about what the eye should mean. Because it hides no rows, §6's "navigating to a hit hidden by a ref toggle clears the toggle" cannot arise today — there is no hit the toggle can hide. |
+| **A search field in the middle of a full-width diff** | `⇧⌘F` focuses the field from anywhere, but nothing "takes over the centre pane" in the current shell, so there is nothing to scroll back into view. | The focus view / detail stack (P8 item 4). |

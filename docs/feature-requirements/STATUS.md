@@ -5,16 +5,21 @@ read out of the source, not inferred from the plan. The gate is green at this co
 40 Rust tests pass, `clippy -D warnings` clean, `tsc --noEmit` clean.
 
 > **§1 is now closed.** A1 landed with the mutation seam (`6e16ed8`); A2–A5 landed after it, and
-> each row below carries its own record. The gate is green with all five fixed: **42 Rust tests**,
-> clippy clean at `-D warnings`, `tsc --noEmit` clean, `vite build` succeeds. §2–§4 were never
-> defects — they are missing entry points, simplified dialogs and polish — so **§8 of
-> `GITKRAKEN_PARITY_PLAN.md` now points at P5-search (G10) rather than at this section.**
+> each row below carries its own record. The gate is green with all five fixed: clippy clean at
+> `-D warnings`, `tsc --noEmit` clean, `vite build` succeeds. §2–§4 were never defects — they are
+> missing entry points, simplified dialogs and polish.
+>
+> **P5-search (G10) has since landed too** — `08-search-and-filter.md` is implemented bar the
+> four items in its new §7.1, and the gate is at **67 Rust tests** (42 + 25 for the grammar and
+> its git mapping). `GITKRAKEN_PARITY_PLAN.md` §8 now points at **P1** (clone / init / remotes /
+> start screen).
 
 > **Scope note (revised after the GitLens pass).** This audit covers the docs *as they stood on
 > 2026-09-08*, before `gitkraken/vscode-gitlens` was folded in as a second reference
 > (`00-overview.md` §0). The specs have since grown a set of GitLens-derived criteria, each
-> marked "New in this revision" in its own doc and **none of them implemented** — plus a whole
-> new doc, `08-search-and-filter.md`. §6 below inventories them. Nothing in §1–§5 changed
+> marked "New in this revision" in its own doc and, at the time, **none of them implemented** —
+> plus a whole new doc, `08-search-and-filter.md`. §6 below inventories them, and records that
+> the search doc has since been built while the rest of that list has not. Nothing in §1–§5 changed
 > meaning: no verdict here was downgraded by the new material, because the new criteria are
 > additions rather than corrections. Read the per-doc verdicts as "complete against the
 > original seven-feature spec", not as "complete against the docs in front of you".
@@ -38,7 +43,7 @@ analysis (its §2.6 and P8).
 | `05-merge.md` | Merge | **Complete** — 5 of 6; conflict panes are labelled "Ours/Theirs", not by branch |
 | `06-rebase.md` | Rebase + interactive | **Complete** — 5 of 6; no in-progress graph ghosting, no force-push hint |
 | `07-cherry-pick.md` | Cherry-pick | **Complete** — 5 of 6; no per-commit sequence progress, no dirty-tree auto-stash |
-| `08-search-and-filter.md` | Commit search & filtering | **Not started** — `search_commits` does not exist; new doc, nothing to audit |
+| `08-search-and-filter.md` | Commit search & filtering | **Substantially complete** — 13 of 15 criteria; no minimap (P8 item 3), and autocomplete completes operators and refs but not contributors or paths. See its §7.1 |
 
 ---
 
@@ -217,8 +222,18 @@ break, none of which are covered:
 - Sequence-meta bookkeeping (`i of n` in the banner) across continue and skip.
 - `apply_patch` round-trip for line-level staging: CRLF, no trailing newline, added-lines-only.
 
+Search added 25 Rust tests — a behavioural test per operator family against a fixture repo,
+plus the argument-injection guard (one assertion per operator), the two-walk subtraction for
+`message:` + `-message:`, cache invalidation on a branch move, and hit ordering with page hints.
+What it does **not** cover: `page_hint` against a real 2000-row page boundary, and the pickaxe
+cancellation path (the SIGTERM branch is exercised by no test — killing a child mid-walk
+deterministically needs a fixture big enough to still be running).
+
 There is still no frontend test runner (P7). Given how much behaviour now lives in
-`net.ts`, `lib/checkout.ts` and the stores, Vitest is worth pulling forward.
+`net.ts`, `lib/checkout.ts`, `stores/search.ts` and the stores generally, Vitest is worth pulling
+forward. Search made that argument stronger, not weaker: three-mode result handling, hit
+navigation across page loads, and the filter-mode restore are all frontend state machines with
+no machine checking them.
 
 ---
 
@@ -230,7 +245,7 @@ it is listed in one place so the unchecked boxes scattered through seven docs ar
 
 | Doc | New criteria | Weight |
 |---|---|---|
-| `08-search-and-filter.md` | 15 — the whole doc | **Large.** New backend command, a grammar parser in Rust, result modes, hit navigation. This is `GITKRAKEN_PARITY_PLAN.md` G10, and it is the largest single gap remaining in the set. |
+| ~~`08-search-and-filter.md`~~ | ~~15 — the whole doc~~ | ✅ **Done.** `core/search.rs` (grammar + git mapping + execution), `search_commits` / `cancel_search`, `features/graph/SearchBar.tsx`, `stores/search.ts`, `ScrollMarkers` in `GraphView`. 25 tests. Four items outstanding, listed in that doc's §7.1. |
 | `00-overview.md` | configurable/reorderable graph columns · Changes column · minimap · scroll markers · ref overflow `+N` · ghost refs on hover · stacked detail sheets · WORKTREES + CONTRIBUTORS sidebar sections · sidebar-scopes-the-graph · jump to HEAD/upstream/merge target · one date-style setting · terminal links · autolinks · rich hovers · blame heatmap · file/line history following renames · revision navigation · guided command palette | **Medium, and mostly independent.** Several are a day each (terminal links, heatmap, date style, `+N` overflow); the column model and the detail stack are refactors. |
 | `01-commit.md` | 5 — per-worktree WIP row · co-author picker · `commit.template` · autolinks in preview · stash / copy-to-worktree actions | Small each; the per-worktree WIP row depends on the graph carrying worktrees at all. |
 | `02-checkout.md` | 5 + new §7 — `/` branch finder · remote branches in the palette · **Open in worktree…** · worktree-holds-branch dialog · sidebar worktree management | Medium. `core/worktree.rs` already lists and adds; this is almost entirely UI. |
@@ -246,8 +261,9 @@ it is listed in one place so the unchecked boxes scattered through seven docs ar
    and uses backend that already exists.
 2. **The unified conflict panel** — subsumes an existing defect (C4) and is a prerequisite for
    two of the three rebase items.
-3. **Search** (`08-search-and-filter.md`) — the largest item, and the one users notice missing;
-   it is also what makes cherry-pick and interactive rebase reachable on a real repository.
+3. ~~**Search** (`08-search-and-filter.md`)~~ ✅ **done** — and it did what this line predicted:
+   select mode hands every hit to the range operations, so cherry-picking or planning a rebase
+   over a search result is now one gesture rather than a hunt.
 4. Everything else is independent and small enough to land opportunistically. **Terminal links
    are the best value-per-hour item in the whole file**: MTGit already has the pty panel and the
    graph selection API, so it is a regex and a click handler.

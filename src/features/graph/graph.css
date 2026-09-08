@@ -65,6 +65,16 @@
   cursor: pointer;
 }
 
+/* Holds the scroll container and the marker gutter side by side. The gutter
+   cannot live *inside* the scroller: an absolutely positioned child of a
+   scroll container is placed against the content box, so it scrolls away. */
+.graph-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
 .graph-scroll {
   position: relative;
   flex: 1;

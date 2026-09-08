@@ -25,6 +25,7 @@ import {
 import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
 import type { BranchInfo } from "../../ipc/types";
 import { useSession } from "../../stores/session";
+import { seedSearch, useSearch } from "../../stores/search";
 import { toastError, useToasts } from "../../stores/toasts";
 import { choiceDialog, confirmDialog, promptDialog } from "../../stores/dialog";
 import { validateRefName } from "../../lib/refname";
@@ -58,11 +59,16 @@ export function Sidebar() {
 
   useEffect(() => {
     const focusFilter = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        filterRef.current?.focus();
-        filterRef.current?.select();
-      }
+      if (!((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f")) return;
+      // The graph header has its own ⌘F (the commit search). Two panes cannot
+      // both own one shortcut, so focus decides: with the graph focused ⌘F
+      // searches commits, and everywhere else — including nothing focused —
+      // it filters refs here (`08-search-and-filter.md` §2). ⇧⌘F is always
+      // the graph's, from anywhere.
+      if (event.shiftKey || document.activeElement?.closest(".graph-container")) return;
+      event.preventDefault();
+      filterRef.current?.focus();
+      filterRef.current?.select();
     };
     window.addEventListener("keydown", focusFilter);
     return () => window.removeEventListener("keydown", focusFilter);
@@ -209,7 +215,23 @@ export function Sidebar() {
 
   function branchMenu(e: React.MouseEvent, b: BranchInfo, local: boolean) {
     e.preventDefault();
-    const items: MenuItem[] = [{ label: "Checkout", onClick: () => doCheckout(b.name) }];
+    const items: MenuItem[] = [
+      { label: "Checkout", onClick: () => doCheckout(b.name) },
+      {
+        // Scoping the graph to a ref *is* the `ref:` search term, not a second
+        // filter mechanism (overview §2) — so this writes the query the search
+        // field would have written.
+        label: "Show only this in the graph",
+        onClick: () => {
+          seedSearch(path, `ref:${b.name}`, true);
+          useSearch.getState().setMode(path, "filter");
+        },
+      },
+      {
+        label: "Search commits on this branch",
+        onClick: () => seedSearch(path, `ref:${b.name}`, true),
+      },
+    ];
     if (local) {
       items.push(
         {

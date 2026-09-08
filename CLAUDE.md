@@ -202,13 +202,15 @@ Frontend reports them with `toastError(e)`. Note that `gitNetwork` *resolves* wi
 ## Roadmap
 
 `GITKRAKEN_PARITY_PLAN.md` is the live plan: gap analysis vs GitKraken, phases P0–P8, and a
-status marker per phase. **P0 and P2–P4 are done, P5 is done except commit search; P1
-(clone/init/remotes/start screen), P6–P7 and P8 (the GitLens-derived surfaces, G16–G28) are
-unstarted.** Its §8 says what to pick up next; STATUS.md §1's defects (A1–A5) are all cleared,
-so the answer is now P5's commit search.
+status marker per phase. **P0 and P2–P5 are done; P1 (clone/init/remotes/start screen), P6–P7
+and P8 (the GitLens-derived surfaces, G16–G28) are unstarted.** Its §8 says what to pick up
+next; STATUS.md §1's defects (A1–A5) are cleared and P5's commit search has landed, so the
+answer is now **P1** — the only phase left that stands between MTGit and a user who has never
+opened a terminal.
 
 `docs/feature-requirements/` is the spec for the seven core features (commit, checkout, push,
-pull, merge, rebase, cherry-pick) plus `08-search-and-filter.md` (commit search, unbuilt), and
+pull, merge, rebase, cherry-pick) plus `08-search-and-filter.md` (commit search — built; its
+§7.1 lists the four items still outstanding), and
 `docs/feature-requirements/STATUS.md` audits the code against it — per-criterion verdicts plus
 the outstanding defects. Start there before picking up feature work; it is more current than the
 phase plan.

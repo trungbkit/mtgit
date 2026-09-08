@@ -8,6 +8,7 @@ pub mod history;
 pub mod ops;
 pub mod refs;
 pub mod repo;
+pub mod search;
 pub mod stash;
 pub mod status;
 pub mod worktree;

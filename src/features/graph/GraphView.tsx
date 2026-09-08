@@ -16,9 +16,10 @@ import {
   resetTo,
   revertCommit,
 } from "../../ipc/commands";
-import type { GraphRow } from "../../ipc/types";
+import type { GraphRow, SearchHit } from "../../ipc/types";
 import type { RebaseAction, ResetMode } from "../../ipc/types";
 import { useSession, WORKING } from "../../stores/session";
+import { seedSearch, useRepoSearch, useSearch } from "../../stores/search";
 import { toastError, useToasts } from "../../stores/toasts";
 import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
 import { type ConflictKind, conflictLabel } from "../../stores/conflict";
@@ -33,6 +34,7 @@ import { laneColor } from "./palette";
 import { CherryPickPopover } from "./CherryPickPopover";
 import { RebasePlanDialog } from "./RebasePlanDialog";
 import { CompareDialog } from "./CompareDialog";
+import { SearchBar } from "./SearchBar";
 import "./graph.css";
 
 const ROW_HEIGHT = 28;
@@ -42,6 +44,8 @@ const GUTTER_PAD = 12;
 const BRANCH_COL_WIDTH = 200;
 const AVATAR_SIZE = 18;
 const EMPTY_HIDDEN_REFS: string[] = [];
+/** Cap on gutter markers — past this they merge into a solid bar anyway. */
+const MAX_MARKERS = 400;
 
 /** Rows fetched per `get_graph` call. Big enough that a page covers several
  *  screens of scrolling, small enough that opening a 50k-commit repo does not
@@ -93,6 +97,16 @@ export function GraphView() {
   const rows = useMemo(() => data?.pages.flatMap((p) => p.rows) ?? [], [data]);
   const total = data?.pages[0]?.total ?? 0;
   const headOid = data?.pages[0]?.head;
+
+  const search = useRepoSearch(repo?.path);
+  const hitOids = useMemo(() => new Set(search.hits.map((h) => h.oid)), [search.hits]);
+  const currentHitOid = search.cursor >= 0 ? search.hits[search.cursor]?.oid : undefined;
+  const filtering = !!search.submitted && search.mode === "filter";
+  /** What the list actually renders. In filter mode that is the hits only. */
+  const visibleRows = useMemo(
+    () => (filtering ? rows.filter((row) => hitOids.has(row.oid)) : rows),
+    [rows, filtering, hitOids],
+  );
 
   const { data: status } = useQuery({
     queryKey: ["status", repo?.path],
@@ -399,7 +413,7 @@ export function GraphView() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const virtualizer = useVirtualizer({
-    count: rows.length,
+    count: visibleRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 24,
@@ -409,12 +423,19 @@ export function GraphView() {
   const virtualItems = virtualizer.getVirtualItems();
   const lastVisible = virtualItems[virtualItems.length - 1]?.index ?? 0;
   useEffect(() => {
-    if (hasNextPage && !isFetchingNextPage && lastVisible >= rows.length - PREFETCH_MARGIN) {
+    if (hasNextPage && !isFetchingNextPage && lastVisible >= visibleRows.length - PREFETCH_MARGIN) {
       void fetchNextPage();
     }
-  }, [lastVisible, rows.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [lastVisible, visibleRows.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const maxLane = rows.reduce((m, r) => {
+  // Filter mode is only truthful once the whole history is loaded: a hit on a
+  // page nobody has scrolled to is not "filtered out", it is unfetched — and
+  // the footer's "showing 37 of 12,481" would be counting our own laziness.
+  useEffect(() => {
+    if (filtering && hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [filtering, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  const maxLane = visibleRows.reduce((m, r) => {
     let local = r.lane;
     for (const e of r.edges) local = Math.max(local, e.fromLane, e.toLane);
     return Math.max(m, local);
@@ -447,30 +468,35 @@ export function GraphView() {
 
     const scrollTop = parent.scrollTop;
     const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1);
-    const last = Math.min(rows.length - 1, Math.ceil((scrollTop + ch) / ROW_HEIGHT) + 1);
+    const last = Math.min(visibleRows.length - 1, Math.ceil((scrollTop + ch) / ROW_HEIGHT) + 1);
 
-    for (let i = first; i <= last; i++) {
-      const row = rows[i];
-      const yTop = i * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
-      const yBot = yTop + ROW_HEIGHT;
-      for (const e of row.edges) {
-        const x1 = laneX(e.fromLane);
-        const x2 = laneX(e.toLane);
-        ctx.strokeStyle = laneColor(e.color);
-        ctx.beginPath();
-        ctx.moveTo(x1, yTop);
-        if (x1 === x2) {
-          ctx.lineTo(x2, yBot);
-        } else {
-          const midY = (yTop + yBot) / 2;
-          ctx.bezierCurveTo(x1, midY, x2, midY, x2, yBot);
+    // Filter mode hides rows, so consecutive rows are no longer parent and
+    // child: drawing the edge band between them would assert a parentage that
+    // does not exist. Nodes only, until the filter is lifted.
+    if (!filtering) {
+      for (let i = first; i <= last; i++) {
+        const row = visibleRows[i];
+        const yTop = i * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
+        const yBot = yTop + ROW_HEIGHT;
+        for (const e of row.edges) {
+          const x1 = laneX(e.fromLane);
+          const x2 = laneX(e.toLane);
+          ctx.strokeStyle = laneColor(e.color);
+          ctx.beginPath();
+          ctx.moveTo(x1, yTop);
+          if (x1 === x2) {
+            ctx.lineTo(x2, yBot);
+          } else {
+            const midY = (yTop + yBot) / 2;
+            ctx.bezierCurveTo(x1, midY, x2, midY, x2, yBot);
+          }
+          ctx.stroke();
         }
-        ctx.stroke();
       }
     }
 
     for (let i = first; i <= last; i++) {
-      const row = rows[i];
+      const row = visibleRows[i];
       const y = i * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
       const x = laneX(row.lane);
       const selected = row.oid === selectedOid;
@@ -485,7 +511,7 @@ export function GraphView() {
         ctx.lineWidth = 1.8;
       }
     }
-  }, [rows, gutterWidth, laneX, selectedOid]);
+  }, [visibleRows, gutterWidth, laneX, selectedOid, filtering]);
 
   useEffect(() => {
     const parent = parentRef.current;
@@ -515,25 +541,120 @@ export function GraphView() {
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
-      if (rows.length === 0) return;
+      if (visibleRows.length === 0) return;
       const active = document.activeElement;
       if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
       ev.preventDefault();
-      const idx = rows.findIndex((r) => r.oid === selectedOid);
+      const idx = visibleRows.findIndex((r) => r.oid === selectedOid);
       const next =
         ev.key === "ArrowDown"
-          ? Math.min(rows.length - 1, idx < 0 ? 0 : idx + 1)
+          ? Math.min(visibleRows.length - 1, idx < 0 ? 0 : idx + 1)
           : Math.max(0, idx < 0 ? 0 : idx - 1);
-      selectOid(rows[next].oid);
+      selectOid(visibleRows[next].oid);
       virtualizer.scrollToIndex(next, { align: "auto" });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rows, selectedOid, selectOid, virtualizer]);
+  }, [visibleRows, selectedOid, selectOid, virtualizer]);
+
+  // Live values for `navigateHits`, which awaits page fetches and would
+  // otherwise read the rows as they were when the keystroke landed.
+  const live = useRef({ rows, visibleRows, filtering, hasNextPage });
+  live.current = { rows, visibleRows, filtering, hasNextPage };
+
+  /**
+   * Step to the next/previous hit, loading the page it lives on first.
+   *
+   * The backend searches the whole history, so a hit can be thousands of rows
+   * past anything fetched (§4). Refusing to navigate to a hit we just counted
+   * would be worse than not counting it.
+   */
+  const navigateHits = useCallback(
+    async (delta: number) => {
+      const path = repo?.path;
+      if (!path) return;
+      const store = useSearch.getState();
+      const at = store.step(path, delta);
+      if (at < 0) return;
+      const hit = store.get(path).hits[at];
+      if (!hit) return;
+      selectOid(hit.oid);
+      if (hit.index === null) {
+        pushToast("info", `${hit.oid.slice(0, 7)} is not in the graph — a stash, or a commit no ref reaches.`);
+        return;
+      }
+      let guard = 0;
+      while (hit.index >= live.current.rows.length && live.current.hasNextPage && guard++ < 200) {
+        const next = await fetchNextPage();
+        live.current.rows = next.data?.pages.flatMap((page) => page.rows) ?? live.current.rows;
+        live.current.hasNextPage = next.hasNextPage;
+      }
+      const displayIndex = live.current.filtering
+        ? live.current.visibleRows.findIndex((row) => row.oid === hit.oid)
+        : hit.index;
+      if (displayIndex >= 0) virtualizer.scrollToIndex(displayIndex, { align: "center" });
+    },
+    [repo?.path, selectOid, pushToast, fetchNextPage, virtualizer],
+  );
+
+  // F3 / ⌘G and their reverses, plus the two ways into the field.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+      if (key === "f3" || (mod && key === "g")) {
+        event.preventDefault();
+        void navigateHits(event.shiftKey ? -1 : 1);
+        return;
+      }
+      // ⌘F when the graph has focus, ⇧⌘F from anywhere (§2); the sidebar
+      // keeps ⌘F for its ref filter otherwise.
+      const graphFocused = !!document.activeElement?.closest(".graph-container");
+      if (mod && key === "f" && (event.shiftKey || graphFocused)) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent("mtgit:focus-search"));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navigateHits]);
+
+  // Select mode hands every hit to the range operations (cherry-pick a search
+  // result, plan a rebase over one) without a click per row.
+  useEffect(() => {
+    if (search.mode === "select" && search.submitted && search.hits.length > 0) {
+      setSelectedOids(new Set(search.hits.map((hit) => hit.oid)));
+    }
+  }, [search.mode, search.submitted, search.hits]);
+
+  // B5: entering filter mode changes neither selection nor scroll, and leaving
+  // it puts both back exactly.
+  const lastMode = useRef(search.mode);
+  useEffect(() => {
+    const path = repo?.path;
+    if (!path) return;
+    const store = useSearch.getState();
+    if (lastMode.current !== "filter" && search.mode === "filter") {
+      store.patch(path, {
+        restore: { oid: selectedOid, scrollTop: parentRef.current?.scrollTop ?? 0 },
+      });
+    } else if (lastMode.current === "filter" && search.mode !== "filter") {
+      const restore = store.get(path).restore;
+      if (restore) {
+        selectOid(restore.oid);
+        requestAnimationFrame(() => {
+          if (parentRef.current) parentRef.current.scrollTop = restore.scrollTop;
+        });
+        store.patch(path, { restore: null });
+      }
+    }
+    lastMode.current = search.mode;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.mode]);
 
   useEffect(() => {
     if (!headOid) return;
-    const index = rows.findIndex((row) => row.oid === headOid);
+    const index = visibleRows.findIndex((row) => row.oid === headOid);
     if (index >= 0) virtualizer.scrollToIndex(index, { align: "center" });
   }, [headOid]);
 
@@ -576,6 +697,8 @@ export function GraphView() {
     }
     setSelectionAnchor(row.oid);
     selectOid(row.oid);
+    // Gives the pane focus, which is what decides who owns ⌘F.
+    parentRef.current?.focus({ preventScroll: true });
   };
 
   const dropOnRef = (event: React.DragEvent, target: string, isHead: boolean) => {
@@ -641,6 +764,15 @@ export function GraphView() {
           GRAPH
         </div>
         <div className="gh-message">COMMIT MESSAGE</div>
+        {repo && (
+          <SearchBar
+            repoPath={repo.path}
+            pageSize={PAGE_SIZE}
+            disabled={total === 0}
+            disabledReason="Nothing to search — this repository has no commits yet."
+            onNavigate={(delta) => void navigateHits(delta)}
+          />
+        )}
         <button className="gh-gear" title="Graph options" onClick={() => setGearOpen((v) => !v)}>
           ⚙
         </button>
@@ -666,6 +798,40 @@ export function GraphView() {
         )}
       </div>
 
+      {(search.submitted || search.error) && (
+        <div className={`graph-searchbar-notes${search.error ? " error" : ""}`}>
+          {search.error ? (
+            <span>{search.error}</span>
+          ) : (
+            <>
+              {search.running && <span>Searching…</span>}
+              {!search.running && search.hits.length === 0 && (
+                <span>No commits {search.summary}.</span>
+              )}
+              {filtering && search.hits.length > 0 && (
+                <span>
+                  Showing {visibleRows.length.toLocaleString()} of {total.toLocaleString()} commits
+                  {hasNextPage ? " (loading the rest of the history…)" : ""} — topology is not
+                  continuous.
+                </span>
+              )}
+              {search.truncated && (
+                <span>
+                  Stopped at the first {search.hits.length.toLocaleString()} matches.{" "}
+                  <button onClick={() => window.dispatchEvent(new CustomEvent("mtgit:search-more"))}>
+                    Keep going
+                  </button>
+                </span>
+              )}
+              {search.cancelled && <span>Cancelled — these are partial results.</span>}
+              {search.notes.map((note) => (
+                <span key={note}>{note}</span>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
       {status?.isDirty && (
         <div
           className={`wip-row${selectedOid === WORKING ? " selected" : ""}`}
@@ -676,11 +842,12 @@ export function GraphView() {
           <span className="wip-count">✎ {dirtyCount} changed file{dirtyCount === 1 ? "" : "s"}</span>
         </div>
       )}
-      <div className="graph-scroll" ref={parentRef}>
+      <div className="graph-body">
+      <div className="graph-scroll" ref={parentRef} tabIndex={-1}>
         <div className="graph-inner" style={{ height: virtualizer.getTotalSize() }}>
           <canvas className="graph-canvas" ref={canvasRef} style={{ marginLeft: BRANCH_COL_WIDTH }} />
           {virtualItems.map((vi) => {
-            const row = rows[vi.index];
+            const row = visibleRows[vi.index];
             return (
               <GraphRowView
                 key={row.oid}
@@ -689,6 +856,11 @@ export function GraphView() {
                 gutter={gutterWidth}
                 nodeLeft={BRANCH_COL_WIDTH + laneX(row.lane)}
                 selected={row.oid === selectedOid || selectedOids.has(row.oid)}
+                hit={hitOids.has(row.oid)}
+                currentHit={row.oid === currentHitOid}
+                onSearchAuthor={() =>
+                  repo && seedSearch(repo.path, `author:${row.email || row.author}`)
+                }
                 opts={graphOpts}
                 onSelect={(event) => selectRow(event, row)}
                 onContextMenu={(e) => rowContextMenu(e, row)}
@@ -715,6 +887,14 @@ export function GraphView() {
               : `${rows.length.toLocaleString()} of ${total.toLocaleString()} commits`}
           </div>
         )}
+      </div>
+      <ScrollMarkers
+        total={total}
+        hits={search.hits}
+        cursor={search.cursor}
+        headIndex={rows.findIndex((row) => row.oid === headOid)}
+        selectedIndex={rows.findIndex((row) => row.oid === selectedOid)}
+      />
       </div>
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
       {pick && repo && (
@@ -754,6 +934,9 @@ function GraphRowView({
   gutter,
   nodeLeft,
   selected,
+  hit,
+  currentHit,
+  onSearchAuthor,
   opts,
   onSelect,
   onContextMenu,
@@ -767,6 +950,9 @@ function GraphRowView({
   gutter: number;
   nodeLeft: number;
   selected: boolean;
+  hit: boolean;
+  currentHit: boolean;
+  onSearchAuthor: () => void;
   opts: { relativeDates: boolean; showAuthor: boolean };
   onSelect: (event: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -790,7 +976,9 @@ function GraphRowView({
   );
   return (
     <div
-      className={`graph-row${selected ? " selected" : ""}`}
+      className={`graph-row${selected ? " selected" : ""}${hit ? " hit" : ""}${
+        currentHit ? " current-hit" : ""
+      }`}
       style={{ top, height: ROW_HEIGHT }}
       onClick={onSelect}
       onContextMenu={onContextMenu}
@@ -842,11 +1030,69 @@ function GraphRowView({
         <Avatar email={row.email} name={row.author} size={AVATAR_SIZE} />
       </span>
       <span className="row-summary">{row.summary}</span>
-      {opts.showAuthor && <span className="row-author">{row.author}</span>}
+      {opts.showAuthor && (
+        <span
+          className="row-author"
+          title={`${row.author} — right-click to search this author's commits`}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onSearchAuthor();
+          }}
+        >
+          {row.author}
+        </span>
+      )}
       <span className="row-date" title={formatTimestamp(row.timestamp)}>
         {opts.relativeDates ? timeAgo(row.timestamp) : formatTimestamp(row.timestamp)}
       </span>
       <span className="row-oid">{row.oid.slice(0, 7)}</span>
+    </div>
+  );
+}
+
+/**
+ * Scroll-gutter markers (G17): hits, HEAD and the selection at their
+ * proportional positions in the whole history.
+ *
+ * A prerequisite for search rather than a garnish — a hit 8,000 rows down is
+ * otherwise invisible, and "37 results" with nothing to aim at is half a
+ * feature. Positions are fractions of `total` (every commit), not of the rows
+ * loaded so far, so a marker does not slide as pages arrive.
+ */
+function ScrollMarkers({
+  total,
+  hits,
+  cursor,
+  headIndex,
+  selectedIndex,
+}: {
+  total: number;
+  hits: SearchHit[];
+  cursor: number;
+  headIndex: number;
+  selectedIndex: number;
+}) {
+  if (total === 0) return null;
+  // One marker per hit is unreadable past a few hundred and costs a DOM node
+  // each; sample instead, and keep the current hit whatever the sampling says.
+  const stride = Math.ceil(hits.length / MAX_MARKERS);
+  const sampled = hits.filter((hit, i) => i % stride === 0 && hit.index !== null);
+  const current = cursor >= 0 ? hits[cursor] : undefined;
+  const pct = (index: number) => `${(index / total) * 100}%`;
+
+  return (
+    <div className="graph-gutter">
+      {headIndex >= 0 && <span className="graph-mark head" style={{ top: pct(headIndex) }} title="HEAD" />}
+      {selectedIndex >= 0 && (
+        <span className="graph-mark selection" style={{ top: pct(selectedIndex) }} title="Selected commit" />
+      )}
+      {sampled.map((hit) => (
+        <span key={hit.oid} className="graph-mark hit" style={{ top: pct(hit.index!) }} />
+      ))}
+      {current?.index != null && (
+        <span className="graph-mark current" style={{ top: pct(current.index) }} title="Current hit" />
+      )}
     </div>
   );
 }

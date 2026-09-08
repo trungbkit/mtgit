@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { cancelGitNetwork, getStatus, gitAvailable, listRefs } from "../../ipc/commands";
+import { cancelGitNetwork, cancelSearch, getStatus, gitAvailable, listRefs } from "../../ipc/commands";
 import { toastError } from "../../stores/toasts";
 import { useSession } from "../../stores/session";
 import "./statusbar.css";
@@ -14,6 +14,7 @@ export function StatusBar() {
   const toggleTerminal = useSession((s) => s.toggleTerminal);
 
   const [progress, setProgress] = useState<string | null>(null);
+  const [searching, setSearching] = useState<number | null>(null);
   const clearTimer = useRef<number | undefined>(undefined);
 
   const { data: hasGit } = useQuery({ queryKey: ["gitAvailable"], queryFn: gitAvailable });
@@ -27,6 +28,17 @@ export function StatusBar() {
     enabled: !!repo,
     queryFn: () => listRefs(repo!.path),
   });
+
+  // A long search reports here rather than in a toast: it is continuous, and
+  // overview §4 puts every long operation's progress in one place.
+  useEffect(() => {
+    const unlisten = listen<{ count: number; done: boolean }>("search-progress", (e) => {
+      setSearching(e.payload.done ? null : e.payload.count);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   useEffect(() => {
     const unlisten = listen<{ op: string; line: string }>("git-progress", (e) => {
@@ -66,8 +78,16 @@ export function StatusBar() {
       </div>
 
       <div className="sb-center">
-        <span>{progress}</span>
-        {progress && repo && (
+        <span>{searching !== null ? `searching: ${searching.toLocaleString()} commits matched` : progress}</span>
+        {searching !== null && repo && (
+          <button
+            className="sb-cancel"
+            onClick={() => cancelSearch(repo.path).catch(toastError)}
+          >
+            Cancel
+          </button>
+        )}
+        {searching === null && progress && repo && (
           <button
             className="sb-cancel"
             onClick={() =>

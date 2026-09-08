@@ -68,6 +68,16 @@ impl TestRepo {
         oid
     }
 
+    /// Point HEAD at `oid` and materialise its tree in the working directory.
+    ///
+    /// [`commit`] writes objects without moving HEAD, which leaves the fixture
+    /// with an unborn HEAD and an empty working tree — fine for pure git2
+    /// reads, but the `git` binary refuses to stash, merge or diff there.
+    pub fn checkout(&self, oid: Oid) {
+        let object = self.repo.find_object(oid, None).unwrap();
+        self.repo.reset(&object, git2::ResetType::Hard, None).unwrap();
+    }
+
     /// Create a parentless root on a distinctly named branch (a second history).
     pub fn commit_orphan(&self, summary: &str, branch: &str) -> Oid {
         let oid = self.commit(summary, &[]);

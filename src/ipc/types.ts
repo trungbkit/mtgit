@@ -70,6 +70,35 @@ export interface GraphRow {
   refs: RefBadge[];
 }
 
+/** Modifiers beside the search field. Mirrors `core::search::SearchOptions`. */
+export interface SearchOptions {
+  matchCase: boolean;
+  /** AND the message terms together instead of OR-ing them. */
+  matchAll: boolean;
+  matchRegex: boolean;
+  matchWholeWord: boolean;
+  /** Must match `PAGE_SIZE` in `GraphView`, or `pageHint` points at the wrong page. */
+  pageSize: number;
+}
+
+export interface SearchHit {
+  oid: string;
+  /** Row index in graph order; null for a commit the graph does not contain. */
+  index: number | null;
+  /** Which `getGraph` page `index` falls on. */
+  pageHint: number | null;
+}
+
+export interface SearchResults {
+  hits: SearchHit[];
+  /** The result cap cut the list short — say so, never truncate silently. */
+  truncated: boolean;
+  cancelled: boolean;
+  /** The query read back in prose, for the empty state. */
+  summary: string;
+  notes: string[];
+}
+
 export interface GraphPage {
   rows: GraphRow[];
   total: number;
