@@ -5,9 +5,9 @@
 
 use crate::error::{Error, Result};
 use serde::Serialize;
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
@@ -35,6 +35,40 @@ pub fn git_available() -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Read both of a child's pipes to EOF, calling `on_stderr` for each stderr
+/// line as it arrives, and return stderr followed by stdout.
+///
+/// Both pipes must be drained *concurrently*. Reading stderr to EOF first
+/// deadlocks any git op that fills the stdout pipe buffer while stderr is
+/// still open — e.g. a `pull` whose merge prints a long diffstat: git blocks
+/// writing stdout, we block reading stderr, and neither side moves.
+fn drain(child: &mut Child, mut on_stderr: impl FnMut(&str)) -> String {
+    let stdout = child.stdout.take();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(out) = stdout {
+            for line in BufReader::new(out).lines().map_while(std::result::Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+        }
+        buf
+    });
+
+    // git writes transfer progress to stderr; stream it line by line.
+    let mut collected = String::new();
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().map_while(std::result::Result::ok) {
+            on_stderr(&line);
+            collected.push_str(&line);
+            collected.push('\n');
+        }
+    }
+
+    collected.push_str(&stdout_reader.join().unwrap_or_default());
+    collected
 }
 
 /// Run a network git operation, streaming stderr lines as `git-progress`
@@ -85,27 +119,11 @@ fn run_inner(
         }
     }
 
-    let mut collected = String::new();
-
-    // git writes transfer progress to stderr; stream it line by line.
-    if let Some(stderr) = child.stderr.take() {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines().map_while(std::result::Result::ok) {
-            if let Some(app) = app {
-                let _ = app.emit("git-progress", ProgressEvent { op: op.to_string(), line: line.clone() });
-            }
-            collected.push_str(&line);
-            collected.push('\n');
+    let collected = drain(&mut child, |line| {
+        if let Some(app) = app {
+            let _ = app.emit("git-progress", ProgressEvent { op: op.to_string(), line: line.to_string() });
         }
-    }
-
-    if let Some(stdout) = child.stdout.take() {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(std::result::Result::ok) {
-            collected.push_str(&line);
-            collected.push('\n');
-        }
-    }
+    });
 
     let status = child.wait().map_err(|e| Error::Msg(e.to_string()))?;
     if let Some(pids) = pids {
@@ -118,4 +136,58 @@ fn run_inner(
         code: status.code(),
         output: collected.trim_end().to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D4 regression: a child that fills the stdout pipe before writing
+    /// anything to stderr must still be drained. The pre-fix implementation
+    /// read stderr to EOF first and hung here forever.
+    #[cfg(unix)]
+    #[test]
+    fn drain_does_not_deadlock_when_stdout_fills_the_pipe() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            // ~240KB on stdout (well past the 64KB pipe buffer) written before
+            // the single stderr line, so stderr stays open the whole time.
+            let mut child = Command::new("sh")
+                .arg("-c")
+                .arg("yes '0123456789' | head -n 20000; echo 'remote: done' >&2")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn sh");
+            let mut progress = Vec::new();
+            let out = drain(&mut child, |l| progress.push(l.to_string()));
+            let _ = child.wait();
+            let _ = tx.send((out, progress));
+        });
+
+        let (out, progress) = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("drain deadlocked on a full stdout pipe");
+        assert_eq!(progress, vec!["remote: done".to_string()]);
+        assert!(out.starts_with("remote: done\n"), "stderr comes first: {:?}", &out[..40]);
+        assert_eq!(out.lines().filter(|l| *l == "0123456789").count(), 20_000);
+    }
+
+    /// A child that writes nothing at all must not hang or panic.
+    #[cfg(unix)]
+    #[test]
+    fn drain_handles_a_silent_child() {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+        assert_eq!(drain(&mut child, |_| {}), "");
+        assert!(child.wait().unwrap().success());
+    }
 }

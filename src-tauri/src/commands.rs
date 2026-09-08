@@ -9,6 +9,7 @@ use crate::state::{
 use crate::{shellout, watcher};
 use git2::Repository;
 use serde::Serialize;
+use std::collections::HashMap;
 use tauri::{AppHandle, State};
 
 #[derive(Debug, Serialize)]
@@ -162,37 +163,39 @@ pub fn get_graph(
     state: State<'_, AppState>,
 ) -> Result<graph::GraphPage> {
     let repo = open(&path)?;
-    let head = repo.head().ok().and_then(|h| h.target()).map(|o| o.to_string());
-    let mut ref_state: Vec<String> = repo
-        .references()?
-        .flatten()
-        .filter_map(|reference| {
-            let name = reference.name()?.to_string();
-            let target = reference
-                .target()
-                .or_else(|| reference.peel_to_commit().ok().map(|commit| commit.id()))?;
-            Some(format!("{name}:{target}"))
-        })
-        .collect();
-    ref_state.sort();
-    let cache_key = Some(format!("{}|{}", head.as_deref().unwrap_or(""), ref_state.join(",")));
+    let mut cache = state
+        .graph_cache
+        .lock()
+        .map_err(|_| Error::Msg("graph cache poisoned".into()))?;
+    graph_page(&repo, &mut cache, &path, skip, limit)
+}
 
-    let mut cache = state.graph_cache.lock().map_err(|_| Error::Msg("graph cache poisoned".into()))?;
-    let needs_rebuild = match cache.get(&path) {
-        Some(c) => c.head != cache_key,
-        None => true,
-    };
+/// Serve one page of the graph, rebuilding the cached layout when the
+/// repository's ref set has changed.
+///
+/// Split out of [`get_graph`] so the cache-invalidation rule is testable
+/// without a Tauri `State`.
+fn graph_page(
+    repo: &Repository,
+    cache: &mut HashMap<String, CachedGraph>,
+    path: &str,
+    skip: usize,
+    limit: usize,
+) -> Result<graph::GraphPage> {
+    let key = graph::refs_digest(repo);
+    let needs_rebuild = cache.get(path).map(|c| c.key != key).unwrap_or(true);
     if needs_rebuild {
-        let layouts = graph::layout(&repo)?;
-        let badges = refs::badges_by_oid(&repo);
-        let rows = graph::build_rows(&repo, &layouts, &badges)?;
-        cache.insert(path.clone(), CachedGraph { head: cache_key, rows });
+        let layouts = graph::layout(repo)?;
+        let badges = refs::badges_by_oid(repo);
+        let rows = graph::build_rows(repo, &layouts, &badges)?;
+        cache.insert(path.to_string(), CachedGraph { key, rows });
     }
 
-    let cached = cache.get(&path).expect("just inserted");
+    let cached = cache.get(path).expect("just inserted");
     let total = cached.rows.len();
     let end = skip.saturating_add(limit).min(total);
     let rows = if skip < total { cached.rows[skip..end].to_vec() } else { Vec::new() };
+    let head = repo.head().ok().and_then(|h| h.target()).map(|o| o.to_string());
     Ok(graph::GraphPage { rows, total, head })
 }
 
@@ -226,17 +229,20 @@ pub fn get_status(path: String) -> Result<status::StatusReport> {
 }
 
 #[tauri::command]
-pub fn stage_paths(path: String, paths: Vec<String>) -> Result<()> {
+pub fn stage_paths(path: String, paths: Vec<String>, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     status::stage_paths(&open(&path)?, &paths)
 }
 
 #[tauri::command]
-pub fn unstage_paths(path: String, paths: Vec<String>) -> Result<()> {
+pub fn unstage_paths(path: String, paths: Vec<String>, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     status::unstage_paths(&open(&path)?, &paths)
 }
 
 #[tauri::command]
-pub fn discard_paths(path: String, paths: Vec<String>) -> Result<()> {
+pub fn discard_paths(path: String, paths: Vec<String>, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     status::discard_paths(&open(&path)?, &paths)
 }
 
@@ -246,7 +252,8 @@ pub fn ignore_path(path: String, file: String) -> Result<()> {
 }
 
 #[tauri::command]
-pub fn commit(path: String, message: String, amend: bool) -> Result<String> {
+pub fn commit(path: String, message: String, amend: bool, state: State<'_, AppState>) -> Result<String> {
+    let _op = state.begin_op();
     commit_mod::commit(&open(&path)?, &message, amend)
 }
 
@@ -306,22 +313,32 @@ pub fn apply_patch(path: String, patch: String, cached: bool, reverse: bool) -> 
 // ---- M4: branches, merge, stash, remotes -------------------------------------
 
 #[tauri::command]
-pub fn create_branch(path: String, name: String, target: Option<String>, checkout: bool) -> Result<()> {
+pub fn create_branch(
+    path: String,
+    name: String,
+    target: Option<String>,
+    checkout: bool,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let _op = state.begin_op();
     branch::create_branch(&open(&path)?, &name, target.as_deref(), checkout)
 }
 
 #[tauri::command]
-pub fn delete_branch(path: String, name: String, force: bool) -> Result<()> {
+pub fn delete_branch(path: String, name: String, force: bool, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     branch::delete_branch(&open(&path)?, &name, force)
 }
 
 #[tauri::command]
-pub fn rename_branch(path: String, old: String, new: String) -> Result<()> {
+pub fn rename_branch(path: String, old: String, new: String, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     branch::rename_branch(&open(&path)?, &old, &new)
 }
 
 #[tauri::command]
 pub fn checkout(path: String, refname: String, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     let before = snapshot(&path)?;
     branch::checkout_ref(&open(&path)?, &refname)?;
     record_history(&state, &path, "Checkout", before, RestoreMode::Checkout)
@@ -348,6 +365,7 @@ pub fn merge_ref(
     mode: branch::MergeMode,
     state: State<'_, AppState>,
 ) -> Result<branch::MergeResult> {
+    let _op = state.begin_op();
     let before = snapshot(&path)?;
     let result = branch::merge(&open(&path)?, &their_ref, mode)?;
     if result.kind != branch::MergeKind::Conflicts {
@@ -377,6 +395,7 @@ pub fn merge_advanced(
 
 #[tauri::command]
 pub fn cherry_pick(path: String, oid: String, state: State<'_, AppState>) -> Result<ops::ConflictResult> {
+    let _op = state.begin_op();
     let before = snapshot(&path)?;
     let result = ops::cherry_pick(&open(&path)?, &oid)?;
     if result.conflicts.is_empty() {
@@ -414,6 +433,7 @@ pub fn cherry_pick_many(
 
 #[tauri::command]
 pub fn reset_to(path: String, oid: String, mode: ops::ResetMode, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     let before = snapshot(&path)?;
     ops::reset(&open(&path)?, &oid, mode)?;
     record_history(&state, &path, "Reset", before, RestoreMode::Hard)
@@ -421,6 +441,7 @@ pub fn reset_to(path: String, oid: String, mode: ops::ResetMode, state: State<'_
 
 #[tauri::command]
 pub fn rebase_onto(path: String, onto: String, state: State<'_, AppState>) -> Result<ops::RebaseResult> {
+    let _op = state.begin_op();
     let before = snapshot(&path)?;
     let result = ops::rebase(&open(&path)?, &onto)?;
     if result.done {
@@ -432,24 +453,28 @@ pub fn rebase_onto(path: String, onto: String, state: State<'_, AppState>) -> Re
 }
 
 #[tauri::command]
-pub fn rebase_continue(path: String) -> Result<ops::RebaseResult> {
+pub fn rebase_continue(path: String, state: State<'_, AppState>) -> Result<ops::RebaseResult> {
+    let _op = state.begin_op();
     ops::rebase_continue(&open(&path)?)
 }
 
 #[tauri::command]
-pub fn rebase_abort(path: String) -> Result<()> {
+pub fn rebase_abort(path: String, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     ops::rebase_abort(&open(&path)?)
 }
 
 /// Abort a pending merge / cherry-pick / revert, discarding the half-applied
 /// changes and restoring HEAD.
 #[tauri::command]
-pub fn abort_operation(path: String) -> Result<()> {
+pub fn abort_operation(path: String, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     ops::abort_pending(&open(&path)?)
 }
 
 #[tauri::command]
 pub fn revert_commit(path: String, oid: String, state: State<'_, AppState>) -> Result<ops::ConflictResult> {
+    let _op = state.begin_op();
     let before = snapshot(&path)?;
     let result = ops::revert(&open(&path)?, &oid)?;
     if result.conflicts.is_empty() {
@@ -574,18 +599,32 @@ pub fn create_patch(path: String, oid: String, out_path: String) -> Result<()> {
 // ---- Tags, remotes, worktrees, blame, history, file content ------------------
 
 #[tauri::command]
-pub fn create_tag(path: String, name: String, target: String, message: Option<String>) -> Result<()> {
+pub fn create_tag(
+    path: String,
+    name: String,
+    target: String,
+    message: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let _op = state.begin_op();
     refs::create_tag(&open(&path)?, &name, &target, message.as_deref())
 }
 
 #[tauri::command]
-pub fn delete_tag(path: String, name: String) -> Result<()> {
+pub fn delete_tag(path: String, name: String, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     refs::delete_tag(&open(&path)?, &name)
 }
 
 #[tauri::command]
 pub fn get_remote_url(path: String, remote: String) -> Result<Option<String>> {
     Ok(refs::remote_url(&open(&path)?, &remote))
+}
+
+/// Branch / remote / upstream facts the push flow needs (D5).
+#[tauri::command]
+pub fn push_target(path: String) -> Result<refs::PushTarget> {
+    refs::push_target(&open(&path)?)
 }
 
 #[tauri::command]
@@ -609,7 +648,9 @@ pub fn create_worktree(
     name: String,
     worktree_path: String,
     target: Option<String>,
+    state: State<'_, AppState>,
 ) -> Result<()> {
+    let _op = state.begin_op();
     worktree::add(&open(&path)?, &name, &worktree_path, target.as_deref())
 }
 
@@ -629,7 +670,13 @@ pub fn file_at_commit(path: String, oid: String, file: String) -> Result<diff::F
 }
 
 #[tauri::command]
-pub fn stash_save(path: String, message: Option<String>, include_untracked: bool) -> Result<String> {
+pub fn stash_save(
+    path: String,
+    message: Option<String>,
+    include_untracked: bool,
+    state: State<'_, AppState>,
+) -> Result<String> {
+    let _op = state.begin_op();
     stash::save(&mut open(&path)?, message.as_deref(), include_untracked)
 }
 
@@ -639,17 +686,20 @@ pub fn stash_list(path: String) -> Result<Vec<stash::StashEntry>> {
 }
 
 #[tauri::command]
-pub fn stash_apply(path: String, index: usize) -> Result<()> {
+pub fn stash_apply(path: String, index: usize, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     stash::apply(&mut open(&path)?, index)
 }
 
 #[tauri::command]
-pub fn stash_pop(path: String, index: usize) -> Result<()> {
+pub fn stash_pop(path: String, index: usize, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     stash::pop(&mut open(&path)?, index)
 }
 
 #[tauri::command]
-pub fn stash_drop(path: String, index: usize) -> Result<()> {
+pub fn stash_drop(path: String, index: usize, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
     stash::drop(&mut open(&path)?, index)
 }
 
@@ -662,6 +712,7 @@ pub fn git_network(
     extra: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<shellout::GitOpResult> {
+    let _op = state.begin_op();
     let before = if op == "pull" { snapshot(&path).ok() } else { None };
     let result = shellout::run(
         &app,
@@ -799,7 +850,8 @@ pub fn watch_repo(app: AppHandle, path: String, state: State<'_, AppState>) -> R
     if watchers.contains_key(&path) {
         return Ok(());
     }
-    let debouncer = watcher::watch(app, &path, &workdir).map_err(|e| Error::Msg(e.to_string()))?;
+    let debouncer = watcher::watch(app, &path, &workdir, std::sync::Arc::clone(&state.ops))
+        .map_err(|e| Error::Msg(e.to_string()))?;
     watchers.insert(path, debouncer);
     Ok(())
 }
@@ -824,4 +876,68 @@ pub fn pty_resize(id: String, rows: u16, cols: u16, state: State<'_, AppState>) 
 #[tauri::command]
 pub fn pty_kill(id: String, state: State<'_, AppState>) -> Result<()> {
     state.pty.kill(&id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::TestRepo;
+
+    /// D1: the layout cache was keyed on HEAD alone, so anything that changed
+    /// the ref set without moving HEAD — a fetch, a branch create, a tag —
+    /// kept serving stale rows and stale ref badges.
+    #[test]
+    fn graph_cache_rebuilds_when_a_branch_moves() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let path = t.dir.path().to_str().unwrap().to_string();
+        let mut cache: HashMap<String, CachedGraph> = HashMap::new();
+
+        let first = graph_page(&t.repo, &mut cache, &path, 0, 100).unwrap();
+        assert_eq!(first.total, 1);
+
+        // Poison the cached row. A second call that returns the poison proves
+        // the cache was hit rather than silently rebuilt, which is what makes
+        // the assertions below meaningful.
+        cache.get_mut(&path).unwrap().rows[0].summary = "STALE".into();
+        let cached = graph_page(&t.repo, &mut cache, &path, 0, 100).unwrap();
+        assert_eq!(cached.rows[0].summary, "STALE", "unchanged refs must hit the cache");
+
+        // Move a branch without touching HEAD (TestRepo commits with `None` as
+        // the update ref, so HEAD stays put — exactly the missed case).
+        let b = t.commit("b", &[a]);
+        t.repo.branch("topic", &t.repo.find_commit(b).unwrap(), true).unwrap();
+
+        let rebuilt = graph_page(&t.repo, &mut cache, &path, 0, 100).unwrap();
+        assert_eq!(rebuilt.total, 2, "the new commit must appear");
+        assert!(
+            rebuilt.rows.iter().all(|r| r.summary != "STALE"),
+            "moving a branch must invalidate the cache",
+        );
+        assert!(
+            rebuilt.rows.iter().any(|r| r.refs.iter().any(|b| b.name == "topic")),
+            "ref badges must be rebuilt too",
+        );
+    }
+
+    #[test]
+    fn graph_page_honours_skip_and_limit() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let b = t.commit("b", &[a]);
+        t.commit("c", &[b]);
+        let path = t.dir.path().to_str().unwrap().to_string();
+        let mut cache: HashMap<String, CachedGraph> = HashMap::new();
+
+        let page = graph_page(&t.repo, &mut cache, &path, 0, 2).unwrap();
+        assert_eq!(page.total, 3);
+        assert_eq!(page.rows.len(), 2);
+
+        let tail = graph_page(&t.repo, &mut cache, &path, 2, 2).unwrap();
+        assert_eq!(tail.rows.len(), 1, "last page is short, not wrapped");
+        assert_eq!(tail.total, 3);
+
+        let past_end = graph_page(&t.repo, &mut cache, &path, 99, 2).unwrap();
+        assert!(past_end.rows.is_empty());
+    }
 }

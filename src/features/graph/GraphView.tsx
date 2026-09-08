@@ -1,7 +1,7 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createBranch,
   createPatch,
@@ -42,11 +42,24 @@ const BRANCH_COL_WIDTH = 200;
 const AVATAR_SIZE = 18;
 const EMPTY_HIDDEN_REFS: string[] = [];
 
+/** Rows fetched per `get_graph` call. Big enough that a page covers several
+ *  screens of scrolling, small enough that opening a 50k-commit repo does not
+ *  push its whole history across IPC before the first paint. */
+const PAGE_SIZE = 2000;
+/** Start loading the next page once the viewport is within this many rows of
+ *  the end of what has been loaded. */
+const PREFETCH_MARGIN = 400;
+
 function useGraphData(path: string | undefined) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ["graph", path],
     enabled: !!path,
-    queryFn: () => getGraph(path!, 0, 1_000_000),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => getGraph(path!, pageParam, PAGE_SIZE),
+    getNextPageParam: (_last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.rows.length, 0);
+      return loaded < pages[pages.length - 1].total ? loaded : undefined;
+    },
   });
 }
 
@@ -73,8 +86,12 @@ export function GraphView() {
   );
   const checkoutTarget = useSession((s) => s.checkoutTarget);
 
-  const { data, isLoading, error } = useGraphData(repo?.path);
-  const rows = data?.rows ?? [];
+  const { data, isPending, error, hasNextPage, isFetchingNextPage, fetchNextPage } = useGraphData(
+    repo?.path,
+  );
+  const rows = useMemo(() => data?.pages.flatMap((p) => p.rows) ?? [], [data]);
+  const total = data?.pages[0]?.total ?? 0;
+  const headOid = data?.pages[0]?.head;
 
   const { data: status } = useQuery({
     queryKey: ["status", repo?.path],
@@ -373,6 +390,15 @@ export function GraphView() {
     overscan: 24,
   });
 
+  // Pull the next page in as the viewport approaches the loaded tail.
+  const virtualItems = virtualizer.getVirtualItems();
+  const lastVisible = virtualItems[virtualItems.length - 1]?.index ?? 0;
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage && lastVisible >= rows.length - PREFETCH_MARGIN) {
+      void fetchNextPage();
+    }
+  }, [lastVisible, rows.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
   const maxLane = rows.reduce((m, r) => {
     let local = r.lane;
     for (const e of r.edges) local = Math.max(local, e.fromLane, e.toLane);
@@ -491,15 +517,15 @@ export function GraphView() {
   }, [rows, selectedOid, selectOid, virtualizer]);
 
   useEffect(() => {
-    if (!data?.head) return;
-    const index = rows.findIndex((row) => row.oid === data.head);
+    if (!headOid) return;
+    const index = rows.findIndex((row) => row.oid === headOid);
     if (index >= 0) virtualizer.scrollToIndex(index, { align: "center" });
-  }, [data?.head]);
+  }, [headOid]);
 
   if (!repo) {
     return <div className="graph-empty">Open a repository to view its history.</div>;
   }
-  if (isLoading) {
+  if (isPending) {
     return <div className="graph-empty">Loading history…</div>;
   }
   if (error) {
@@ -635,7 +661,7 @@ export function GraphView() {
       <div className="graph-scroll" ref={parentRef}>
         <div className="graph-inner" style={{ height: virtualizer.getTotalSize() }}>
           <canvas className="graph-canvas" ref={canvasRef} style={{ marginLeft: BRANCH_COL_WIDTH }} />
-          {virtualizer.getVirtualItems().map((vi) => {
+          {virtualItems.map((vi) => {
             const row = rows[vi.index];
             return (
               <GraphRowView
@@ -664,6 +690,13 @@ export function GraphView() {
             );
           })}
         </div>
+        {hasNextPage && (
+          <div className="graph-more">
+            {isFetchingNextPage
+              ? "Loading more history…"
+              : `${rows.length.toLocaleString()} of ${total.toLocaleString()} commits`}
+          </div>
+        )}
       </div>
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
       {pick && repo && (

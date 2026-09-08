@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)",
+      "Bash(npm run build)",
+      "Bash(npm run tauri:dev)",
+      "Bash(npx tsc:*)",
+      "Bash(scripts/make-fixture.sh:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)"
+    ],
+    "ask": [
+      "Bash(cargo fmt:*)",
+      "Bash(pnpm:*)"
+    ]
+  }
+}

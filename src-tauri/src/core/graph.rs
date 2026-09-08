@@ -233,6 +233,52 @@ pub fn build_rows(
     Ok(rows)
 }
 
+/// A cheap digest of the repository's entire ref set plus HEAD.
+///
+/// The layout depends on *every* ref, not just HEAD: the revwalk is seeded from
+/// all branch/remote/tag globs and each row carries its ref badges. Keying a
+/// cache on HEAD alone therefore serves stale rows after a fetch, a branch
+/// create, a tag, or a remote-ref update — all of which leave HEAD untouched.
+/// FNV-1a over the sorted `name:target` pairs is cheap enough to run on every
+/// `get_graph` call (a few thousand refs is microseconds).
+pub fn refs_digest(repo: &Repository) -> String {
+    let mut entries: Vec<String> = Vec::new();
+    if let Ok(refs) = repo.references() {
+        for r in refs.flatten() {
+            let name = r.name().unwrap_or("<invalid-utf8>").to_string();
+            let target = r
+                .target()
+                .map(|o| o.to_string())
+                .or_else(|| r.symbolic_target().map(str::to_string))
+                .unwrap_or_default();
+            entries.push(format!("{name}:{target}"));
+        }
+    }
+    entries.sort_unstable();
+
+    // `references()` does not yield HEAD itself, and a detached HEAD is not
+    // reachable through any ref — add it explicitly.
+    let head = repo
+        .head()
+        .ok()
+        .and_then(|h| h.target())
+        .map(|o| o.to_string())
+        .unwrap_or_default();
+    entries.push(format!("HEAD:{head}"));
+
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for e in &entries {
+        for b in e.as_bytes() {
+            hash ^= u64::from(*b);
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+        // Separator, so ("ab", "c") and ("a", "bc") hash differently.
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
 fn first_free(active: &[Option<Oid>]) -> usize {
     active.iter().position(Option::is_none).unwrap_or(active.len())
 }
@@ -350,9 +396,10 @@ mod tests {
     }
 
     /// Perf gate (plan §5): layout of 50k commits must be well under 500ms.
-    /// Ignored by default; run with `cargo test --lib -- --ignored perf`.
+    /// Runs in the default suite so a regression in the revwalk or the lane
+    /// assignment is caught, not merely available to be caught. Building the
+    /// fixture dominates the runtime (~30s); only `layout` is timed.
     #[test]
-    #[ignore]
     fn perf_50k_commits_under_500ms() {
         use git2::{Signature, Time};
         use std::time::Instant;
@@ -394,6 +441,31 @@ mod tests {
         assert_eq!(layouts.len(), 50_000);
         println!("layout of 50k commits took {:?}", elapsed);
         assert!(elapsed.as_millis() < 500, "layout too slow: {:?}", elapsed);
+    }
+
+    #[test]
+    fn refs_digest_changes_when_a_branch_moves_without_head() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        t.repo.branch("topic", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        let before = refs_digest(&t.repo);
+
+        // Move `topic` forward. HEAD is untouched, which is exactly the case
+        // the old head-only cache key missed.
+        let b = t.commit("b", &[a]);
+        t.repo.branch("topic", &t.repo.find_commit(b).unwrap(), true).unwrap();
+        assert_ne!(before, refs_digest(&t.repo), "moving a branch must change the digest");
+    }
+
+    #[test]
+    fn refs_digest_is_stable_and_sensitive_to_new_refs() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let d1 = refs_digest(&t.repo);
+        assert_eq!(d1, refs_digest(&t.repo), "digest must be deterministic");
+
+        crate::core::refs::create_tag(&t.repo, "v1", &a.to_string(), None).unwrap();
+        assert_ne!(d1, refs_digest(&t.repo), "a new tag must change the digest");
     }
 
     #[test]

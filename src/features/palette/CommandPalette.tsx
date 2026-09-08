@@ -1,8 +1,9 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { createBranch, gitNetwork, listRefs, openRepo } from "../../ipc/commands";
+import { createBranch, listRefs, openRepo } from "../../ipc/commands";
 import { smartCheckout } from "../../lib/checkout";
+import { push, runNet } from "../network/net";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import { promptDialog } from "../../stores/dialog";
@@ -58,9 +59,11 @@ export function CommandPalette() {
     ];
     if (repo) {
       list.push(
-        { id: "fetch", label: "Fetch", run: wrap(() => gitNetwork(repo.path, "fetch"), "Fetched") },
-        { id: "pull", label: "Pull", run: wrap(() => gitNetwork(repo.path, "pull"), "Pulled") },
-        { id: "push", label: "Push", run: wrap(() => gitNetwork(repo.path, "push"), "Pushed") },
+        // These report their own outcome (a failed push is not "Pushed"), so
+        // they are wrapped without a success message.
+        { id: "fetch", label: "Fetch", run: wrap(() => runNet(repo, "fetch", undefined, "Fetched")) },
+        { id: "pull", label: "Pull", run: wrap(() => runNet(repo, "pull", undefined, "Pulled")) },
+        { id: "push", label: "Push", run: wrap(() => push(repo)) },
         { id: "term", label: "Toggle terminal", run: () => { setOpen(false); toggleTerminal(); } },
         {
           id: "newbranch",

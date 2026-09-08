@@ -13,6 +13,7 @@ import type {
   GraphPage,
   HistoryEntry,
   HistoryStatus,
+  PushTarget,
   MergeMode,
   MergeResult,
   RebaseResult,
@@ -141,6 +142,8 @@ export const createTag = (path: string, name: string, target: string, message?: 
 export const deleteTag = (path: string, name: string) => invoke<void>("delete_tag", { path, name });
 export const getRemoteUrl = (path: string, remote: string) =>
   invoke<string | null>("get_remote_url", { path, remote });
+/** Branch / remote / upstream facts the push flow needs. */
+export const pushTarget = (path: string) => invoke<PushTarget>("push_target", { path });
 export const listWorktrees = (path: string) => invoke<WorktreeInfo[]>("list_worktrees", { path });
 export const listSubmodules = (path: string) => invoke<SubmoduleInfo[]>("list_submodules", { path });
 export const updateSubmodules = (path: string) => invoke<void>("update_submodules", { path });

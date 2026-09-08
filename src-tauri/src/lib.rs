@@ -66,6 +66,7 @@ pub fn run() {
             commands::create_tag,
             commands::delete_tag,
             commands::get_remote_url,
+            commands::push_target,
             commands::list_worktrees,
             commands::list_submodules,
             commands::update_submodules,

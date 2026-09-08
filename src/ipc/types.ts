@@ -38,6 +38,16 @@ export interface RefList {
   tags: BranchInfo[];
 }
 
+/** What `push_target` reports about the current branch. */
+export interface PushTarget {
+  /** Current branch shorthand; null on a detached or unborn HEAD. */
+  branch: string | null;
+  /** Remote to push to: upstream remote, else origin, else the sole remote. */
+  remote: string | null;
+  /** Is an upstream configured? (Read from config, as git does.) */
+  hasUpstream: boolean;
+}
+
 export type EdgeKind = "continue" | "branch" | "merge";
 
 export interface Edge {

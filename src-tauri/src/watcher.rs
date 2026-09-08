@@ -2,9 +2,11 @@
 //! `repo-changed` event to the frontend, which invalidates its TanStack Query
 //! caches. This event loop is what makes the app feel live.
 
+use crate::state::OpSuppressor;
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -12,12 +14,26 @@ pub type RepoDebouncer = Debouncer<RecommendedWatcher, RecommendedCache>;
 
 /// Start watching `workdir` (recursively, so `.git` is covered too). Returns the
 /// debouncer, which must be kept alive — dropping it stops the watch.
-pub fn watch(app: AppHandle, repo_path: &str, workdir: &Path) -> notify::Result<RepoDebouncer> {
+///
+/// `ops` suppresses the storm of events our *own* mutating commands generate: a
+/// checkout that rewrites thousands of files would otherwise fire a refresh
+/// per debounce window while it is still running. Commands that mutate the
+/// repo return to the frontend, which refreshes once — so those events are
+/// redundant, not lost.
+pub fn watch(
+    app: AppHandle,
+    repo_path: &str,
+    workdir: &Path,
+    ops: Arc<OpSuppressor>,
+) -> notify::Result<RepoDebouncer> {
     let emit_path = repo_path.to_string();
     let mut debouncer = new_debouncer(
         Duration::from_millis(300),
         None,
         move |result: DebounceEventResult| {
+            if ops.is_suppressed() {
+                return;
+            }
             if let Ok(events) = result {
                 let relevant = events
                     .iter()

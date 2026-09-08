@@ -17,6 +17,7 @@ import {
   stashPop,
   undo,
 } from "../../ipc/commands";
+import { push, type NetOp } from "../network/net";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import { choiceDialog, confirmDialog, promptDialog } from "../../stores/dialog";
@@ -112,25 +113,23 @@ export function Toolbar() {
     }
   }
 
-  async function net(op: "fetch" | "pull" | "push", extra?: string[]) {
+  async function net(op: NetOp, extra?: string[]) {
     if (!repo) return;
     try {
-      let remote: string | undefined;
       let args = [...(extra ?? [])];
+      // An unpublished branch goes through net.ts's publish flow (D5): it asks
+      // the backend for the real remote instead of inferring it from the
+      // remote-tracking branch names, which a freshly added remote has none of.
       if (op === "push" && !currentBranch?.upstream) {
-        const remotes = [...new Set((refs?.remote ?? []).map((branch) => branch.name.split("/")[0]))];
-        if (!currentBranch || remotes.length === 0) throw new Error("No remote is configured for this repository.");
-        remote = await choiceDialog({
-          title: `Publish ${currentBranch.name}`,
-          message: "Choose the remote for this branch. MTGit will set it as the upstream.",
-          choices: remotes.map((name) => ({ label: name, value: name })),
-        }) ?? undefined;
-        if (!remote) return;
-        args = ["--set-upstream", remote, currentBranch.name, ...args];
-        remote = undefined;
+        if (await push(repo, args)) {
+          await clearHistory(repo.path);
+          setRemoteMutation(true);
+        }
+        refresh();
+        return;
       }
       if (op === "pull") args = [...args, "--autostash"];
-      const res = await gitNetwork(repo.path, op, remote, args);
+      const res = await gitNetwork(repo.path, op, undefined, args);
       if (res.success) {
         pushToast("success", `${op} complete`);
         if (op === "push") {

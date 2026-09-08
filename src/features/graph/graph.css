@@ -255,3 +255,15 @@
   font-size: 12px;
   white-space: pre-wrap;
 }
+
+/* Tail marker for the paginated graph: shows how much history is loaded and
+   flips to a loading label while the next page is in flight. */
+.graph-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
