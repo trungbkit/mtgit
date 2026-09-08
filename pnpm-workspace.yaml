@@ -1,0 +1,6 @@
+# esbuild's postinstall only verifies/links its platform binary, which the
+# @esbuild/darwin-arm64 package already ships. Declared explicitly because
+# pnpm 11 refuses to install while any build script is undecided
+# (ERR_PNPM_IGNORED_BUILDS).
+allowBuilds:
+  esbuild: true

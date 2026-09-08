@@ -15,7 +15,7 @@ through and annotated as they land.
 > **Status: P0 complete (2026-09-08).** Sections 2.4 and 4/P0 below record what landed.
 > The rest of the plan is unchanged and unstarted.
 
-Measured, not assumed: `npx tsc --noEmit` exits 0, `vite build` succeeds, `cargo clippy
+Measured, not assumed: `pnpm exec tsc --noEmit` exits 0, `vite build` succeeds, `cargo clippy
 --all-targets -- -D warnings` is clean, and `cargo test` reports **37 passed, 0 failed,
 0 ignored** — the 50k-commit perf gate now runs in the default suite. ~9k lines across
 `src/` + `src-tauri/src/`.

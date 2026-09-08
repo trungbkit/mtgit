@@ -12,14 +12,16 @@ Kept deliberately short so the two files cannot drift. The four things worth rep
    run all four by hand:
    ```
    cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
-   cd .. && npx tsc --noEmit && npm run build
+   cd .. && pnpm exec tsc --noEmit && pnpm build
    ```
 2. **Don't run `cargo fmt` across the tree.** The repo has never been rustfmt-clean; a blanket
    format buries the real diff. Match surrounding style by hand.
 3. **Adding a Tauri command touches four files**, and mutating commands need an op guard.
    See "Invariants" in `CLAUDE.md` — those are the failures that are silent.
-4. **Use `npm`/`npx`, not `pnpm`.** The project declares pnpm, but this checkout's
-   `node_modules` was built by an older pnpm than the one on PATH, so `pnpm` aborts trying to
-   purge it. `CLAUDE.md` explains the situation.
+4. **Use `pnpm`, not `npm`.** `pnpm-lock.yaml` is the only lockfile and `tauri.conf.json`'s
+   `beforeDevCommand` / `beforeBuildCommand` call `pnpm` directly, so `pnpm tauri:dev` is the
+   only invocation whose hooks match the config. pnpm 11 also gates dependency build scripts:
+   one left undecided in `pnpm-workspace.yaml` fails the whole install, and takes `pnpm dev`
+   — and so the app — down with it. `CLAUDE.md` explains both.
 
 Roadmap and phase status: `GITKRAKEN_PARITY_PLAN.md`.

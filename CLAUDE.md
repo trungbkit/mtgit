@@ -11,30 +11,40 @@ state itself.
 
 | Task | Command |
 |---|---|
-| Typecheck frontend | `npx tsc --noEmit` |
-| Build frontend | `npm run build` (= `tsc && vite build`) |
+| Install deps | `pnpm install` |
+| Typecheck frontend | `pnpm exec tsc --noEmit` |
+| Build frontend | `pnpm build` (= `tsc && vite build`) |
 | Rust tests | `cd src-tauri && cargo test` |
 | Rust lint | `cd src-tauri && cargo clippy --all-targets -- -D warnings` |
-| Run the app | `npm run tauri:dev` |
+| Run the app | `pnpm tauri:dev` |
 | Fixture repo | `scripts/make-fixture.sh [dest]` |
 
-### Read this before reaching for pnpm
+### pnpm, not npm
 
-The project **declares** pnpm — `pnpm-lock.yaml` is the only lockfile, and `tauri.conf.json`'s
-`beforeDevCommand` / `beforeBuildCommand` call `pnpm`. But the `node_modules` in this checkout
-was installed by **pnpm 10.30.2** while **pnpm 11.15.1** is on PATH, and pnpm 11 wants to purge
-and recreate the modules directory (store `v10` → `v11`). Any `pnpm …` invocation therefore
-dies with:
+**This project uses pnpm.** `pnpm-lock.yaml` is the only lockfile, and `tauri.conf.json`'s
+`beforeDevCommand` / `beforeBuildCommand` call `pnpm dev` / `pnpm build` directly — so
+`pnpm tauri:dev` is not a preference, it is the only invocation whose hooks match the config.
+Reaching for `npm run tauri:dev` does not insulate you from pnpm: it runs `tauri dev`, which
+runs the `pnpm dev` hook anyway, so a pnpm problem still surfaces — one layer removed from the
+command you typed, which is the harder place to read it. Don't add a `package-lock.json`.
+
+`pnpm <script>` runs a `package.json` script; `pnpm exec <bin>` runs a binary from
+`node_modules/.bin`. A bare `pnpm tsc` falls back to `exec` when no script by that name
+exists, but write `pnpm exec` where a binary is meant — it says which one you wanted.
+
+**Build scripts are gated.** pnpm 11 refuses to finish an install while any dependency's
+postinstall is undecided, and fails the *whole* command — including the `pnpm dev` that
+`tauri dev` runs as a hook, so the app dies before Vite starts:
 
 ```
-ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.28.1
 ```
 
-`npx` and `npm run` drive the existing `node_modules` fine, so **use those** unless you have
-been asked to reinstall. Reinstalling (`pnpm install` in a real terminal, or `CI=true pnpm
-install`) wipes and rebuilds `node_modules` — that is a deliberate act, not a workaround to
-reach for mid-task. It is worth reconciling deliberately at some point, since `pnpm tauri:dev`
-runs the pnpm hooks in `tauri.conf.json` regardless of how you invoke it.
+The decisions live in `pnpm-workspace.yaml` under `allowBuilds`. A new gated dependency needs
+an explicit `true` or `false` there (`pnpm approve-builds` writes it interactively); pnpm's own
+placeholder is the literal text `set this to true or false`, which is not a boolean and leaves
+the gate closed. `esbuild: true` is already recorded — its postinstall only verifies the
+platform binary that `@esbuild/darwin-arm64` already ships.
 
 `cargo test` takes ~35s: `perf_50k_commits_under_500ms` builds a 50k-commit repo. That is
 expected, not a hang. Use `cargo test --lib <name>` while iterating.
@@ -50,7 +60,7 @@ There is **no frontend test runner (no Vitest) and no CI** — both are planned 
 
 ```
 cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
-cd .. && npx tsc --noEmit && npm run build
+cd .. && pnpm exec tsc --noEmit && pnpm build
 ```
 
 Run all four before saying a change works. `tsc` is strict with `noUnusedLocals` and
