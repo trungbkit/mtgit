@@ -1,4 +1,4 @@
-//! Network operations (push / pull / fetch) shell out to the system `git`.
+//! Network operations (clone / fetch / pull / push) shell out to the system `git`.
 //! This deliberately inherits the user's credential helpers, SSH agent, and
 //! proxy config — the single biggest pain point of libgit2's own networking.
 //! Progress from `--progress` (stderr) is streamed to the frontend as events.
@@ -69,6 +69,101 @@ fn drain(child: &mut Child, mut on_stderr: impl FnMut(&str)) -> String {
 
     collected.push_str(&stdout_reader.join().unwrap_or_default());
     collected
+}
+
+/// What the clone form can ask for beyond a URL and a destination.
+#[derive(Debug, Default, Clone)]
+pub struct CloneOptions {
+    pub recurse_submodules: bool,
+    /// Shallow depth. `Some(0)` is treated as "no limit" rather than passed on,
+    /// because `git clone --depth 0` is an error and an empty form field is not.
+    pub depth: Option<u32>,
+    /// Clone a single named branch instead of the remote's default.
+    pub branch: Option<String>,
+    pub bare: bool,
+}
+
+/// `git clone --progress <url> <dest>`, streamed like any other network op.
+///
+/// Clone cannot go through [`run`]: it has no repository to `-C` into, and it
+/// is the one network op whose arguments are typed by the user. Both of those
+/// user-typed values are placed after `--`, so a URL or a path beginning with
+/// `-` is a bad URL rather than an injected option — the same guard
+/// `core/search.rs` applies to search terms, for the same reason.
+///
+/// The PID is registered under `dest`, so the status bar's Cancel reaches a
+/// clone by the path the frontend already knows it by.
+pub fn clone(
+    app: &AppHandle,
+    url: &str,
+    dest: &str,
+    opts: &CloneOptions,
+    pids: &Mutex<HashMap<String, u32>>,
+) -> Result<GitOpResult> {
+    clone_inner(Some(app), url, dest, opts, Some(pids))
+}
+
+fn clone_inner(
+    app: Option<&AppHandle>,
+    url: &str,
+    dest: &str,
+    opts: &CloneOptions,
+    pids: Option<&Mutex<HashMap<String, u32>>>,
+) -> Result<GitOpResult> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(Error::Msg("clone URL cannot be empty".into()));
+    }
+    if dest.trim().is_empty() {
+        return Err(Error::Msg("clone destination cannot be empty".into()));
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.arg("clone").arg("--progress");
+    if opts.recurse_submodules {
+        cmd.arg("--recurse-submodules");
+    }
+    if let Some(depth) = opts.depth.filter(|d| *d > 0) {
+        cmd.arg(format!("--depth={depth}"));
+    }
+    if let Some(branch) = opts.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+        // Attached to its flag: one argv word, so a leading '-' cannot be read
+        // as an option of its own.
+        cmd.arg(format!("--branch={branch}"));
+    }
+    if opts.bare {
+        cmd.arg("--bare");
+    }
+    cmd.arg("--").arg(url).arg(dest);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| Error::Msg(format!("failed to launch git: {e}")))?;
+    if let Some(pids) = pids {
+        if let Ok(mut active) = pids.lock() {
+            active.insert(dest.to_string(), child.id());
+        }
+    }
+
+    let collected = drain(&mut child, |line| {
+        if let Some(app) = app {
+            let _ = app.emit(
+                "git-progress",
+                ProgressEvent { op: "clone".to_string(), line: line.to_string() },
+            );
+        }
+    });
+
+    let status = child.wait().map_err(|e| Error::Msg(e.to_string()))?;
+    if let Some(pids) = pids {
+        if let Ok(mut active) = pids.lock() {
+            active.remove(dest);
+        }
+    }
+    Ok(GitOpResult {
+        success: status.success(),
+        code: status.code(),
+        output: collected.trim_end().to_string(),
+    })
 }
 
 /// Run a network git operation, streaming stderr lines as `git-progress`
@@ -174,6 +269,95 @@ mod tests {
         assert_eq!(progress, vec!["remote: done".to_string()]);
         assert!(out.starts_with("remote: done\n"), "stderr comes first: {:?}", &out[..40]);
         assert_eq!(out.lines().filter(|l| *l == "0123456789").count(), 20_000);
+    }
+
+    /// Clone the real thing: a local fixture repo, through the real `git`
+    /// binary, and assert the clone carries the history and a live origin.
+    #[test]
+    fn clone_copies_history_and_wires_up_origin() {
+        let source = tempfile::tempdir().unwrap();
+        let src = source.path().to_str().unwrap();
+        git(src, &["init", "-q", "-b", "main", "."]);
+        std::fs::write(source.path().join("a.txt"), "hello\n").unwrap();
+        git(src, &["add", "a.txt"]);
+        git(src, &["-c", "user.email=t@e", "-c", "user.name=T", "commit", "-qm", "first"]);
+
+        let target = tempfile::tempdir().unwrap();
+        let dest = target.path().join("clone").to_string_lossy().into_owned();
+        let mut progress = Vec::new();
+        let result = clone_inner(None, src, &dest, &CloneOptions::default(), None).unwrap();
+        progress.push(result.output.clone());
+
+        assert!(result.success, "clone failed: {}", result.output);
+        assert_eq!(std::fs::read_to_string(format!("{dest}/a.txt")).unwrap(), "hello\n");
+        let repo = git2::Repository::open(&dest).unwrap();
+        assert_eq!(repo.find_remote("origin").unwrap().url(), Some(src));
+        assert!(repo.find_reference("refs/remotes/origin/main").is_ok());
+    }
+
+    /// A shallow clone must actually be shallow — `--depth` is the one clone
+    /// option whose effect is invisible in the working tree.
+    #[test]
+    fn clone_with_a_depth_truncates_history() {
+        let source = tempfile::tempdir().unwrap();
+        let src = source.path().to_str().unwrap();
+        git(src, &["init", "-q", "-b", "main", "."]);
+        for n in 0..3 {
+            std::fs::write(source.path().join("a.txt"), format!("{n}\n")).unwrap();
+            git(src, &["add", "a.txt"]);
+            git(src, &["-c", "user.email=t@e", "-c", "user.name=T", "commit", "-qm", &format!("c{n}")]);
+        }
+
+        let target = tempfile::tempdir().unwrap();
+        let dest = target.path().join("shallow").to_string_lossy().into_owned();
+        let opts = CloneOptions { depth: Some(1), ..CloneOptions::default() };
+        // `file://` deliberately: git ignores --depth for a plain local path
+        // (it hardlinks the object store instead of running the transport).
+        let result = clone_inner(None, &format!("file://{src}"), &dest, &opts, None).unwrap();
+        assert!(result.success, "clone failed: {}", result.output);
+
+        let repo = git2::Repository::open(&dest).unwrap();
+        let mut walk = repo.revwalk().unwrap();
+        walk.push_head().unwrap();
+        assert_eq!(walk.count(), 1, "--depth=1 must bring exactly one commit");
+    }
+
+    /// `--depth=0` is an error to git and "no limit" to a form field. The
+    /// option must be dropped, not forwarded.
+    #[test]
+    fn clone_treats_a_zero_depth_as_no_limit() {
+        let source = tempfile::tempdir().unwrap();
+        let src = source.path().to_str().unwrap();
+        git(src, &["init", "-q", "-b", "main", "."]);
+        std::fs::write(source.path().join("a.txt"), "x\n").unwrap();
+        git(src, &["add", "a.txt"]);
+        git(src, &["-c", "user.email=t@e", "-c", "user.name=T", "commit", "-qm", "first"]);
+
+        let target = tempfile::tempdir().unwrap();
+        let dest = target.path().join("full").to_string_lossy().into_owned();
+        let opts = CloneOptions { depth: Some(0), ..CloneOptions::default() };
+        let result = clone_inner(None, src, &dest, &opts, None).unwrap();
+        assert!(result.success, "a zero depth must not reach git: {}", result.output);
+    }
+
+    /// The user types the URL, and it reaches a real `git` command line
+    /// (invariant 6). After `--` a leading dash is a bad path, not an option:
+    /// `--upload-pack=` would otherwise run an arbitrary command.
+    #[test]
+    fn a_url_that_looks_like_an_option_is_treated_as_a_url() {
+        let target = tempfile::tempdir().unwrap();
+        let dest = target.path().join("nope").to_string_lossy().into_owned();
+        let marker = target.path().join("pwned");
+        let payload = format!("--upload-pack=touch {}", marker.display());
+        let result = clone_inner(None, &payload, &dest, &CloneOptions::default(), None).unwrap();
+
+        assert!(!result.success, "a dash-leading URL must not clone: {}", result.output);
+        assert!(!marker.exists(), "the option was executed rather than read as a URL");
+    }
+
+    fn git(cwd: &str, args: &[&str]) {
+        let status = Command::new("git").arg("-C").arg(cwd).args(args).status().unwrap();
+        assert!(status.success(), "git {args:?} failed");
     }
 
     /// A child that writes nothing at all must not hang or panic.

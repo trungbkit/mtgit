@@ -231,3 +231,60 @@
     animation: none;
   }
 }
+
+/* ---- Remote grouping (G4) --------------------------------------------- */
+.remote-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 20px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.remote-node:hover {
+  background: var(--bg-hover);
+}
+.remote-node .ref-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.remote-orphan {
+  font-size: 10px;
+  color: var(--yellow);
+  border: 1px solid var(--yellow);
+  border-radius: 4px;
+  padding: 0 4px;
+  opacity: 0.8;
+}
+.section-add {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.section-add:hover {
+  background: var(--border-strong);
+  border-color: transparent;
+  color: var(--text);
+}
+.section-empty {
+  padding: 4px 8px 6px 20px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Worktree rows (G18). */
+.wt-flag {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-left: 4px;
+}
+.wt-flag.dirty {
+  color: var(--yellow);
+}

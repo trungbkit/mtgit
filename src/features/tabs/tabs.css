@@ -36,3 +36,34 @@
   background: var(--border-strong);
   color: var(--text);
 }
+.tab.start .tab-name {
+  color: var(--accent-text);
+}
+.tab-branch {
+  color: var(--text-faint);
+  font-size: 11px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab.dragging {
+  opacity: 0.4;
+}
+.tab.drop-target {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tab-add {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 0 12px;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.tab-add:hover {
+  background: var(--bg-hover);
+  border-color: transparent;
+  color: var(--text);
+}

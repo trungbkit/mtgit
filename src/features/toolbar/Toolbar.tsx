@@ -9,6 +9,7 @@ import {
   gitNetwork,
   historyStatus,
   listRefs,
+  listRemotes,
   openRepo,
   redo,
   setUpstream,
@@ -43,6 +44,8 @@ export function Toolbar() {
   const toggleTerminal = useSession((s) => s.toggleTerminal);
   const toggleSidebar = useSession((s) => s.toggleSidebar);
   const setPaletteOpen = useSession((s) => s.setPaletteOpen);
+  const openStart = useSession((s) => s.openStart);
+  const setCloneOpen = useSession((s) => s.setCloneOpen);
   const qc = useQueryClient();
   const pushToast = useToasts((s) => s.push);
 
@@ -58,6 +61,11 @@ export function Toolbar() {
     queryKey: ["refs", repo?.path],
     enabled: !!repo,
     queryFn: () => listRefs(repo!.path),
+  });
+  const { data: remotes } = useQuery({
+    queryKey: ["remotes", repo?.path],
+    enabled: !!repo,
+    queryFn: () => listRemotes(repo!.path),
   });
   const { data: history } = useQuery({
     queryKey: ["historyStatus", repo?.path],
@@ -212,6 +220,31 @@ export function Toolbar() {
     }
   }
 
+  /**
+   * Push the current branch to a named remote (B4 / G4).
+   *
+   * Explicit `<remote> <branch>` rather than a bare `git push`: the point of
+   * the entry is to reach a remote that is *not* the upstream, and a bare push
+   * would ignore the choice. Upstream tracking is left alone — picking a
+   * second remote once should not silently retarget every later push.
+   */
+  async function pushTo(remote: string) {
+    if (!repo || !currentBranch) return;
+    try {
+      const result = await gitNetwork(repo.path, "push", remote, [currentBranch.name]);
+      if (result.success) {
+        pushToast("success", `Pushed ${currentBranch.name} to ${remote}`);
+        await clearHistory(repo.path);
+        setRemoteMutation(true);
+      } else {
+        pushToast("error", `push failed: ${result.output.split("\n").pop() ?? ""}`);
+      }
+      refresh();
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
   async function forcePush() {
     if (!repo || !currentBranch) return;
     if (
@@ -288,11 +321,15 @@ export function Toolbar() {
   }
 
   function repoMenu(e: React.MouseEvent) {
-    const items: MenuItem[] = [{ label: "Open repository…", onClick: pick }];
+    const items: MenuItem[] = [
+      { label: "Start screen", onClick: openStart },
+      { label: "Clone repository…", onClick: () => setCloneOpen(true) },
+      { label: "Open repository…", onClick: pick },
+    ];
     if (recentRepos.length) {
       items.push({ separator: true });
-      for (const p of recentRepos) {
-        items.push({ label: p.split("/").pop() || p, onClick: () => load(p) });
+      for (const entry of recentRepos) {
+        items.push({ label: entry.name, onClick: () => load(entry.path) });
       }
     }
     openMenu(e, items);
@@ -369,13 +406,20 @@ export function Toolbar() {
           <button
             className="tb-select"
             disabled={busy}
-            onClick={(e) => (repo ? repoMenu(e) : pick())}
+            onClick={repoMenu}
             title={repo?.path ?? "Open a repository"}
           >
             <span className="tb-select-text">{busy ? "Opening…" : repo?.name ?? "Open…"}</span>
             <span className="tb-caret">▾</span>
           </button>
         </div>
+        {/* A user who forgets which worktree they are in commits to the wrong
+            branch, so the one they are in is named rather than implied (G18). */}
+        {repo?.worktree && (
+          <span className="tb-worktree" title={`Linked worktree "${repo.worktree}" at ${repo.path}`}>
+            🌿 {repo.worktree}
+          </span>
+        )}
         <div className="tb-field">
           <label>branch</label>
           <button className="tb-select" disabled={!repo} onClick={branchMenu}>
@@ -449,6 +493,16 @@ export function Toolbar() {
           onCaret={(e) =>
             openMenu(e, [
               { label: "Push", onClick: () => net("push") },
+              ...((remotes ?? []).length > 1 && currentBranch
+                ? [
+                    { separator: true } as MenuItem,
+                    ...(remotes ?? []).map((r) => ({
+                      label: `Push ${currentBranch.name} to ${r.name}`,
+                      onClick: () => pushTo(r.name),
+                    })),
+                    { separator: true } as MenuItem,
+                  ]
+                : []),
               {
                 label: "Force push (with lease)",
                 danger: true,

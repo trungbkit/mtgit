@@ -63,9 +63,9 @@ Checkout is the most frequent operation and must be near-instant and confirmatio
 
 - [ ] `/` opens the branch finder and selects the branch tip in the graph without checking out.
 - [ ] Command palette offers remote branches as checkout targets (STATUS B7).
-- [ ] **Open in worktree…** creates and opens a worktree per §7, from a branch, a commit, or a remote branch.
-- [ ] A branch held by another worktree produces the named-worktree dialog, not git's raw refusal.
-- [ ] Worktree list, add and remove are reachable from the sidebar WORKTREES section.
+- [ ] **Open in worktree…** creates and opens a worktree per §7, from a branch, a commit, or a remote branch. *Branch and remote-branch cases done (a remote branch gets a tracking local branch); from a bare commit the worktree gets a branch named after it rather than a detached HEAD — git2's `WorktreeAddOptions` wants a reference, so B8's detached half is outstanding.*
+- [ ] A branch held by another worktree produces the named-worktree dialog, not git's raw refusal. *Still git's raw refusal.*
+- [x] Worktree list, add and remove are reachable from the sidebar WORKTREES section. *The list includes the main worktree and marks the current one; remove refuses a dirty worktree and offers the force.*
 
 ---
 

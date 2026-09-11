@@ -277,3 +277,50 @@
   font-size: 11px;
   letter-spacing: 0.02em;
 }
+
+/* Per-worktree WIP rows (G18). The dot sits on its worktree's own lane. */
+.wip-row {
+  padding: 0;
+}
+.wip-refs {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  overflow: hidden;
+}
+.wip-worktree {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+.wip-lane {
+  position: relative;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+.wip-lane .wip-dot {
+  position: absolute;
+  top: 50%;
+  margin-top: -6px;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border-width: 2px;
+  border-style: dashed;
+}
+.wip-row.other {
+  opacity: 0.85;
+}
+.wip-row.other:hover {
+  opacity: 1;
+}
+.wip-count {
+  padding-right: 14px;
+}

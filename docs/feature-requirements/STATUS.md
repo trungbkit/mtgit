@@ -10,9 +10,17 @@ read out of the source, not inferred from the plan. The gate is green at this co
 > missing entry points, simplified dialogs and polish.
 >
 > **P5-search (G10) has since landed too** — `08-search-and-filter.md` is implemented bar the
-> four items in its new §7.1, and the gate is at **67 Rust tests** (42 + 25 for the grammar and
-> its git mapping). `GITKRAKEN_PARITY_PLAN.md` §8 now points at **P1** (clone / init / remotes /
-> start screen).
+> four items in its new §7.1 — and **P1 landed on 2026-09-11** (clone / init / remote management
+> / start screen / first-class tabs), closing G1–G4 and G12 plus **B3** and **B4** below. The
+> gate is at **78 Rust tests** (42 + 25 for search + 11 for clone, init and remotes).
+> **P8 item 1 (worktrees, G18) and terminal links (G19) landed on 2026-09-11 too**, taking the
+> gate to **92 Rust tests**. §6's per-doc backlog below is annotated with what that closed.
+> `GITKRAKEN_PARITY_PLAN.md` §8 now points at **P6 → P7 → the rest of P8**, and argues for
+> pulling P7 forward: everything added today is frontend state with no test runner behind it.
+>
+> P1 has no doc of its own here: `docs/feature-requirements/` specifies the seven core
+> operations plus search, and clone / init / remote management are repo *lifecycle*, not one of
+> them. The plan's §4/P1 is their record.
 
 > **Scope note (revised after the GitLens pass).** This audit covers the docs *as they stood on
 > 2026-09-08*, before `gitkraken/vscode-gitlens` was folded in as a second reference
@@ -157,8 +165,8 @@ out another branch.
 |---|---|---|
 | B1 | **No ref context menu on graph pills.** Right-clicking a pill falls through to the *commit* menu, so push/rename/delete/merge-from-here are sidebar-only. | overview §1.2, `03-push.md` §2 |
 | B2 | **No "Push tag".** The tag context menu offers Copy SHA and Delete only; `git_network` can already push a refspec. | `03-push.md` §5 |
-| B3 | **No "Pull (fast-forward)" on the current branch and no "Fetch \<remote\>" on remote nodes** in the sidebar — the REMOTE section has no per-remote root node to hang it on. | `04-pull.md` §2 |
-| B4 | **Push dropdown does not list remotes.** Multi-remote repos can only push to the upstream's remote (or `origin`). | `03-push.md` B7 |
+| ~~B3~~ | ✅ **FIXED in P1.** Both landed once the REMOTE section grew the per-remote root node this row said was missing: the node's menu carries `Fetch <remote>` (with `--prune`), and the checked-out branch's menu carries `Pull (fast-forward) from <upstream>`, disabled when it is not behind. | `04-pull.md` §2 |
+| ~~B4~~ | ✅ **FIXED in P1.** The push caret lists every configured remote as `Push <branch> to <remote>` when there is more than one, running an explicit `git push <remote> <branch>`. Upstream tracking is deliberately left alone — picking a second remote once must not silently retarget every later push. | `03-push.md` B7 |
 | B5 | **`⌘⇧C` only works when the commit panel is already open** — the listener lives in `StagingView`, which mounts only when the WIP row is selected. It should select WIP *and* focus the summary. | `01-commit.md` §2 |
 | B6 | **Commit button never becomes "Continue \<operation\>".** Continue lives only in the banner. | `01-commit.md` §5 |
 | B7 | **Command palette lists local branches only** — remote branches are not checkout targets there. | `02-checkout.md` §2 |
@@ -169,7 +177,7 @@ out another branch.
 
 | # | Gap | Spec |
 |---|---|---|
-| C1 | **First push is a yes/no confirm, not a publish dialog.** `net.ts:publish` asks "Push it to \<remote\> and track it?" — no remote selector, no editable remote branch name, and upstream is always set. | `03-push.md` B2 |
+| C1 | **First push is a yes/no confirm, not a publish dialog.** `net.ts:publish` asks "Push it to \<remote\> and track it?" — no remote selector, no editable remote branch name, and upstream is always set. **Still open after P1**, which added the remote *list* (B4) but not the publish form: the generic dialog host takes one value, and this needs three. `features/start/CloneDialog.tsx` is the precedent for a purpose-built form. | `03-push.md` B2 |
 | C2 | **No lease-failure recovery.** A rejected `--force-with-lease` surfaces raw; there is no "the remote moved — fetch and retry" path. | `03-push.md` B4 |
 | C3 | **No auth-failure dialog.** Credential failures are a plain error toast; the spec wants an explanation plus an "Open terminal" action so the user can authenticate. (The conflict banner already does exactly this — copy that button.) | `03-push.md` §5 |
 | C4 | **Conflict panes are labelled "Ours"/"Theirs"**, not by branch name and lane colour. During a rebase or cherry-pick those two words mean the opposite of what most users expect, so this is worse than cosmetic — see the new overview §5.2 rule. | `05-merge.md` §5 |
@@ -222,6 +230,26 @@ break, none of which are covered:
 - Sequence-meta bookkeeping (`i of n` in the banner) across continue and skip.
 - `apply_patch` round-trip for line-level staging: CRLF, no trailing newline, added-lines-only.
 
+P8 item 1 and terminal links added 14 more: `core/worktree.rs` (main worktree listed and
+current decided by working directory — including from *inside* a worktree — remove deletes both
+halves, remove refuses a dirty worktree unless forced, add attaches an existing local branch
+instead of copying it, add on a remote branch creates a tracking local one), `core/graph.rs`
+(a WIP row lands on its own HEAD's lane across a fork; a headless one falls back rather than
+disappearing), `core/repo.rs` (open reports the linked worktree it was pointed at) and
+`core/terminal.rs` (the four kinds a terminal prints, a range revealing its right end, prose
+and filenames staying inert, trailing punctuation). The worktree fixtures put their worktrees
+in a dedicated `TempDir`: a first version used fixed names under the shared system temp root
+and two concurrent `cargo test` binaries collided on it.
+
+P1 added 11: `core/remote.rs` (list with tracking-branch counts, duplicate refusal leaving the
+original URL intact, rename moving the tracking refs, option-shaped URL rejected),
+`core/repo.rs` (init unborn / already-a-repo / bare) and `shellout.rs` (clone copies history and
+wires up origin, `--depth` truncates, `--depth=0` is dropped rather than forwarded, and a
+`--upload-pack=` URL is read as a URL rather than executed). What P1 does **not** cover: the
+start screen, the clone form, the tab store and the remote sidebar are all frontend, and the
+per-tab selection restore and the Start-tab-is-the-floor rule are exactly the kind of state
+machine the argument below is about.
+
 Search added 25 Rust tests — a behavioural test per operator family against a fixture repo,
 plus the argument-injection guard (one assertion per operator), the two-walk subtraction for
 `message:` + `-message:`, cache invalidation on a branch move, and hit ordering with page hints.
@@ -246,10 +274,10 @@ it is listed in one place so the unchecked boxes scattered through seven docs ar
 | Doc | New criteria | Weight |
 |---|---|---|
 | ~~`08-search-and-filter.md`~~ | ~~15 — the whole doc~~ | ✅ **Done.** `core/search.rs` (grammar + git mapping + execution), `search_commits` / `cancel_search`, `features/graph/SearchBar.tsx`, `stores/search.ts`, `ScrollMarkers` in `GraphView`. 25 tests. Four items outstanding, listed in that doc's §7.1. |
-| `00-overview.md` | configurable/reorderable graph columns · Changes column · minimap · scroll markers · ref overflow `+N` · ghost refs on hover · stacked detail sheets · WORKTREES + CONTRIBUTORS sidebar sections · sidebar-scopes-the-graph · jump to HEAD/upstream/merge target · one date-style setting · terminal links · autolinks · rich hovers · blame heatmap · file/line history following renames · revision navigation · guided command palette | **Medium, and mostly independent.** Several are a day each (terminal links, heatmap, date style, `+N` overflow); the column model and the detail stack are refactors. |
-| `01-commit.md` | 5 — per-worktree WIP row · co-author picker · `commit.template` · autolinks in preview · stash / copy-to-worktree actions | Small each; the per-worktree WIP row depends on the graph carrying worktrees at all. |
-| `02-checkout.md` | 5 + new §7 — `/` branch finder · remote branches in the palette · **Open in worktree…** · worktree-holds-branch dialog · sidebar worktree management | Medium. `core/worktree.rs` already lists and adds; this is almost entirely UI. |
-| `03-push.md` | 2 — unpushed row markers · worktree-aware push target | Small. |
+| `00-overview.md` | configurable/reorderable graph columns · Changes column · minimap · scroll markers · ref overflow `+N` · ghost refs on hover · stacked detail sheets · ~~WORKTREES~~ + CONTRIBUTORS sidebar sections · sidebar-scopes-the-graph · jump to HEAD/upstream/merge target · one date-style setting · ~~terminal links~~ · autolinks · rich hovers · blame heatmap · file/line history following renames · revision navigation · guided command palette | **Medium, and mostly independent.** ✅ **WORKTREES section and terminal links done.** Still a day each: heatmap, date style, `+N` overflow; the column model and the detail stack are refactors. |
+| `01-commit.md` | 5 — ~~per-worktree WIP row~~ · co-author picker · `commit.template` · autolinks in preview · stash / copy-to-worktree actions | ✅ **Per-worktree WIP rows done**, with one deviation: clicking another worktree's row **opens that worktree as a tab** rather than opening the commit panel on it. A different worktree has a different index, and this tab's handle cannot stage into it honestly. §3.1's "selecting it opens the commit panel for *that* worktree" is therefore reached by a different route, not met as written. |
+| `02-checkout.md` | 5 + new §7 — `/` branch finder · remote branches in the palette · ~~**Open in worktree…**~~ · worktree-holds-branch dialog · ~~sidebar worktree management~~ | ✅ **Open in worktree… and sidebar management done** (B7, B9, B10, B11, and B8's remote-branch half — a remote branch gets a tracking local branch, tested). **Left: B8's detached case** — a worktree from a bare commit gets a branch named after the worktree rather than a detached HEAD, because git2's `WorktreeAddOptions` wants a reference — and the **worktree-holds-branch dialog**, still git's raw refusal. |
+| `03-push.md` | 2 — unpushed row markers · ~~worktree-aware push target~~ | ✅ **Worktree-aware push target falls out for free**: a worktree opened as a tab *is* the repo handle, so `push_target` reads that worktree's HEAD. §5's silent-wrong-branch failure needed B9, which landed. Unpushed row markers are still open. |
 | `04-pull.md` | 3 — unpulled row markers · jump-to controls · merge-target resolution + display | Small–medium; merge target needs a resolution rule and a place to live. |
 | `05-merge.md` | 3 — unified conflict panel · cross-file region navigation · ref-labelled take-side | Medium. Subsumes STATUS C4, and the panel rework is the prerequisite for the rebase items. |
 | `06-rebase.md` | 3 — conflict prediction · unified panel mid-plan · undo from the completion toast | **Conflict prediction is the one genuinely new algorithm** in this list: trial-apply the plan against a scratch index without moving refs. |
@@ -257,16 +285,21 @@ it is listed in one place so the unchecked boxes scattered through seven docs ar
 
 **Dependency order, if this is picked up as a block:**
 
-1. **Worktrees in the graph** (per-worktree WIP rows) — unblocks four docs' worth of criteria
-   and uses backend that already exists.
+1. ~~**Worktrees in the graph** (per-worktree WIP rows) — unblocks four docs' worth of criteria
+   and uses backend that already exists.~~ ✅ **done** — and it did unblock them: `03-push.md`'s
+   worktree-aware push target needed nothing more once a worktree could be a tab.
 2. **The unified conflict panel** — subsumes an existing defect (C4) and is a prerequisite for
    two of the three rebase items.
 3. ~~**Search** (`08-search-and-filter.md`)~~ ✅ **done** — and it did what this line predicted:
    select mode hands every hit to the range operations, so cherry-picking or planning a rebase
    over a search result is now one gesture rather than a hunt.
-4. Everything else is independent and small enough to land opportunistically. **Terminal links
-   are the best value-per-hour item in the whole file**: MTGit already has the pty panel and the
-   graph selection API, so it is a regex and a click handler.
+4. Everything else is independent and small enough to land opportunistically.
+   ~~**Terminal links are the best value-per-hour item in the whole file**: MTGit already has
+   the pty panel and the graph selection API, so it is a regex and a click handler.~~
+   ✅ **done**, and the prediction held except in one place: a regex cannot tell `main` in a
+   branch listing from `main` in a sentence. Candidate extraction is a regex
+   (`lib/terminalLinks.ts`); the *decision* is `core/terminal.rs` resolving the token against
+   the repository, which is also why a filename with dots does not become a range.
 
 ### 6.1 What was ruled *out*, so it is not re-proposed
 

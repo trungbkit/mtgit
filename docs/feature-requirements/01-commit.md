@@ -73,7 +73,7 @@ Vertical layout, top to bottom:
 
 **New in this revision (GitLens-derived) — none implemented:**
 
-- [ ] A dirty second worktree produces its **own** WIP row, and committing from it touches only that worktree (§3.1).
+- [ ] A dirty second worktree produces its **own** WIP row, and committing from it touches only that worktree (§3.1). *The row is there, on that worktree's own lane. Clicking it opens that worktree as a tab rather than re-pointing this tab's commit panel: a different worktree has a different index, and staging into it from this handle would be acting on a repository the UI is not showing.*
 - [ ] Co-author picker appends well-formed `Co-authored-by:` trailers from the contributor list.
 - [ ] `commit.template` pre-fills the Description when the fields are empty.
 - [ ] Issue references render as autolinks in the message preview and the graph message column.

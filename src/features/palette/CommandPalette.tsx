@@ -23,6 +23,8 @@ export function CommandPalette() {
   const setOpen = useSession((s) => s.setPaletteOpen);
   const repo = useSession((s) => s.repo);
   const setRepo = useSession((s) => s.setRepo);
+  const openStart = useSession((s) => s.openStart);
+  const setCloneOpen = useSession((s) => s.setCloneOpen);
   const toggleTerminal = useSession((s) => s.toggleTerminal);
   const qc = useQueryClient();
   const pushToast = useToasts((s) => s.push);
@@ -50,6 +52,22 @@ export function CommandPalette() {
 
   const actions: Action[] = useMemo(() => {
     const list: Action[] = [
+      {
+        id: "start",
+        label: "Start screen",
+        run: () => {
+          setOpen(false);
+          openStart();
+        },
+      },
+      {
+        id: "clone",
+        label: "Clone repository…",
+        run: () => {
+          setOpen(false);
+          setCloneOpen(true);
+        },
+      },
       {
         id: "open",
         label: "Open repository…",

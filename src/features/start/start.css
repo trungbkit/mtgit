@@ -1,0 +1,354 @@
+/* Start screen + clone form (P1 / G1–G3). */
+
+.start-screen {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-app);
+  display: flex;
+  justify-content: center;
+}
+
+.start-inner {
+  width: 100%;
+  max-width: 780px;
+  padding: 48px 28px 40px;
+}
+
+.start-head h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.start-head p {
+  margin: 6px 0 28px;
+  color: var(--text-dim);
+}
+
+.start-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.start-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px;
+  text-align: left;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.start-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.start-card-icon {
+  font-size: 18px;
+  line-height: 1;
+  margin-bottom: 4px;
+  color: var(--accent-text);
+}
+.start-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.start-card-detail {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.start-recent {
+  margin-top: 34px;
+}
+.start-recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.start-recent h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+.start-filter {
+  width: 180px;
+  padding: 5px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.start-empty {
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.recent-list li {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+.recent-list li:last-child {
+  border-bottom: none;
+}
+.recent-list li:hover {
+  background: var(--bg-hover);
+}
+
+.recent-row {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(90px, max-content) 1fr max-content max-content;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.recent-row:hover {
+  background: transparent;
+  border-color: transparent;
+}
+.recent-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recent-path {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  direction: rtl;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recent-branch {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.recent-when {
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.recent-forget {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-faint);
+  padding: 0 12px;
+  font-size: 11px;
+  opacity: 0;
+}
+.recent-list li:hover .recent-forget {
+  opacity: 1;
+}
+.recent-forget:hover {
+  background: var(--bg-panel-2);
+  color: var(--red);
+  border-color: transparent;
+}
+
+.start-back {
+  margin-top: 26px;
+}
+
+.link-btn {
+  background: transparent;
+  border: none;
+  color: var(--accent-text);
+  padding: 4px 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+.link-btn:hover {
+  background: transparent;
+  border-color: transparent;
+  text-decoration: underline;
+}
+
+/* ---- Clone form ------------------------------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  padding: 18px;
+}
+
+.clone-modal {
+  width: 520px;
+  max-width: calc(100vw - 40px);
+}
+.clone-modal h2 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.field {
+  display: block;
+  margin-bottom: 10px;
+}
+.field > span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.field input[type="text"],
+.field input:not([type]) {
+  width: 100%;
+}
+.field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.field input:focus {
+  border-color: var(--accent);
+}
+.field input:disabled {
+  opacity: 0.6;
+}
+
+.field-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.field-row .field {
+  margin-bottom: 0;
+  flex: 1;
+}
+.field-row .grow {
+  flex: 1;
+}
+.field-row > button {
+  flex-shrink: 0;
+  padding: 7px 12px;
+}
+
+.field-error {
+  color: var(--red);
+  font-size: 11px;
+  margin: -6px 0 10px;
+}
+
+.clone-dest {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 2px 0 10px;
+  word-break: break-all;
+}
+
+.clone-advanced {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 6px 0 4px;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.check input {
+  margin: 0;
+}
+.hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+.hint code {
+  font-family: var(--font-mono);
+}
+
+.clone-progress {
+  margin: 14px 0 4px;
+}
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-app);
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+.clone-progress-text {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

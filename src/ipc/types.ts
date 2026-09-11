@@ -13,6 +13,8 @@ export interface RepoInfo {
   path: string;
   head: HeadInfo;
   isBare: boolean;
+  /** Admin name of the linked worktree this handle is, or null for the main one. */
+  worktree: string | null;
 }
 
 export type RefKind = "localBranch" | "remoteBranch" | "tag" | "head";
@@ -38,6 +40,17 @@ export interface RefList {
   tags: BranchInfo[];
 }
 
+/** A configured remote. Mirrors `core::remote::RemoteInfo`. */
+export interface RemoteInfo {
+  name: string;
+  /** Fetch URL; null for a remote configured without one. */
+  url: string | null;
+  /** `remote.<name>.pushurl`, present only when it differs from `url`. */
+  pushUrl: string | null;
+  /** Remote-tracking branches under `refs/remotes/<name>/`. */
+  branches: number;
+}
+
 /** What `push_target` reports about the current branch. */
 export interface PushTarget {
   /** Current branch shorthand; null on a detached or unborn HEAD. */
@@ -46,6 +59,19 @@ export interface PushTarget {
   remote: string | null;
   /** Is an upstream configured? (Read from config, as git does.) */
   hasUpstream: boolean;
+}
+
+/**
+ * A ref / sha / range found in the terminal panel and resolved against this
+ * repository (G19). Mirrors `core::terminal::TerminalToken`.
+ */
+export interface TerminalToken {
+  /** The text exactly as the terminal printed it. */
+  token: string;
+  kind: RefKind;
+  /** The commit to reveal. For a range, its right-hand end. */
+  oid: string;
+  label: string;
 }
 
 export type EdgeKind = "continue" | "branch" | "merge";
@@ -280,10 +306,38 @@ export interface HistoryStatus {
 // ---- Worktrees, blame, file history, file content ----
 
 export interface WorktreeInfo {
+  /** Admin name — what `git worktree remove` takes, not necessarily the folder. */
   name: string;
   path: string;
   branch: string | null;
+  headOid: string | null;
   locked: boolean;
+  /** The repository's own working directory. It cannot be removed. */
+  isMain: boolean;
+  /** The worktree the active tab is looking at. */
+  isCurrent: boolean;
+  /** Changed files, or null when the worktree could not be opened. */
+  changed: number | null;
+}
+
+/**
+ * A dirty worktree's uncommitted state, placed on the graph (G18).
+ *
+ * Deliberately *not* a `GraphRow`: it is not a commit, and inserting it into
+ * the row list would shift the indices `searchCommits` returns as page hints.
+ */
+export interface WipRow {
+  worktree: string;
+  path: string;
+  branch: string | null;
+  headOid: string | null;
+  /** Lane of this worktree's HEAD — computed in Rust (invariant 5). */
+  lane: number;
+  color: number;
+  /** Row index of HEAD in the full layout, or null when it is not in it. */
+  headIndex: number | null;
+  changed: number;
+  isCurrent: boolean;
 }
 
 export interface SubmoduleInfo {

@@ -10,6 +10,8 @@ import {
   getGraph,
   getRemoteUrl,
   getStatus,
+  openRepo,
+  wipRows,
   mergeAdvanced,
   rebaseStandard,
   rewriteInfo,
@@ -18,6 +20,7 @@ import {
 } from "../../ipc/commands";
 import type { GraphRow, SearchHit } from "../../ipc/types";
 import type { RebaseAction, ResetMode } from "../../ipc/types";
+import { REVEAL_COMMIT_EVENT } from "../../stores/reveal";
 import { useSession, WORKING } from "../../stores/session";
 import { seedSearch, useRepoSearch, useSearch } from "../../stores/search";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -84,6 +87,7 @@ export function GraphView() {
   const repo = useSession((s) => s.repo);
   const selectedOid = useSession((s) => s.selectedOid);
   const selectOid = useSession((s) => s.selectOid);
+  const setRepo = useSession((s) => s.setRepo);
   const graphOpts = useSession((s) => s.graphOpts);
   const setGraphOpts = useSession((s) => s.setGraphOpts);
   const hiddenRefs = useSession((s) =>
@@ -112,6 +116,14 @@ export function GraphView() {
     queryKey: ["status", repo?.path],
     enabled: !!repo?.path,
     queryFn: () => getStatus(repo!.path),
+  });
+  // One WIP row per *dirty* worktree, each carrying the lane of its own HEAD.
+  // The lane is computed in Rust against the same cached layout the graph
+  // drew (invariant 5) — `GraphView` positions it, it does not derive it.
+  const { data: wips } = useQuery({
+    queryKey: ["wipRows", repo?.path],
+    enabled: !!repo?.path,
+    queryFn: () => wipRows(repo!.path),
   });
   const { data: originUrl } = useQuery({
     queryKey: ["remoteUrl", repo?.path],
@@ -214,10 +226,16 @@ export function GraphView() {
         }
       };
 
-      const createWorktreeFlow = async () => {
+      /**
+       * `target` is a branch name when the row carries one, and the commit
+       * oid otherwise. The backend resolves both (`core/worktree.rs::add`):
+       * a branch is attached as-is, an oid gets a new branch named `name`.
+       */
+      const createWorktreeFlow = async (target: string, label: string) => {
         const name = await promptDialog({
-          title: "Create worktree",
-          label: "Worktree / branch name",
+          title: `Open ${label} in a worktree`,
+          label: "Worktree folder / branch name",
+          defaultValue: target === row.oid ? "" : target.split("/").pop() ?? "",
           confirmLabel: "Choose location…",
           validate: validateRefName,
         });
@@ -225,7 +243,10 @@ export function GraphView() {
         const parent = await openDialog({ directory: true, title: "Choose worktree location" });
         if (typeof parent !== "string") return;
         const wtPath = `${parent}/${name}`;
-        run(() => createWorktree(path, name, wtPath, row.oid), `Worktree ${name} created`);
+        run(async () => {
+          await createWorktree(path, name, wtPath, target);
+          setRepo(await openRepo(wtPath));
+        }, `Worktree ${name} created`);
       };
       const createPatchFlow = async () => {
         const out = await saveDialog({ defaultPath: `${short}.patch`, title: "Save patch" });
@@ -243,14 +264,22 @@ export function GraphView() {
 
       const items: MenuItem[] = [];
       if (localBadge) {
-        items.push({
-          label: `Checkout ${localBadge.name}`,
-          onClick: () => run(() => smartCheckout(path, localBadge.name), `Checked out ${localBadge.name}`),
-        });
+        items.push(
+          {
+            label: `Checkout ${localBadge.name}`,
+            onClick: () => run(() => smartCheckout(path, localBadge.name), `Checked out ${localBadge.name}`),
+          },
+          // Offered right beside Checkout, because a worktree is the answer to
+          // the same question that does not disturb the tree you are in (G18).
+          {
+            label: `Open ${localBadge.name} in worktree…`,
+            onClick: () => createWorktreeFlow(localBadge.name, localBadge.name),
+          },
+        );
       }
       items.push(
         { label: "Checkout this commit", onClick: () => run(() => smartCheckout(path, row.oid), "Checked out commit") },
-        { label: "Create worktree from this commit", onClick: createWorktreeFlow },
+        { label: "Create worktree from this commit", onClick: () => createWorktreeFlow(row.oid, short) },
         { separator: true },
         {
           label: "Create branch here",
@@ -597,6 +626,46 @@ export function GraphView() {
     [repo?.path, selectOid, pushToast, fetchNextPage, virtualizer],
   );
 
+  /**
+   * Reveal a commit someone else named (G19: a terminal link).
+   *
+   * Same problem `navigateHits` solves, from a different direction: the oid
+   * may be thousands of rows past what is loaded, so pages are pulled until
+   * it turns up. Filter mode is left as it is — a reveal that silently
+   * dropped the user's filter would be a worse surprise than a scroll that
+   * cannot land — and the toast says so.
+   */
+  useEffect(() => {
+    const onReveal = async (event: Event) => {
+      const oid = (event as CustomEvent<string>).detail;
+      const path = repo?.path;
+      if (!oid || !path) return;
+      selectOid(oid);
+      let guard = 0;
+      while (
+        !live.current.rows.some((row) => row.oid === oid) &&
+        live.current.hasNextPage &&
+        guard++ < 200
+      ) {
+        const next = await fetchNextPage();
+        live.current.rows = next.data?.pages.flatMap((page) => page.rows) ?? live.current.rows;
+        live.current.hasNextPage = next.hasNextPage;
+      }
+      const index = live.current.filtering
+        ? live.current.visibleRows.findIndex((row) => row.oid === oid)
+        : live.current.rows.findIndex((row) => row.oid === oid);
+      if (index >= 0) {
+        virtualizer.scrollToIndex(index, { align: "center" });
+      } else if (live.current.filtering) {
+        pushToast("info", `${oid.slice(0, 7)} is filtered out — clear the search to see it.`);
+      } else {
+        pushToast("info", `${oid.slice(0, 7)} is not in this graph — no ref reaches it.`);
+      }
+    };
+    window.addEventListener(REVEAL_COMMIT_EVENT, onReveal);
+    return () => window.removeEventListener(REVEAL_COMMIT_EVENT, onReveal);
+  }, [repo?.path, selectOid, fetchNextPage, virtualizer, pushToast]);
+
   // F3 / ⌘G and their reverses, plus the two ways into the field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -676,6 +745,9 @@ export function GraphView() {
     ...(status?.unstaged ?? []).map((entry) => entry.path),
     ...(status?.conflicted ?? []).map((entry) => entry.path),
   ]).size;
+
+  const currentWip = (wips ?? []).find((wip) => wip.isCurrent);
+  const otherWips = (wips ?? []).filter((wip) => !wip.isCurrent);
 
   const selectRow = (event: React.MouseEvent, row: GraphRow) => {
     if ((event.metaKey || event.ctrlKey)) {
@@ -833,15 +905,40 @@ export function GraphView() {
       )}
 
       {status?.isDirty && (
-        <div
-          className={`wip-row${selectedOid === WORKING ? " selected" : ""}`}
+        <WipRowView
+          lane={currentWip?.lane ?? 0}
+          color={currentWip?.color ?? 0}
+          gutter={gutterWidth}
+          laneX={laneX}
+          // The count comes from `status`, not from `wip_rows`: this is the
+          // row the staging view sits behind, and the two must not disagree.
+          changed={dirtyCount}
+          // Named only when a second WIP row is on screen — with one row
+          // there is nothing to tell apart (overview §1.1).
+          worktree={otherWips.length ? currentWip?.worktree : undefined}
+          branch={repo.head.branch}
+          selected={selectedOid === WORKING}
           onClick={() => selectOid(WORKING)}
-        >
-          <span className="wip-dot" />
-          <span className="wip-label">// WIP</span>
-          <span className="wip-count">✎ {dirtyCount} changed file{dirtyCount === 1 ? "" : "s"}</span>
-        </div>
+        />
       )}
+      {otherWips.map((wip) => (
+        <WipRowView
+          key={wip.path}
+          lane={wip.lane}
+          color={wip.color}
+          gutter={gutterWidth}
+          laneX={laneX}
+          changed={wip.changed}
+          worktree={wip.worktree}
+          branch={wip.branch}
+          other
+          title={`${wip.path} — open this worktree in a tab`}
+          // Another worktree's uncommitted work cannot be staged from here:
+          // this tab's index is a different index. Opening it as its own tab
+          // is the only honest action, and it is the one G18 is built around.
+          onClick={() => openRepo(wip.path).then(setRepo).catch(toastError)}
+        />
+      ))}
       <div className="graph-body">
       <div className="graph-scroll" ref={parentRef} tabIndex={-1}>
         <div className="graph-inner" style={{ height: virtualizer.getTotalSize() }}>
@@ -924,6 +1021,70 @@ export function GraphView() {
           onClose={() => setComparison(null)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * A worktree's uncommitted work, drawn on its own lane (G18, and STATUS §4's
+ * "WIP row is not on the lane").
+ *
+ * It stays a strip above the scroll container rather than becoming a virtual
+ * row: it is not a commit, and putting it in the row list would shift every
+ * index `searchCommits` reports as a page hint.
+ */
+function WipRowView({
+  lane,
+  color,
+  gutter,
+  laneX,
+  changed,
+  worktree,
+  branch,
+  selected,
+  other,
+  title,
+  onClick,
+}: {
+  lane: number;
+  color: number;
+  gutter: number;
+  laneX: (lane: number) => number;
+  changed: number;
+  worktree?: string;
+  branch?: string | null;
+  selected?: boolean;
+  /** A worktree other than this tab's: dimmed, and clicking opens it. */
+  other?: boolean;
+  title?: string;
+  onClick: () => void;
+}) {
+  return (
+    <div
+      className={`wip-row${selected ? " selected" : ""}${other ? " other" : ""}`}
+      onClick={onClick}
+      title={title}
+    >
+      <div className="wip-refs" style={{ width: BRANCH_COL_WIDTH }}>
+        {worktree && (
+          <span className="wip-worktree">
+            🌿 {worktree}
+            {branch ? ` · ${branch}` : ""}
+          </span>
+        )}
+      </div>
+      <div className="wip-lane" style={{ width: gutter }}>
+        <span
+          className="wip-dot"
+          style={{ left: laneX(lane) - 6, borderColor: laneColor(color) }}
+        />
+      </div>
+      <span className="wip-label" style={{ color: laneColor(color) }}>
+        // WIP
+      </span>
+      <span className="wip-count">
+        ✎ {changed} changed file{changed === 1 ? "" : "s"}
+      </span>
     </div>
   );
 }

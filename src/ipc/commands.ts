@@ -22,6 +22,7 @@ import type {
   RewriteInfo,
   OperationInfo,
   RefList,
+  RemoteInfo,
   RepoInfo,
   ResetMode,
   SearchOptions,
@@ -29,6 +30,8 @@ import type {
   StashEntry,
   StatusReport,
   SubmoduleInfo,
+  TerminalToken,
+  WipRow,
   WorktreeInfo,
 } from "./types";
 
@@ -37,6 +40,25 @@ import type {
 // M0/M1
 export const openRepo = (path: string) => invoke<RepoInfo>("open_repo", { path });
 export const gitAvailable = () => invoke<boolean>("git_available");
+/** Create a repository and open it (G2). */
+export const initRepo = (path: string, bare: boolean) => invoke<RepoInfo>("init_repo", { path, bare });
+/**
+ * Clone and open (G1). Unlike `gitNetwork`, this *rejects* on failure — a
+ * half-finished clone is not a repo the user can be dropped into, so the only
+ * useful outcomes are a `RepoInfo` or git's own error message.
+ */
+export const cloneRepo = (
+  url: string,
+  dest: string,
+  opts: { recurseSubmodules?: boolean; depth?: number; branch?: string } = {},
+) =>
+  invoke<RepoInfo>("clone_repo", {
+    url,
+    dest,
+    recurseSubmodules: opts.recurseSubmodules ?? false,
+    depth: opts.depth,
+    branch: opts.branch,
+  });
 export const listRefs = (path: string) => invoke<RefList>("list_refs", { path });
 export const getGraph = (path: string, skip: number, limit: number) =>
   invoke<GraphPage>("get_graph", { path, skip, limit });
@@ -148,6 +170,16 @@ export const createTag = (path: string, name: string, target: string, message?: 
 export const deleteTag = (path: string, name: string) => invoke<void>("delete_tag", { path, name });
 export const getRemoteUrl = (path: string, remote: string) =>
   invoke<string | null>("get_remote_url", { path, remote });
+export const listRemotes = (path: string) => invoke<RemoteInfo[]>("list_remotes", { path });
+export const addRemote = (path: string, name: string, url: string) =>
+  invoke<void>("add_remote", { path, name, url });
+export const removeRemote = (path: string, name: string) =>
+  invoke<void>("remove_remote", { path, name });
+/** Returns the refspecs git could not rewrite — empty for a default remote. */
+export const renameRemote = (path: string, oldName: string, newName: string) =>
+  invoke<string[]>("rename_remote", { path, old: oldName, new: newName });
+export const setRemoteUrl = (path: string, name: string, url: string) =>
+  invoke<void>("set_remote_url", { path, name, url });
 /** Branch / remote / upstream facts the push flow needs. */
 export const pushTarget = (path: string) => invoke<PushTarget>("push_target", { path });
 export const listWorktrees = (path: string) => invoke<WorktreeInfo[]>("list_worktrees", { path });
@@ -155,6 +187,17 @@ export const listSubmodules = (path: string) => invoke<SubmoduleInfo[]>("list_su
 export const updateSubmodules = (path: string) => invoke<void>("update_submodules", { path });
 export const createWorktree = (path: string, name: string, worktreePath: string, target?: string) =>
   invoke<void>("create_worktree", { path, name, worktreePath, target });
+/** Remove a linked worktree. `force` is needed for a dirty or locked one. */
+export const removeWorktree = (path: string, name: string, force = false) =>
+  invoke<void>("remove_worktree", { path, name, force });
+/** One WIP row per *dirty* worktree, each on its own HEAD's lane (G18). */
+export const wipRows = (path: string) => invoke<WipRow[]>("wip_rows", { path });
+/**
+ * Resolve the candidate tokens on one hovered terminal line (G19). Only the
+ * ones this repository actually knows come back, so prose stays prose.
+ */
+export const resolveTerminalTokens = (path: string, tokens: string[]) =>
+  invoke<TerminalToken[]>("resolve_terminal_tokens", { path, tokens });
 export const blameFile = (path: string, file: string, oid?: string) =>
   invoke<BlameLine[]>("blame_file", { path, file, oid });
 export const fileHistory = (path: string, file: string, limit: number) =>

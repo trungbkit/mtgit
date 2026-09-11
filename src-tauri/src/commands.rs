@@ -1,6 +1,6 @@
 use crate::core::{
-    advanced, blame, branch, commit as commit_mod, diff, graph, history, ops, refs, repo, search,
-    stash, status, worktree,
+    advanced, blame, branch, commit as commit_mod, diff, graph, history, ops, refs, remote, repo,
+    search, stash, status, terminal as terminal_tokens, worktree,
 };
 use crate::error::{Error, Result};
 use crate::state::{
@@ -148,6 +148,81 @@ pub fn open_repo(path: String) -> Result<repo::RepoInfo> {
 #[tauri::command]
 pub fn git_available() -> bool {
     shellout::git_available()
+}
+
+/// Create a repository and open it in one step (G2).
+#[tauri::command]
+pub fn init_repo(path: String, bare: bool) -> Result<repo::RepoInfo> {
+    repo::init(&path, bare)
+}
+
+/// Clone a repository and open it (G1).
+///
+/// Unlike `git_network`, this **rejects** rather than resolving with a failed
+/// `GitOpResult`. Every other network op reports into a repository that is
+/// already on screen; a clone has no such home — a half-finished clone is not
+/// a repo the user can be dropped into, so the only useful outcomes are a
+/// `RepoInfo` or an error. Callers get git's own message, which is the one
+/// that names the real problem (auth, DNS, a non-empty directory).
+#[tauri::command]
+pub fn clone_repo(
+    app: AppHandle,
+    url: String,
+    dest: String,
+    recurse_submodules: bool,
+    depth: Option<u32>,
+    branch: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<repo::RepoInfo> {
+    remote::check_url(&url)?;
+    let target = std::path::Path::new(&dest);
+    let existed = target.exists();
+    if target.is_dir()
+        && target
+            .read_dir()
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false)
+    {
+        return Err(Error::Msg(format!("'{dest}' already exists and is not empty")));
+    }
+
+    let opts = shellout::CloneOptions {
+        recurse_submodules,
+        depth,
+        branch,
+        bare: false,
+    };
+    let result = shellout::clone(&app, &url, &dest, &opts, &state.network_pids)?;
+    if !result.success {
+        // git removes the directory it created when a clone fails — except
+        // when it is killed, which is exactly what the Cancel button does.
+        // Leaving the husk behind turns "cancel, fix the URL, retry" into
+        // "already exists and is not empty". Only a directory that did not
+        // exist before this call is removed, so nothing of the user's can be
+        // caught by it.
+        if !existed && target.is_dir() {
+            let _ = std::fs::remove_dir_all(target);
+        }
+        return Err(Error::Msg(clone_failure(&result.output)));
+    }
+    repo::open(&dest)
+}
+
+/// git narrates a clone over many progress lines; the failure is in the last
+/// few. Showing the whole transcript in a toast buries it.
+fn clone_failure(output: &str) -> String {
+    let tail: Vec<&str> = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.contains('\r'))
+        .rev()
+        .take(3)
+        .collect();
+    if tail.is_empty() {
+        "clone failed".to_string()
+    } else {
+        tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+    }
 }
 
 #[tauri::command]
@@ -823,6 +898,42 @@ pub fn get_remote_url(path: String, remote: String) -> Result<Option<String>> {
     Ok(refs::remote_url(&open(&path)?, &remote))
 }
 
+#[tauri::command]
+pub fn list_remotes(path: String) -> Result<Vec<remote::RemoteInfo>> {
+    remote::list(&open(&path)?)
+}
+
+#[tauri::command]
+pub fn add_remote(path: String, name: String, url: String, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
+    remote::add(&open(&path)?, &name, &url)
+}
+
+#[tauri::command]
+pub fn remove_remote(path: String, name: String, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
+    remote::remove(&open(&path)?, &name)
+}
+
+/// Rename a remote. Returns the refspecs git2 could not rewrite — empty for a
+/// remote with the default refspec, which is nearly all of them.
+#[tauri::command]
+pub fn rename_remote(
+    path: String,
+    old: String,
+    new: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>> {
+    let _op = state.begin_op();
+    remote::rename(&open(&path)?, &old, &new)
+}
+
+#[tauri::command]
+pub fn set_remote_url(path: String, name: String, url: String, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
+    remote::set_url(&open(&path)?, &name, &url)
+}
+
 /// Branch / remote / upstream facts the push flow needs (D5).
 #[tauri::command]
 pub fn push_target(path: String) -> Result<refs::PushTarget> {
@@ -832,6 +943,47 @@ pub fn push_target(path: String) -> Result<refs::PushTarget> {
 #[tauri::command]
 pub fn list_worktrees(path: String) -> Result<Vec<worktree::WorktreeInfo>> {
     worktree::list(&open(&path)?)
+}
+
+/// One WIP row per dirty worktree, placed on its HEAD's lane (G18).
+///
+/// Separate from `get_graph` on purpose: this costs a `git status` per
+/// worktree, and `get_graph` is called once per scroll page. It reuses the
+/// same cached layout, so the lanes it reports are the lanes the graph drew.
+#[tauri::command]
+pub fn wip_rows(path: String, state: State<'_, AppState>) -> Result<Vec<graph::WipRow>> {
+    let repo = open(&path)?;
+    let worktrees = worktree::list(&repo)?;
+    let mut cache = state
+        .graph_cache
+        .lock()
+        .map_err(|_| Error::Msg("graph cache poisoned".into()))?;
+    let cached = ensure_cached_rows(&repo, &mut cache, &path)?;
+    Ok(graph::wip_rows(&worktrees, &cached.rows))
+}
+
+/// Resolve the refs / shas / ranges on one hovered terminal line (G19).
+///
+/// The frontend sends every plausible token on the line and gets back only
+/// the ones this repository knows, so deciding what is a link stays on the
+/// git side (invariant 5's principle) and prose stays prose.
+#[tauri::command]
+pub fn resolve_terminal_tokens(
+    path: String,
+    tokens: Vec<String>,
+) -> Result<Vec<terminal_tokens::TerminalToken>> {
+    terminal_tokens::resolve_many(&open(&path)?, &tokens)
+}
+
+#[tauri::command]
+pub fn remove_worktree(
+    path: String,
+    name: String,
+    force: bool,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let _op = state.begin_op();
+    worktree::remove(&open(&path)?, &name, force)
 }
 
 #[tauri::command]

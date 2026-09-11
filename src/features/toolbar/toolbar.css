@@ -145,3 +145,15 @@
 .tb-right .tb-action-main {
   min-width: 40px;
 }
+
+/* Which worktree this tab is looking at (G18). */
+.tb-worktree {
+  align-self: flex-end;
+  margin-bottom: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}

@@ -7,6 +7,8 @@ import { DetailPanel } from "../features/commit-detail/DetailPanel";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { CommandPalette } from "../features/palette/CommandPalette";
 import { StatusBar } from "../features/statusbar/StatusBar";
+import { StartScreen } from "../features/start/StartScreen";
+import { CloneDialog } from "../features/start/CloneDialog";
 import { ToastContainer } from "../components/ToastContainer";
 import { ConflictBanner } from "../components/ConflictBanner";
 import { DialogHost } from "../components/DialogHost";
@@ -21,6 +23,10 @@ export function App() {
   const terminalOpen = useSession((s) => s.terminalOpen);
   const repo = useSession((s) => s.repo);
   const sidebarCollapsed = useSession((s) => s.sidebarCollapsed);
+  const activeStart = useSession((s) => s.activeStart);
+  const cloneOpen = useSession((s) => s.cloneOpen);
+  const setCloneOpen = useSession((s) => s.setCloneOpen);
+  const setRepo = useSession((s) => s.setRepo);
   const setPaletteOpen = useSession((s) => s.setPaletteOpen);
   const toggleTerminal = useSession((s) => s.toggleTerminal);
 
@@ -47,21 +53,26 @@ export function App() {
       <TabBar />
       <ConflictBanner />
       <DetachedHeadBanner />
-      <div className="app-body">
-        <div style={{ width: sidebarCollapsed ? 44 : sidebarW, flexShrink: 0 }}>
-          <Sidebar />
+      {activeStart ? (
+        <StartScreen />
+      ) : (
+        <div className="app-body">
+          <div style={{ width: sidebarCollapsed ? 44 : sidebarW, flexShrink: 0 }}>
+            <Sidebar />
+          </div>
+          {!sidebarCollapsed && <Divider onDrag={(dx) => setSidebarW((w) => clamp(w + dx, 160, 480))} />}
+          <div className="app-main">
+            <GraphView />
+            {terminalOpen && repo && <TerminalPanel />}
+          </div>
+          <Divider onDrag={(dx) => setDetailW((w) => clamp(w - dx, 280, 680))} />
+          <div style={{ width: detailW, flexShrink: 0 }}>
+            <DetailPanel />
+          </div>
         </div>
-        {!sidebarCollapsed && <Divider onDrag={(dx) => setSidebarW((w) => clamp(w + dx, 160, 480))} />}
-        <div className="app-main">
-          <GraphView />
-          {terminalOpen && repo && <TerminalPanel />}
-        </div>
-        <Divider onDrag={(dx) => setDetailW((w) => clamp(w - dx, 280, 680))} />
-        <div style={{ width: detailW, flexShrink: 0 }}>
-          <DetailPanel />
-        </div>
-      </div>
+      )}
       <StatusBar />
+      {cloneOpen && <CloneDialog onClose={() => setCloneOpen(false)} onCloned={setRepo} />}
       <CommandPalette />
       <ToastContainer />
       <DialogHost />
