@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { settings } from "../stores/settings";
 import type {
   BlameLine,
   CommitDetail,
@@ -12,6 +13,8 @@ import type {
   GitOpResult,
   GraphPage,
   HistoryEntry,
+  IdentityInfo,
+  IdentityScope,
   HistoryStatus,
   PushTarget,
   MergeMode,
@@ -27,6 +30,7 @@ import type {
   ResetMode,
   SearchOptions,
   SearchResults,
+  Settings,
   StashEntry,
   StatusReport,
   SubmoduleInfo,
@@ -69,12 +73,35 @@ export const cancelSearch = (path: string) => invoke<void>("cancel_search", { pa
 
 // M2
 export const getCommit = (path: string, oid: string) => invoke<CommitDetail>("get_commit", { path, oid });
-export const getCommitDiff = (path: string, oid: string, pathFilter?: string) =>
-  invoke<FileDiff[]>("get_commit_diff", { path, oid, pathFilter });
-export const getWorktreeDiff = (path: string, staged: boolean, pathFilter?: string) =>
-  invoke<FileDiff[]>("get_worktree_diff", { path, staged, pathFilter });
-export const compareCommits = (path: string, old: string, newOid: string) =>
-  invoke<FileDiff[]>("compare_commits", { path, old, new: newOid });
+// `ignoreWhitespace` defaults to the user's setting rather than to `false`,
+// so every diff in the app obeys it without each call site remembering to
+// pass it. An explicit argument still wins, for a caller that must not.
+export const getCommitDiff = (path: string, oid: string, pathFilter?: string, ignoreWhitespace?: boolean) =>
+  invoke<FileDiff[]>("get_commit_diff", {
+    path,
+    oid,
+    pathFilter,
+    ignoreWhitespace: ignoreWhitespace ?? settings().diffIgnoreWhitespace,
+  });
+export const getWorktreeDiff = (
+  path: string,
+  staged: boolean,
+  pathFilter?: string,
+  ignoreWhitespace?: boolean,
+) =>
+  invoke<FileDiff[]>("get_worktree_diff", {
+    path,
+    staged,
+    pathFilter,
+    ignoreWhitespace: ignoreWhitespace ?? settings().diffIgnoreWhitespace,
+  });
+export const compareCommits = (path: string, old: string, newOid: string, ignoreWhitespace?: boolean) =>
+  invoke<FileDiff[]>("compare_commits", {
+    path,
+    old,
+    new: newOid,
+    ignoreWhitespace: ignoreWhitespace ?? settings().diffIgnoreWhitespace,
+  });
 
 // M3
 export const getStatus = (path: string) => invoke<StatusReport>("get_status", { path });
@@ -224,9 +251,17 @@ export const deleteRemoteBranch = (path: string, remote: string, branch: string)
   gitNetwork(path, "push", remote, ["--delete", branch]);
 
 // M5
-export const ptySpawn = (cwd: string, rows: number, cols: number) =>
-  invoke<string>("pty_spawn", { cwd, rows, cols });
+export const ptySpawn = (cwd: string, rows: number, cols: number, shell?: string | null) =>
+  invoke<string>("pty_spawn", { cwd, rows, cols, shell: shell || undefined });
 export const ptyWrite = (id: string, data: string) => invoke<void>("pty_write", { id, data });
 export const ptyResize = (id: string, rows: number, cols: number) =>
   invoke<void>("pty_resize", { id, rows, cols });
 export const ptyKill = (id: string) => invoke<void>("pty_kill", { id });
+
+// P6 — settings and identity
+export const getSettings = () => invoke<Settings>("get_settings");
+/** Returns what was stored: the clamped values, not what was asked for. */
+export const saveSettings = (settings: Settings) => invoke<Settings>("save_settings", { settings });
+export const getIdentity = (path?: string) => invoke<IdentityInfo>("get_identity", { path });
+export const setIdentity = (scope: IdentityScope, name: string, email: string, path?: string) =>
+  invoke<IdentityInfo>("set_identity", { scope, path, name, email });

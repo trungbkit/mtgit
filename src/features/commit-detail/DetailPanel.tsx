@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { commitAdvanced, getCommit, getCommitDiff, getStatus } from "../../ipc/commands";
 import { refreshRepo } from "../../ipc/repoState";
 import type { CommitDetail, FileStatus } from "../../ipc/types";
+import { Icon } from "../../components/Icon";
+import { useSettings } from "../../stores/settings";
 import { useSession, WORKING } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import { StagingView } from "../staging/StagingView";
@@ -90,8 +92,9 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
     queryKey: ["commit", repoPath, oid],
     queryFn: () => getCommit(repoPath, oid),
   });
+  const ignoreWhitespace = useSettings((s) => s.settings.diffIgnoreWhitespace);
   const { data: diffs } = useQuery({
-    queryKey: ["commitDiff", repoPath, oid],
+    queryKey: ["commitDiff", repoPath, oid, ignoreWhitespace],
     queryFn: () => getCommitDiff(repoPath, oid),
   });
 
@@ -158,7 +161,7 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
             {detail.summary}
             {isHead && (
               <button className="detail-amend-btn" title="Amend message" onClick={() => startAmend(detail)}>
-                ✎
+                <Icon name="pencil" size={12} />
               </button>
             )}
           </div>

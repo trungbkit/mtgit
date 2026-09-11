@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import type { DiffLine, FileDiff, Hunk } from "../../ipc/types";
-import type { DiffMode } from "../../stores/session";
+import type { DiffLine, DiffViewMode, FileDiff, Hunk } from "../../ipc/types";
+
 import { langForPath, tokenizeLine, useHighlighter } from "./highlight";
 import { wordDiff, type WordTok } from "./wordDiff";
 import type { Highlighter } from "shiki";
@@ -45,7 +45,7 @@ export function DiffView({
   onDiscardHunk,
 }: {
   diff: FileDiff;
-  mode: DiffMode;
+  mode: DiffViewMode;
   staging?: "stage" | "unstage" | null;
   onHunkAction?: (hunk: Hunk) => void;
   onLinesAction?: (hunk: Hunk, selected: Set<number>) => void;

@@ -212,11 +212,11 @@
 /* Hit rows are marked, not recoloured: the lane colour is categorical and
    must keep meaning "which branch". Yellow matches GitLens. */
 .graph-row.hit {
-  background: #daaa3f1f;
+  background: var(--warn-tint);
   box-shadow: inset 2px 0 0 var(--yellow);
 }
 .graph-row.hit.current-hit {
-  background: #daaa3f33;
+  background: var(--warn-tint-strong);
   box-shadow: inset 3px 0 0 var(--yellow);
 }
 .graph-row.hit.selected {

@@ -10,17 +10,24 @@ export function DialogHost() {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
-  // Reset local state each time a new dialog opens.
+  // Reset local state each time a new dialog opens, and move focus into the
+  // dialog. Focus is not cosmetic here: `onKey` is bound to the dialog element,
+  // so Enter and Escape reach it only while focus is inside. A confirm or
+  // choice dialog has no input to land in, and focus stays on whatever the user
+  // last clicked — which left Escape doing nothing at all on two of the three
+  // kinds. Focusing the container also makes `aria-modal` true in practice
+  // rather than only in markup.
   useEffect(() => {
-    if (current?.kind === "prompt") {
+    if (!current) return;
+    if (current.kind === "prompt") {
       setValue(current.defaultValue ?? "");
       setError(null);
-      // Focus + select after paint.
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
-      });
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    } else {
+      dialogRef.current?.focus();
     }
   }, [current]);
 
@@ -68,6 +75,8 @@ export function DialogHost() {
         className="dialog"
         role="dialog"
         aria-modal="true"
+        ref={dialogRef}
+        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onKey}
       >

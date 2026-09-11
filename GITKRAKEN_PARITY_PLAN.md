@@ -31,8 +31,10 @@ through and annotated as they land.
 > read `docs/feature-requirements/STATUS.md` for the per-criterion verdict and the outstanding
 > gaps). **P5 closed with commit search (G10)**, the last item in it; **P1 (clone / init /
 > remote management / start screen / tabs) landed 2026-09-11** and closed G1–G4 and G12.
-> P6–P7 are unstarted and **P8 has started** — item 1 (worktrees in the UI, G18) and terminal
-> links (G19) have landed. Sections 2.4 and 4/P0 record the P0 work; the P2–P5 sections below
+> **P6 landed 2026-09-11** (settings file, both themes, keybinding registry, SVG icon set),
+> closing G13–G15; **P7 is half in** — CI and a 154-test frontend suite exist, e2e and signing
+> do not. **P8 has started** — item 1 (worktrees in the UI, G18) and terminal links (G19) have
+> landed. Sections 2.4 and 4/P0 record the P0 work; the P2–P5 sections below
 > describe what was intended, not what shipped — where the two differ, STATUS.md is the record.
 >
 > **Revised after the GitLens pass:** §2.6 adds G16–G28 (gaps visible only once GitLens is
@@ -45,9 +47,19 @@ Measured, not assumed: `pnpm exec tsc --noEmit` exits 0, `vite build` succeeds, 
 --all-targets -- -D warnings` is clean, and `cargo test` reports **40 passed, 0 failed,
 0 ignored** at the time of that audit — the 50k-commit perf gate runs in the default suite.
 The suite is at **78 passed** after P5's search (25 tests for the grammar and its git mapping)
-and P1 (11 for clone, init and remote management), and at **92** after P8 item 1 and terminal
-links (9 for worktrees and WIP-row placement, 5 for token resolution). ~9k lines across `src/`
-+ `src-tauri/src/`.
+and P1 (11 for clone, init and remote management), at **92** after P8 item 1 and terminal
+links (9 for worktrees and WIP-row placement, 5 for token resolution), and at **107** after P6
+(7 for the settings file, 7 for git identity, 2 for the diff whitespace option).
+
+**There is now a frontend runner too.** P7 added Vitest and **154 tests**, so the gate is five
+commands rather than four:
+
+```
+cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
+cd .. && pnpm exec tsc --noEmit && pnpm check:ipc && pnpm test && pnpm build
+```
+
+~13k lines across `src/` + `src-tauri/src/`.
 
 **The perf gate no longer flakes.** `perf_50k_commits_under_500ms` was a single wall-clock
 sample taken while `cargo test` saturated every core with the other 77 tests, and it measured
@@ -110,9 +122,9 @@ a user who switches from it to MTGit today. §2.6 adds the gaps that only become
 |---|---|---|
 | G11 | **Graph drag-and-drop is half-built** | Sidebar branch→branch merge works. GitKraken also supports dragging a *branch/commit onto a graph row* and choosing merge / rebase / reset / cherry-pick from a drop menu, with a live drop-target pill. |
 | ~~G12~~ | ~~**Tabs are second-class**~~ ✅ **closed in P1** | The strip is always visible, `+` opens the Start tab, middle-click closes, tabs drag to reorder, and per-tab selection is restored by the session store rather than discarded. The Start tab is a first-class member of the strip: it is the app's floor (it cannot be closed when nothing else is open) and `repo === null` exactly while it is active. |
-| G13 | **Two keyboard shortcuts total** | ⌘K and ⌘\`. No shortcut map, no cheat sheet, no per-action bindings. |
-| G14 | **No settings screen** | Theme, diff mode, font size, default clone dir, git identity/profiles, date format — all unconfigurable or ephemeral. |
-| G15 | **Dark theme only** | `src/theme.css` has no light-token block and no `prefers-color-scheme` handling. |
+| ~~G13~~ | ~~**Two keyboard shortcuts total**~~ ✅ **closed in P6** | `lib/keys.ts` is the registry: 14 actions, chord parsing and formatting, override resolution, and a conflict check. Every handler in the app asks `matches(event, id)` instead of reading the event itself, so the `?` cheat sheet and the rebinding UI are renders of the registry rather than second copies of it. |
+| ~~G14~~ | ~~**No settings screen**~~ ✅ **closed in P6** | A tabbed panel (General / Appearance / Git / Terminal / Shortcuts) over `core/settings.rs`, a JSON file in the platform config dir. Theme, density, font size, date style, diff defaults, default clone dir, auto-fetch interval, terminal font and shell, keybindings — and git identity at both levels, which is written to git's own config rather than kept here. |
+| ~~G15~~ | ~~**Dark theme only**~~ ✅ **closed in P6** | Two complete token sets per §3.1, with a system / light / dark selector. The work was not only the light block: six stylesheets reached for tokens that were never defined, using a hardcoded *dark* fallback, and would have stayed dark whatever the theme said. |
 
 ### 2.4 Correctness / performance defects found while reading — **all fixed in P0**
 
@@ -259,9 +271,12 @@ Changes from today's shell:
 - **Empty/loading states.** Replace the three bare "Open a repository…" strings with the start
   screen and skeleton rows.
 
-Replace the emoji-as-icons currently used throughout (`⑂ ⇩ ⇧ ▤ 🖥 ☁ 🏷 🌿 ≡`) with a single
-inline-SVG icon set. Emoji render differently per platform and are the loudest tell that this
-is not a native-feeling app.
+~~Replace the emoji-as-icons currently used throughout (`⑂ ⇩ ⇧ ▤ 🖥 ☁ 🏷 🌿 ≡`) with a single
+inline-SVG icon set.~~ ✅ **done in P6.** `components/Icon.tsx` holds 25 shapes on a 16×16 grid,
+stroked in `currentColor` — so an icon follows the accent fill of a selected row and gets the
+light theme for free, which no emoji can. Two of the emoji were also standing in for meanings
+they do not carry (🖥 for "local branches", ≡ for "stashes"). Keyboard glyphs (`⌘ ⇧ ⌥`) are not
+icons and stay.
 
 ---
 
@@ -465,31 +480,90 @@ Shipped as a 3-pane editor with per-file take-side. Outstanding: pane labels sti
 **Exit — met:** the three GitKraken interactions users reach for daily — search, drag-to-merge,
 interactive rebase — are present.
 
-### P6 — Settings, theming, keyboard (1 week) → closes G13–G15
+### P6 — Settings, theming, keyboard — ✅ **DONE** → closed G13–G15
 
-- Settings screen (tabbed: General / Appearance / Git / Terminal) persisted to a JSON file via
-  Tauri fs rather than `localStorage`; migrate recent-repos into it.
-- Light theme completed per §3.1, with a system/light/dark selector.
-- Density control, diff defaults (split/inline, whitespace, word-wrap, tab width).
-- Git identity + per-repo identity override; profiles.
-- Full keybinding map with a `?` cheat-sheet overlay and rebindable actions.
-- Icon set swap (emoji → inline SVG) per §3.3.
+Shipped as specified. What landed, and the five decisions worth knowing before touching it:
 
-**Exit:** the app is configurable and readable in both themes; no emoji in chrome.
+- **Backend.** `core/settings.rs` (a JSON file in the platform config dir, `get_settings` /
+  `save_settings`) and `core/identity.rs` (`get_identity` / `set_identity`). 14 tests.
+- **A field this version does not understand must not cost the user the rest of their
+  settings.** Every field deserializes leniently, so a value of the wrong type or an enum
+  variant from a newer build falls back to that *one* field's default. A whole-file `from_str`
+  would turn one bad key into a factory reset, and a settings file is exactly the thing people
+  hand-edit. Writes are atomic (write beside, rename) for the same reason, and `save` returns
+  the **clamped** values, which the store adopts — asking for a 200px font and being shown
+  200px until restart is a lie the user only finds out about later.
+- **Git identity is git's state, not the app's**, so it is a separate module writing
+  `user.name` / `user.email` into git's own config at the level git would consult. A commit
+  made from the terminal panel therefore carries the same author. Clearing a field *removes*
+  the entry rather than writing an empty one: `user.email = ""` is an identity git will
+  happily commit under, and the UI cannot show the difference.
+- **Every shortcut now goes through `lib/keys.ts`.** They used to be inline
+  `event.metaKey && event.key === …` in whichever component owned the action, which is *why*
+  there was no cheat sheet and no rebinding — nothing knew the full set, and two handlers could
+  claim one chord with nothing to notice. Handlers ask `matches(event, "palette.open")`; the
+  chord lives in the registry, the override in settings, and the `?` cheat sheet is a render of
+  the registry rather than a second copy of it.
+- **The light theme needed more than a token block.** Six stylesheets reached for `--fg`,
+  `--bg-elevated`, `--danger` and friends with a hardcoded dark *fallback*, and those tokens
+  were never defined — so those rules would have stayed dark whatever the theme said. Defining
+  them is what makes the fallback unreachable. The translucent tints (selection, search hit,
+  diff add/delete) are per-theme tokens rather than one alpha value over both grounds: the same
+  20%-alpha blue that reads as a highlight on near-black is almost invisible on white. The
+  terminal is told its colours explicitly, because xterm paints its own canvas and cannot
+  inherit.
+- **Settings are the single writer for what they own.** `diffMode` and `relativeDates` were
+  removed from the session store rather than mirrored into it — a second source of truth for
+  one question is the shape of defect A1.
 
-### P7 — Ship it (1 week)
+Also closed on the way past, because they were each one flag away once there was somewhere to
+put it: **STATUS B9** (cherry-pick `-x`, plumbed all the way through and hardcoded `false` at
+the one call site) and the diff **ignore-whitespace** option, which needed real plumbing through
+`core/diff.rs` and the three diff commands to be more than a decorative checkbox — it uses
+`ignore_whitespace_change`, not `ignore_whitespace`, because the stronger flag also hides a
+change that *adds* whitespace where there was none, which in Python or a Makefile is a
+behaviour change the user must see.
 
-- **CI** (`.github/workflows`): `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`,
-  `tsc`, `vite build`, on macOS + Windows + Linux. This has never run — expect Windows
-  path/line-ending fallout on first green.
-- **Frontend tests:** add Vitest + Testing Library; cover the stores (session, conflict, dialog),
-  `wordDiff`, `refname` validation, and graph row rendering.
-- **E2E:** `tauri-driver` + WebdriverIO smoke against `scripts/make-fixture.sh`:
-  open → scroll → select commit → stage hunk → commit → assert with `git log`.
-- **Packaging:** notarized macOS `.dmg`, Windows MSI (signed), Linux AppImage + deb;
-  Tauri updater with a release manifest.
+**Exit — met:** the app is configurable and readable in both themes, and there is no emoji left
+in the chrome. Verified by the gate (below) and by launching the app; the individual controls
+were not clicked through.
 
-**Exit:** a tagged release that a stranger can install on all three platforms.
+### P7 — Ship it — ◐ **CI and the frontend suite are in; e2e and signing are not**
+
+- **CI** ✅ — `.github/workflows/ci.yml`: a frontend job (tsc, the IPC check, Vitest, build) and
+  a Rust job across ubuntu-22.04 / macOS / Windows (clippy at `-D warnings`, `cargo test`).
+  **It deliberately does not run `cargo fmt --check`**, which this row asked for: the tree has
+  never been rustfmt-clean and `CLAUDE.md` says to match the surrounding style by hand, so a
+  format gate would fail on the first run for reasons unrelated to any change. It has still
+  never *run* — expect Windows path and line-ending fallout on first green, which is the point
+  of standing it up.
+- **Frontend tests** ✅ — Vitest + Testing Library + jsdom, **154 tests** over the state machines
+  that had nothing checking them: the session store's tab rules and recent-repo migration, the
+  search store's three modes and hit navigation, the settings store, `lib/keys`, `refname`,
+  `cloneurl`, `terminalLinks`, `DialogHost`, and — the two the STATUS §1 record singled out as
+  "unverified by machine" — **the mutation seam** (`syncOperation` / `requireNoPausedOperation`
+  / `refreshRepo`, including that it invalidates on `queryKey[1]`) and **`net.ts`** (invariant
+  8's `.success` check, and D5's publish flow).
+  They found four real defects, all fixed: `HEAD^` in terminal output yielded a candidate of
+  `HEAD`, which resolves — to the **wrong commit**; Escape did nothing on a confirm or choice
+  dialog, because focus never entered it; the settings store's in-flight-write guard was
+  inverted, so clamped values were never adopted; and `isTypingTarget` could return `undefined`.
+- **`scripts/check-ipc.mjs`** ✅ (new, and in CI) — invariant 1's fourth layer. A command missing
+  from `invoke_handler!` compiles, typechecks, and fails only at runtime, and **neither suite can
+  see it**: the Rust tests call `core::` directly and the frontend tests mock the IPC layer. It
+  is the only thing that reads `commands.rs`, `lib.rs` and `ipc/commands.ts` together. It cannot
+  check `types.ts`, whose mirroring is structural.
+- **Packaging** ◐ — `.github/workflows/release.yml` builds .dmg (both Mac architectures), MSI and
+  AppImage/deb on a version tag and drafts a release. **The artifacts are unsigned**, and the
+  updater is deliberately absent: both need credentials this repository does not have (an Apple
+  Developer ID plus a notarytool password, a Windows code-signing certificate, and an updater
+  keypair). The secret names tauri-action reads are already in the workflow, so adding them is
+  the whole remaining change.
+- **E2E** ✗ — not started. `tauri-driver` + WebdriverIO against `scripts/make-fixture.sh` needs a
+  built binary and a driver on the runner, neither of which exists yet.
+
+**Exit — not yet met:** a stranger can build all three platforms from a tag, but not install a
+signed one.
 
 ### P8 — GitLens-derived surfaces (2–2.5 weeks) → closes G16–G28 — **items 1 and 6's terminal links done**
 
@@ -656,10 +730,10 @@ Two contract notes that are easy to get wrong:
 | ~~P3~~ | ~~Commit form + undo journal~~ | ✅ **done** (summary/description, amend, hooks, undo/redo) |
 | ~~P4~~ | ~~Conflict editor~~ | ✅ **done** (3-pane + per-file take-side); labels and region nav outstanding |
 | ~~P5~~ | ~~Search, drag-drop, interactive rebase~~ | ✅ **done** (search grammar in Rust + three result modes + scroll markers; drag-drop; interactive rebase) |
-| P6 | Settings, light theme, keybindings, icons | 1 wk — **unstarted** |
-| P7 | CI, tests, packaging | 1 wk — **unstarted** |
+| ~~P6~~ | ~~Settings, light theme, keybindings, icons~~ | ✅ **done** (settings file + identity, both themes, keybinding registry + cheat sheet, SVG icon set) |
+| P7 | CI, tests, packaging | ◐ **partly done** — CI, 154 frontend tests and the IPC check are in; e2e and signing/updater are not |
 | P8 | GitLens-derived surfaces (G16–G28) | 2–2.5 wk — **started**: item 1 (worktrees, G18) and terminal links (G19) done; items 2–5 and the rest of item 6 outstanding |
-| **Remaining** | P6, P7, P8 + the gaps in `docs/feature-requirements/STATUS.md` | **~4–5.5 wk** (one dev) |
+| **Remaining** | P7's e2e + signing, P8 items 2–6 + the gaps in `docs/feature-requirements/STATUS.md` | **~2.5–3.5 wk** (one dev) |
 
 The UI/UX fidelity work in §3 is distributed across P1 (shell + start screen), P3 (undo toasts),
 P5 (drop affordances), P6 (tokens, density, icons) and P8 (columns, gutter, detail stack) rather
@@ -707,7 +781,13 @@ If you want the shortest path to "this feels like GitKraken":
 9. ~~**Terminal links (G19)**~~ ✅ **done** — the best value-per-hour item, as advertised.
    The rest of P8 item 6's cheap wins are still there: blame heatmap + rich hovers,
    autolinks, merge target + jump-to, contributors, `--follow` / `-L`, guided palette.
-10. **P6 → P7 → the rest of P8** ← **next.** P7 (CI + Vitest) is now the strongest candidate
-    to pull forward: P1 and P8 item 1 added a start screen, a clone form, a tab store with a
-    per-tab view map, a remote sidebar and a reveal path — all frontend state machines with
-    no machine checking any of them.
+10. ~~**P6**~~ ✅ **done** — settings file, both themes, the keybinding registry with its cheat
+    sheet, and the SVG icon set; it also closed STATUS B9 and the ignore-whitespace option.
+11. **P7** ◐ — CI, the 154-test frontend suite and `check-ipc` landed; **e2e and code signing are
+    what is left**, and both need something this repo does not have yet (a driver on the runner,
+    and certificates).
+12. **The rest of P8** ← **next**, in the order §4/P8 gives: the unified conflict panel (item 2,
+    which subsumes STATUS C4 and unblocks two rebase items), then the column model and gutter,
+    the detail stack, conflict prediction, and item 6's cheap wins. `--follow` (G22) is the one
+    to pull forward out of order: without it, blame across a refactor is quietly wrong, which
+    makes it a correctness fix rather than a feature.

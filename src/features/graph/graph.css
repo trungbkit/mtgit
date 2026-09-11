@@ -198,9 +198,9 @@
   border: 1px solid transparent;
 }
 .badge-localBranch {
-  background: #316dca33;
+  background: var(--accent-tint-strong);
   color: var(--accent-text);
-  border-color: #316dca66;
+  border-color: var(--accent-tint-border);
 }
 .badge-localBranch.head {
   background: var(--accent);
@@ -208,14 +208,14 @@
   border-color: var(--accent);
 }
 .badge-remoteBranch {
-  background: #57ab5a22;
-  color: #6bc46d;
-  border-color: #57ab5a55;
+  background: var(--ok-tint);
+  color: var(--green);
+  border-color: var(--ok-tint-border);
 }
 .badge-tag {
-  background: #daaa3f22;
+  background: var(--warn-tint);
   color: var(--yellow);
-  border-color: #daaa3f55;
+  border-color: var(--warn-tint-border);
 }
 .badge-head {
   background: var(--accent);

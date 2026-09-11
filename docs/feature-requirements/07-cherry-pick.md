@@ -52,7 +52,7 @@ Apply one or more commits from anywhere in the graph onto the checked-out branch
 - [x] Undo restores the pre-pick tip.
 - [x] A pick attempted while another operation is paused is refused with a pointer to the banner (§5).
 - [ ] Dirty-tree stash fallback (B4) — a refused pick surfaces git's error instead.
-- [ ] `-x` settings flag (B1) — `appendOrigin` is plumbed through the whole stack and hardcoded `false` at the call site.
+- [x] `-x` settings flag (B1) — Settings → General → Commits; `CherryPickPopover` passes `settings().cherryPickAppendOrigin` at the call site that used to be hardcoded `false` (P6).
 - [ ] Per-commit sequence progress and the "picked" flash on source commits (§3).
 
 **New in this revision (GitLens-derived) — none implemented:**

@@ -26,14 +26,23 @@ import { choiceDialog, confirmDialog, promptDialog } from "../../stores/dialog";
 import { validateRefName } from "../../lib/refname";
 import { smartCheckout } from "../../lib/checkout";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
+import { Icon, type IconName } from "../../components/Icon";
+import { matches } from "../../lib/keys";
+import { openSettings, settings } from "../../stores/settings";
 import "./toolbar.css";
 
-const DEFAULT_AUTO_FETCH_MINUTES = 1;
-
-/** Minutes between background fetches; 0 when auto-fetch is off or unparseable. */
+/**
+ * Minutes between background fetches; 0 when auto-fetch is off or unparseable.
+ *
+ * A repository that has been configured individually keeps its own value; the
+ * rest follow the app-wide setting. Per-repo stays in `localStorage` rather
+ * than moving into the settings file because it is keyed on a path, and a
+ * settings file that grows an entry per repository ever opened is a log, not
+ * a preference.
+ */
 function readAutoFetch(path: string): number {
   const raw = localStorage.getItem(`mtgit.autoFetch.${path}`);
-  const minutes = raw === null ? DEFAULT_AUTO_FETCH_MINUTES : Number(raw);
+  const minutes = raw === null ? settings().autoFetchMinutes : Number(raw);
   return Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
 }
 
@@ -301,14 +310,21 @@ export function Toolbar() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || !repo) return;
-      if (event.key.toLowerCase() === "z") {
+      if (!repo) return;
+      // The chords live in `lib/keys`, so they are rebindable and discoverable
+      // from the cheat sheet; this decides only what each one does.
+      if (matches(event, "undo")) {
         event.preventDefault();
-        historyAction(event.shiftKey ? "redo" : "undo");
-      } else if (event.key.toLowerCase() === "p") {
+        historyAction("undo");
+      } else if (matches(event, "redo")) {
         event.preventDefault();
-        if (event.shiftKey) defaultPull();
-        else net("push");
+        historyAction("redo");
+      } else if (matches(event, "push")) {
+        event.preventDefault();
+        net("push");
+      } else if (matches(event, "pull")) {
+        event.preventDefault();
+        defaultPull();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -372,7 +388,7 @@ export function Toolbar() {
 
   async function configureAutoFetch() {
     if (!repo) return;
-    const current = localStorage.getItem(`mtgit.autoFetch.${repo.path}`) ?? "1";
+    const current = localStorage.getItem(`mtgit.autoFetch.${repo.path}`) ?? String(settings().autoFetchMinutes);
     const value = await promptDialog({
       title: "Auto-fetch interval",
       message: "Enter minutes between background fetches. Use 0 to turn auto-fetch off.",
@@ -417,7 +433,7 @@ export function Toolbar() {
             branch, so the one they are in is named rather than implied (G18). */}
         {repo?.worktree && (
           <span className="tb-worktree" title={`Linked worktree "${repo.worktree}" at ${repo.path}`}>
-            🌿 {repo.worktree}
+            <Icon name="worktree" size={12} /> {repo.worktree}
           </span>
         )}
         <div className="tb-field">
@@ -437,7 +453,7 @@ export function Toolbar() {
           disabled={!repo}
           onClick={() => net("fetch", ["--all", "--prune"])}
         >
-          ⟳
+          <Icon name="refresh" size={15} />
         </button>
       </div>
 
@@ -446,14 +462,14 @@ export function Toolbar() {
       {/* History group */}
       <div className="tb-group">
         <ToolBtn
-          icon="↶"
+          icon="undo"
           label="Undo"
           disabled={!history?.undoLabel}
           title={history?.undoLabel ? `Undo ${history.undoLabel}` : remoteMutation ? "Remote operations cannot be undone" : "Nothing to undo"}
           onClick={() => historyAction("undo")}
         />
         <ToolBtn
-          icon="↷"
+          icon="redo"
           label="Redo"
           disabled={!history?.redoLabel}
           title={history?.redoLabel ? `Redo ${history.redoLabel}` : "Nothing to redo"}
@@ -466,7 +482,7 @@ export function Toolbar() {
       {/* Remote / branch actions */}
       <div className="tb-group">
         <ToolBtn
-          icon="⭳"
+          icon="pull"
           label="Pull"
           disabled={!repo}
           badge={behind || undefined}
@@ -484,7 +500,7 @@ export function Toolbar() {
           }
         />
         <ToolBtn
-          icon="⭱"
+          icon="push"
           label="Push"
           badge={ahead || undefined}
           disabled={!repo || (!!currentBranch?.upstream && ahead === 0)}
@@ -511,15 +527,15 @@ export function Toolbar() {
             ])
           }
         />
-        <ToolBtn icon="⑂" label="Branch" disabled={!repo} onClick={newBranch} />
+        <ToolBtn icon="branch" label="Branch" disabled={!repo} onClick={newBranch} />
         <ToolBtn
-          icon="⇩"
+          icon="stash-save"
           label="Stash"
           disabled={!repo}
           onClick={() => repo && run(() => stashSave(repo.path, undefined, true), "Stashed")}
         />
         <ToolBtn
-          icon="⇧"
+          icon="stash-pop"
           label="Pop"
           disabled={!repo}
           onClick={() =>
@@ -531,14 +547,14 @@ export function Toolbar() {
             }, "Stash popped")
           }
         />
-        <ToolBtn icon="▤" label="Terminal" disabled={!repo} onClick={() => repo && toggleTerminal()} />
+        <ToolBtn icon="terminal" label="Terminal" disabled={!repo} onClick={() => repo && toggleTerminal()} />
       </div>
 
       <div className="tb-spacer" />
 
       <div className="tb-group tb-right">
         <ToolBtn
-          icon="⚙"
+          icon="gear"
           label="Actions"
           disabled={!repo}
           onClick={(e) =>
@@ -549,11 +565,14 @@ export function Toolbar() {
               { label: "Fetch All", onClick: () => net("fetch", ["--all", "--prune"]) },
               { label: "Configure auto-fetch…", onClick: configureAutoFetch },
               { label: "Open terminal", onClick: () => repo && toggleTerminal() },
+              { separator: true },
+              { label: "Settings…", onClick: openSettings },
             ])
           }
         />
-        <ToolBtn icon="🔍" label="Search" onClick={() => setPaletteOpen(true)} />
-        <ToolBtn icon="▥" label="Layout" onClick={toggleSidebar} />
+        <ToolBtn icon="search" label="Search" onClick={() => setPaletteOpen(true)} />
+        <ToolBtn icon="layout" label="Layout" onClick={toggleSidebar} />
+        <ToolBtn icon="gear" label="Settings" onClick={openSettings} />
       </div>
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
@@ -570,7 +589,7 @@ function ToolBtn({
   title,
   badge,
 }: {
-  icon: string;
+  icon: IconName;
   label: string;
   onClick?: (e: React.MouseEvent) => void;
   onCaret?: (e: React.MouseEvent) => void;
@@ -581,7 +600,7 @@ function ToolBtn({
   return (
     <div className={`tb-action${disabled ? " disabled" : ""}`}>
       <button className="tb-action-main" disabled={disabled} onClick={onClick} title={title ?? label}>
-        <span className="tb-icon">{icon}</span>
+        <span className="tb-icon"><Icon name={icon} size={15} /></span>
         {badge ? <span className="tb-badge">{badge}</span> : null}
         <span className="tb-label">{label}</span>
       </button>

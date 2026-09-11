@@ -1,0 +1,92 @@
+name: CI
+
+# The gate `CLAUDE.md` describes, run on the three platforms the app targets.
+# It has never run before (P7), so expect Windows path and line-ending fallout
+# on the first green — that is the point of standing it up rather than a sign
+# it is misconfigured.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Tests build fixture repos with git2, which reads the ambient git identity.
+  GIT_AUTHOR_NAME: CI
+  GIT_AUTHOR_EMAIL: ci@example.com
+  GIT_COMMITTER_NAME: CI
+  GIT_COMMITTER_EMAIL: ci@example.com
+
+jobs:
+  frontend:
+    name: Frontend (typecheck, tests, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # `--frozen-lockfile` is the default in CI; named here because a drifting
+      # lockfile should fail the build rather than be silently repaired.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+      # Invariant 1's fourth layer. Neither suite can see a command that is
+      # missing from `invoke_handler!`, because one calls `core::` directly and
+      # the other mocks the IPC layer.
+      - run: pnpm check:ipc
+      - run: pnpm test
+      - run: pnpm build
+
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri's Linux build needs the system webkit stack; macOS and Windows
+      # have theirs already. Pinned to 22.04 because webkit2gtk-4.1 is what
+      # Tauri 2 links against there.
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Not `cargo fmt --check`: this tree has never been rustfmt-clean, and a
+      # blanket format would touch every file. `CLAUDE.md` says to match the
+      # surrounding style by hand instead, so the gate does not pretend
+      # otherwise.
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      # ~35s of this is `perf_50k_commits_under_500ms` building its fixture.
+      # The gate takes the best of up to three layout runs, so a loaded shared
+      # runner should not flake it — if it does, that is the signal P0 asked
+      # for when it deferred this to CI.
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test

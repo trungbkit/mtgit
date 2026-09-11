@@ -38,13 +38,27 @@ struct PtyExit {
 
 impl PtyManager {
     /// Spawn a shell rooted at `cwd`, returning the new session id.
-    pub fn spawn(&self, app: AppHandle, cwd: &str, rows: u16, cols: u16) -> Result<String> {
+    /// `shell` overrides the login shell (the Terminal settings tab); an
+    /// empty or absent value keeps the default.
+    pub fn spawn(
+        &self,
+        app: AppHandle,
+        cwd: &str,
+        rows: u16,
+        cols: u16,
+        shell: Option<&str>,
+    ) -> Result<String> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .map_err(|e| Error::Msg(e.to_string()))?;
 
-        let mut cmd = CommandBuilder::new(default_shell());
+        let program = shell
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(default_shell);
+        let mut cmd = CommandBuilder::new(program);
         cmd.cwd(cwd);
 
         let child = pair.slave.spawn_command(cmd).map_err(|e| Error::Msg(e.to_string()))?;

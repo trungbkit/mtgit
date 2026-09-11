@@ -1,11 +1,174 @@
-/* MTGit dark theme tokens. Sampled to resemble the GitKraken-style target:
-   near-black panels, subtle borders, a saturated lane palette. */
+/* MTGit design tokens.
+ *
+ * Structure (GITKRAKEN_PARITY_PLAN §3.1), and the reason for it:
+ *
+ *   :root                                        -> the complete LIGHT set
+ *   @media (prefers-color-scheme: dark)
+ *     :root:not([data-theme="light"])            -> dark, when the OS says so
+ *   :root[data-theme="dark"]                     -> dark, when the user says so
+ *
+ * No colour is ever defined *only* inside a media block. That is what makes
+ * "system" work in both directions and lets an explicit choice win over the OS:
+ * `data-theme` is written by `stores/settings.ts`, and its absence means
+ * "follow the system", so the media block has to be guarded against the
+ * explicit-light case rather than simply overriding.
+ *
+ * Density and font size are attributes and a variable for the same reason —
+ * the values stay here, next to the palette, instead of in component styles.
+ */
 
 :root {
+  /* ---- light surfaces ---- */
+  --bg-app: #f6f8fa;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #eff2f5;
+  --bg-hover: #eaeef2;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --bg-selected: #0969da1f;
+  --bg-selected-solid: #0969da;
+  --border: #d0d7de;
+  --border-strong: #b6bfc9;
+
+  --text: #1f2328;
+  --text-dim: #59636e;
+  --text-faint: #818b98;
+
+  --accent: #0969da;
+  --accent-text: #0550ae;
+  --green: #1a7f37;
+  --red: #cf222e;
+  --yellow: #9a6700;
+
+  /* Lane colours. The graph's identity is this ring, so it is a token group of
+     its own: categorical, evenly spaced, and retuned per theme rather than
+     reused from the semantic colours above. `features/graph/palette.ts` reads
+     these at runtime. */
+  --lane-0: #cf222e;
+  --lane-1: #1a7f37;
+  --lane-2: #0969da;
+  --lane-3: #9a6700;
+  --lane-4: #8250df;
+  --lane-5: #bc4c00;
+  --lane-6: #1b7c83;
+  --lane-7: #bf3989;
+
+  /* Blame-age ramp (G21). Two-ended and deliberately *not* from the lane ring,
+     whose whole job is to read as "different branch" rather than "older". */
+  --heat-hot: #f66a0a;
+  --heat-cold: #0a60f6;
+
+  /* Translucent tints. Each theme gets its own rather than one alpha value
+     over both grounds: the same 20%-alpha blue that reads as a highlight on
+     near-black is almost invisible on white. */
+  --accent-tint: #0969da14;
+  --accent-tint-strong: #0969da2e;
+  --accent-tint-border: #0969da66;
+  --warn-tint: #9a67001f;
+  --warn-tint-strong: #9a670033;
+  --warn-tint-border: #9a670066;
+  --ok-tint: #1a7f371f;
+  --ok-tint-border: #1a7f3766;
+  --diff-add-bg: #2ea04320;
+  --diff-add-bg-strong: #2ea04338;
+  --diff-add-word: #2ea04359;
+  --diff-del-bg: #cf222e1c;
+  --diff-del-bg-strong: #cf222e33;
+  --diff-del-word: #cf222e52;
+
+  /* The terminal is a surface of its own: xterm paints it, so it cannot
+     inherit, and `TerminalPanel` reads these three back out of the tokens. */
+  --term-bg: #ffffff;
+  --term-fg: #1f2328;
+  --term-cursor: #0969da;
+
+  --dot-radius: 4.5px;
+  --font-ui-size: 13px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Aliases that predate the token names above. Several stylesheets reach for
+     these with a hardcoded dark fallback, which would have made those rules
+     immune to the light theme; defining them here is what makes the fallback
+     unreachable. */
+  --fg: var(--text);
+  --fg-muted: var(--text-dim);
+  --danger: var(--red);
+  --mono: var(--font-mono);
+
+  color-scheme: light;
+}
+
+/* ---- dark, via the OS, unless the user has explicitly chosen light ---- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-app: #1b1f24;
+    --bg-panel: #22272e;
+    --bg-panel-2: #2d333b;
+    --bg-hover: #2d333b;
+    --bg-elevated: #2b3038;
+    --bg-input: #1c2128;
+    --bg-selected: #316dca33;
+    --bg-selected-solid: #316dca;
+    --border: #373e47;
+    --border-strong: #444c56;
+
+    --text: #cdd9e5;
+    --text-dim: #909dab;
+    --text-faint: #636e7b;
+
+    --accent: #316dca;
+    --accent-text: #6cb6ff;
+    --green: #57ab5a;
+    --red: #e5534b;
+    --yellow: #daaa3f;
+
+    --lane-0: #e5534b;
+    --lane-1: #57ab5a;
+    --lane-2: #6cb6ff;
+    --lane-3: #daaa3f;
+    --lane-4: #b083f0;
+    --lane-5: #ec775c;
+    --lane-6: #39c5cf;
+    --lane-7: #e685b5;
+
+    --heat-hot: #f0883e;
+    --heat-cold: #6cb6ff;
+
+    --accent-tint: #316dca1a;
+    --accent-tint-strong: #316dca33;
+    --accent-tint-border: #316dca66;
+    --warn-tint: #daaa3f1f;
+    --warn-tint-strong: #daaa3f33;
+    --warn-tint-border: #daaa3f55;
+  --ok-tint: #57ab5a22;
+  --ok-tint-border: #57ab5a55;
+    --ok-tint: #57ab5a22;
+    --ok-tint-border: #57ab5a55;
+    --diff-add-bg: #2ea04326;
+    --diff-add-bg-strong: #2ea04340;
+    --diff-add-word: #2ea04366;
+    --diff-del-bg: #f8514926;
+    --diff-del-bg-strong: #f8514940;
+    --diff-del-word: #f8514966;
+
+    --term-bg: #1b1f24;
+    --term-fg: #cdd9e5;
+    --term-cursor: #6cb6ff;
+
+    color-scheme: dark;
+  }
+}
+
+/* ---- dark, chosen explicitly: must also win under a light OS ---- */
+:root[data-theme="dark"] {
   --bg-app: #1b1f24;
   --bg-panel: #22272e;
   --bg-panel-2: #2d333b;
   --bg-hover: #2d333b;
+  --bg-elevated: #2b3038;
+  --bg-input: #1c2128;
   --bg-selected: #316dca33;
   --bg-selected-solid: #316dca;
   --border: #373e47;
@@ -21,12 +184,53 @@
   --red: #e5534b;
   --yellow: #daaa3f;
 
+  --lane-0: #e5534b;
+  --lane-1: #57ab5a;
+  --lane-2: #6cb6ff;
+  --lane-3: #daaa3f;
+  --lane-4: #b083f0;
+  --lane-5: #ec775c;
+  --lane-6: #39c5cf;
+  --lane-7: #e685b5;
+
+  --heat-hot: #f0883e;
+  --heat-cold: #6cb6ff;
+
+  --accent-tint: #316dca1a;
+  --accent-tint-strong: #316dca33;
+  --accent-tint-border: #316dca66;
+  --warn-tint: #daaa3f1f;
+  --warn-tint-strong: #daaa3f33;
+  --warn-tint-border: #daaa3f55;
+  --diff-add-bg: #2ea04326;
+  --diff-add-bg-strong: #2ea04340;
+  --diff-add-word: #2ea04366;
+  --diff-del-bg: #f8514926;
+  --diff-del-bg-strong: #f8514940;
+  --diff-del-word: #f8514966;
+
+  --term-bg: #1b1f24;
+  --term-fg: #cdd9e5;
+  --term-cursor: #6cb6ff;
+
+  color-scheme: dark;
+}
+
+/* ---- density ----
+   `--lane-width` follows `--row-height`: a graph whose rows tighten but whose
+   lanes do not stops looking like one drawing. */
+:root,
+:root[data-density="normal"] {
   --row-height: 28px;
   --lane-width: 18px;
-  --dot-radius: 4.5px;
-
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+:root[data-density="compact"] {
+  --row-height: 22px;
+  --lane-width: 14px;
+}
+:root[data-density="comfortable"] {
+  --row-height: 34px;
+  --lane-width: 22px;
 }
 
 * {
@@ -44,7 +248,7 @@ body {
   background: var(--bg-app);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--font-ui-size);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
@@ -85,10 +289,10 @@ select:focus-visible {
   height: 11px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #444c56;
+  background: var(--border-strong);
   border-radius: 6px;
   border: 2px solid var(--bg-panel);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #586069;
+  background: var(--text-faint);
 }

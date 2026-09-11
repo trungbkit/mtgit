@@ -15,7 +15,21 @@ import {
 import { findCandidates } from "../../lib/terminalLinks";
 import { revealCommit } from "../../stores/reveal";
 import { useSession } from "../../stores/session";
+import { settings } from "../../stores/settings";
 import "./terminal.css";
+
+/** The xterm colours, read out of the theme tokens. */
+function terminalTheme(): { background: string; foreground: string; cursor: string } {
+  const style = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string) =>
+    style.getPropertyValue(name).trim() || fallback;
+  return {
+    background: token("--term-bg", "#1b1f24"),
+    foreground: token("--term-fg", "#cdd9e5"),
+    cursor: token("--term-cursor", "#6cb6ff"),
+  };
+}
+
 
 export function TerminalPanel() {
   const repo = useSession((s) => s.repo);
@@ -44,8 +58,11 @@ export function TerminalPanel() {
 
     const term = new Terminal({
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-      fontSize: 12,
-      theme: { background: "#1b1f24", foreground: "#cdd9e5", cursor: "#6cb6ff" },
+      fontSize: settings().terminalFontSize,
+      // xterm paints its own canvas, so the terminal cannot inherit the theme
+      // the way the rest of the chrome does — it has to be told. Reading the
+      // tokens keeps the one definition in `theme.css`.
+      theme: terminalTheme(),
       cursorBlink: true,
     });
     const fit = new FitAddon();
@@ -113,7 +130,7 @@ export function TerminalPanel() {
       unlistenExit = await listen<{ id: string }>("pty-exit", (e) => {
         if (e.payload.id === ptyId) term.writeln("\r\n[process exited]");
       });
-      ptyId = await ptySpawn(repo.path, term.rows, term.cols);
+      ptyId = await ptySpawn(repo.path, term.rows, term.cols, settings().terminalShell);
       term.onData((d) => {
         if (ptyId) ptyWrite(ptyId, d).catch(() => {});
       });

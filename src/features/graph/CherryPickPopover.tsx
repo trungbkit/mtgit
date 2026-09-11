@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cherryPickMany } from "../../ipc/commands";
+import { settings } from "../../stores/settings";
 import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
 import { toastError, useToasts } from "../../stores/toasts";
 import "./cherry-pick.css";
@@ -26,7 +27,15 @@ export function CherryPickPopover({
   async function run() {
     try {
       await requireNoPausedOperation(repoPath, "cherry-pick");
-      const result = await cherryPickMany(repoPath, oids, commitImmediately, mainline);
+      // `07-cherry-pick.md` B1: the `-x` trailer was plumbed all the way
+      // through and then hardcoded `false` at this one call site.
+      const result = await cherryPickMany(
+        repoPath,
+        oids,
+        commitImmediately,
+        mainline,
+        settings().cherryPickAppendOrigin,
+      );
       if (result.success) {
         pushToast(
           "success",

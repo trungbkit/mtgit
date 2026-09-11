@@ -1,6 +1,6 @@
 use crate::core::{
-    advanced, blame, branch, commit as commit_mod, diff, graph, history, ops, refs, remote, repo,
-    search, stash, status, terminal as terminal_tokens, worktree,
+    advanced, blame, branch, commit as commit_mod, diff, graph, history, identity, ops, refs,
+    remote, repo, search, settings, stash, status, terminal as terminal_tokens, worktree,
 };
 use crate::error::{Error, Result};
 use crate::state::{
@@ -484,18 +484,43 @@ pub fn get_commit(path: String, oid: String) -> Result<diff::CommitDetail> {
 }
 
 #[tauri::command]
-pub fn get_commit_diff(path: String, oid: String, path_filter: Option<String>) -> Result<Vec<diff::FileDiff>> {
-    diff::commit_diff(&open(&path)?, &oid, path_filter.as_deref())
+pub fn get_commit_diff(
+    path: String,
+    oid: String,
+    path_filter: Option<String>,
+    ignore_whitespace: Option<bool>,
+) -> Result<Vec<diff::FileDiff>> {
+    diff::commit_diff(
+        &open(&path)?,
+        &oid,
+        path_filter.as_deref(),
+        ignore_whitespace.unwrap_or(false),
+    )
 }
 
 #[tauri::command]
-pub fn get_worktree_diff(path: String, staged: bool, path_filter: Option<String>) -> Result<Vec<diff::FileDiff>> {
-    diff::worktree_diff(&open(&path)?, staged, path_filter.as_deref())
+pub fn get_worktree_diff(
+    path: String,
+    staged: bool,
+    path_filter: Option<String>,
+    ignore_whitespace: Option<bool>,
+) -> Result<Vec<diff::FileDiff>> {
+    diff::worktree_diff(
+        &open(&path)?,
+        staged,
+        path_filter.as_deref(),
+        ignore_whitespace.unwrap_or(false),
+    )
 }
 
 #[tauri::command]
-pub fn compare_commits(path: String, old: String, new: String) -> Result<Vec<diff::FileDiff>> {
-    diff::compare_commits(&open(&path)?, &old, &new)
+pub fn compare_commits(
+    path: String,
+    old: String,
+    new: String,
+    ignore_whitespace: Option<bool>,
+) -> Result<Vec<diff::FileDiff>> {
+    diff::compare_commits(&open(&path)?, &old, &new, ignore_whitespace.unwrap_or(false))
 }
 
 // ---- M3: status, staging, commit ---------------------------------------------
@@ -1213,8 +1238,15 @@ pub fn watch_repo(app: AppHandle, path: String, state: State<'_, AppState>) -> R
 // ---- M5: terminal ------------------------------------------------------------
 
 #[tauri::command]
-pub fn pty_spawn(app: AppHandle, cwd: String, rows: u16, cols: u16, state: State<'_, AppState>) -> Result<String> {
-    state.pty.spawn(app, &cwd, rows, cols)
+pub fn pty_spawn(
+    app: AppHandle,
+    cwd: String,
+    rows: u16,
+    cols: u16,
+    shell: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String> {
+    state.pty.spawn(app, &cwd, rows, cols, shell.as_deref())
 }
 
 #[tauri::command]
@@ -1230,6 +1262,57 @@ pub fn pty_resize(id: String, rows: u16, cols: u16, state: State<'_, AppState>) 
 #[tauri::command]
 pub fn pty_kill(id: String, state: State<'_, AppState>) -> Result<()> {
     state.pty.kill(&id)
+}
+
+// ---- P6: settings and git identity ------------------------------------------
+
+/// Where `settings.json` lives. Resolved from the app handle rather than
+/// hardcoded so it lands in the platform's own config location.
+fn config_dir(app: &AppHandle) -> Result<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .app_config_dir()
+        .map_err(|e| Error::Msg(format!("no config directory: {e}")))
+}
+
+#[tauri::command]
+pub fn get_settings(app: AppHandle) -> Result<settings::Settings> {
+    Ok(settings::load(&config_dir(&app)?))
+}
+
+/// Persist settings and hand back what was actually stored — the clamped
+/// values, so the UI shows what it will get rather than what it asked for.
+///
+/// No op guard (invariant 2): this writes no file the repository watcher is
+/// watching.
+#[tauri::command]
+pub fn save_settings(app: AppHandle, settings: settings::Settings) -> Result<settings::Settings> {
+    settings::save(&config_dir(&app)?, &settings)
+}
+
+/// The git identity, at both levels. `path` is optional: the settings screen
+/// shows the global identity with no repository open.
+#[tauri::command]
+pub fn get_identity(path: Option<String>) -> Result<identity::IdentityInfo> {
+    match path {
+        Some(path) => identity::read(Some(&open(&path)?)),
+        None => identity::read(None),
+    }
+}
+
+#[tauri::command]
+pub fn set_identity(
+    scope: identity::IdentityScope,
+    path: Option<String>,
+    name: String,
+    email: String,
+) -> Result<identity::IdentityInfo> {
+    let repo = match path {
+        Some(ref path) => Some(open(path)?),
+        None => None,
+    };
+    identity::write(scope, repo.as_ref(), &name, &email)?;
+    identity::read(repo.as_ref())
 }
 
 #[cfg(test)]

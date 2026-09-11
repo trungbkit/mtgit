@@ -39,7 +39,9 @@ import { toastError, useToasts } from "../../stores/toasts";
 import { choiceDialog, confirmDialog, promptDialog } from "../../stores/dialog";
 import { validateRefName } from "../../lib/refname";
 import { joinPath, validateCloneUrl } from "../../lib/cloneurl";
+import { Icon, type IconName } from "../../components/Icon";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
+import { matches } from "../../lib/keys";
 import { copyText } from "../../lib/clipboard";
 import { smartCheckout } from "../../lib/checkout";
 import "./sidebar.css";
@@ -85,13 +87,18 @@ export function Sidebar() {
 
   useEffect(() => {
     const focusFilter = (event: KeyboardEvent) => {
-      if (!((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f")) return;
-      // The graph header has its own ⌘F (the commit search). Two panes cannot
-      // both own one shortcut, so focus decides: with the graph focused ⌘F
-      // searches commits, and everywhere else — including nothing focused —
-      // it filters refs here (`08-search-and-filter.md` §2). ⇧⌘F is always
-      // the graph's, from anywhere.
-      if (event.shiftKey || document.activeElement?.closest(".graph-container")) return;
+      if (!matches(event, "sidebar.filter")) return;
+      // The graph reads the same chord (the commit search), so focus decides:
+      // with the graph focused it searches commits, and everywhere else —
+      // including nothing focused — it filters refs here
+      // (`08-search-and-filter.md` §2). The graph's own `search.focus` chord
+      // works from anywhere and never reaches this handler.
+      //
+      // The shift key is deliberately *not* tested here any more. It used to
+      // stand in for "this is the graph's ⇧⌘F", which `matches` now decides —
+      // and testing it again would break a user who rebinds this action to
+      // something containing Shift.
+      if (document.activeElement?.closest(".graph-container")) return;
       event.preventDefault();
       filterRef.current?.focus();
       filterRef.current?.select();
@@ -234,12 +241,12 @@ export function Sidebar() {
         <button className="rail-toggle" title="Expand sidebar" onClick={toggleSidebar}>
           ›
         </button>
-        <RailIcon icon="🖥" count={data?.local.length ?? 0} onClick={toggleSidebar} />
-        <RailIcon icon="☁" count={remotes?.length ?? data?.remote.length ?? 0} onClick={toggleSidebar} />
-        <RailIcon icon="🏷" count={data?.tags.length ?? 0} onClick={toggleSidebar} />
-        <RailIcon icon="🌿" count={worktrees?.length ?? 0} onClick={toggleSidebar} />
-        <RailIcon icon="≡" count={stashes?.length ?? 0} onClick={toggleSidebar} />
-        <RailIcon icon="▣" count={submodules?.length ?? 0} onClick={toggleSidebar} />
+        <RailIcon icon="branch" count={data?.local.length ?? 0} onClick={toggleSidebar} />
+        <RailIcon icon="cloud" count={remotes?.length ?? data?.remote.length ?? 0} onClick={toggleSidebar} />
+        <RailIcon icon="tag" count={data?.tags.length ?? 0} onClick={toggleSidebar} />
+        <RailIcon icon="worktree" count={worktrees?.length ?? 0} onClick={toggleSidebar} />
+        <RailIcon icon="stash" count={stashes?.length ?? 0} onClick={toggleSidebar} />
+        <RailIcon icon="commit" count={submodules?.length ?? 0} onClick={toggleSidebar} />
       </aside>
     );
   }
@@ -651,7 +658,7 @@ export function Sidebar() {
       <div className="sidebar-scroll">
         <BranchSection
           title="Local"
-          icon="🖥"
+          icon="branch"
           items={localItems}
           local
           onOpen={(b) => selectOid(b.oid)}
@@ -701,7 +708,7 @@ export function Sidebar() {
         />
         <PlainSection
           title="Tags"
-          icon="🏷"
+          icon="tag"
           items={tagItems}
           onOpen={(b) => selectOid(b.oid)}
           onMenu={tagMenu}
@@ -709,7 +716,7 @@ export function Sidebar() {
 
         <div className="section">
           <div className="section-header">
-            <span className="sec-icon">🌿</span>
+            <span className="sec-icon"><Icon name="worktree" /></span>
             Worktrees
             <span className="count">{worktrees?.length ?? 0}</span>
             <button
@@ -732,7 +739,7 @@ export function Sidebar() {
               onDoubleClick={() => !w.isCurrent && openRepo(w.path).then(setRepo).catch(toastError)}
               onContextMenu={(e) => worktreeMenu(e, w)}
             >
-              <span className="ref-icon">{w.isCurrent ? "✓" : "🌿"}</span>
+              <span className="ref-icon"><Icon name={w.isCurrent ? "check" : "worktree"} /></span>
               <span className="ref-name">{w.name}</span>
               {w.branch && <span className="wt-branch">{w.branch}</span>}
               {w.locked && <span className="wt-flag" title="Locked">🔒</span>}
@@ -741,7 +748,8 @@ export function Sidebar() {
                 <span className="wt-flag" title="Could not read this worktree">?</span>
               ) : w.changed > 0 ? (
                 <span className="wt-flag dirty" title={`${w.changed} changed file(s)`}>
-                  ✎{w.changed}
+                  <Icon name="pencil" size={10} />
+                  {w.changed}
                 </span>
               ) : null}
             </div>
@@ -750,7 +758,7 @@ export function Sidebar() {
 
         {stashes && stashes.length > 0 && (
           <div className="section">
-            <SectionHead title="Stashes" icon="≡" count={stashes.length} />
+            <SectionHead title="Stashes" icon="stash" count={stashes.length} />
             {stashes.map((s) => (
               <div
                 key={s.oid}
@@ -771,7 +779,7 @@ export function Sidebar() {
                   });
                 }}
               >
-                <span className="ref-icon">≡</span>
+                <span className="ref-icon"><Icon name="stash" /></span>
                 <span className="ref-name">{s.message}</span>
               </div>
             ))}
@@ -779,7 +787,7 @@ export function Sidebar() {
         )}
 
         <div className="section">
-          <SectionHead title="Submodules" icon="▣" count={submodules?.length ?? 0} />
+          <SectionHead title="Submodules" icon="commit" count={submodules?.length ?? 0} />
           {(submodules ?? []).map((submodule) => (
             <div
               key={submodule.path}
@@ -799,7 +807,9 @@ export function Sidebar() {
                 });
               }}
             >
-              <span className="ref-icon">▣</span>
+              <span className="ref-icon">
+                <Icon name="commit" />
+              </span>
               <span className="ref-name">{submodule.name}</span>
               <span className="ref-count">{submodule.oid?.slice(0, 7)}</span>
             </div>
@@ -812,10 +822,10 @@ export function Sidebar() {
   );
 }
 
-function RailIcon({ icon, count, onClick }: { icon: string; count: number; onClick: () => void }) {
+function RailIcon({ icon, count, onClick }: { icon: IconName; count: number; onClick: () => void }) {
   return (
     <button className="rail-icon" onClick={onClick} title={`${count}`}>
-      <span>{icon}</span>
+      <span><Icon name={icon} size={15} /></span>
       <span className="rail-count">{count}</span>
     </button>
   );
@@ -829,7 +839,7 @@ function SectionHead({
   onToggle,
 }: {
   title: string;
-  icon: string;
+  icon: IconName;
   count: number;
   open?: boolean;
   onToggle?: () => void;
@@ -837,7 +847,7 @@ function SectionHead({
   return (
     <div className="section-header" onClick={onToggle}>
       {onToggle && <span className="caret">{open ? "▾" : "▸"}</span>}
-      <span className="sec-icon">{icon}</span>
+      <span className="sec-icon"><Icon name={icon} /></span>
       {title}
       <span className="count">{count}</span>
     </div>
@@ -872,7 +882,7 @@ function BranchSection({
   checkoutTarget,
 }: {
   title: string;
-  icon: string;
+  icon: IconName;
   items: BranchInfo[];
   local?: boolean;
   onOpen: (b: BranchInfo) => void;
@@ -913,7 +923,7 @@ function BranchSection({
                 onContextMenu={(e) => onMenu(e, b, !!local)}
               >
                 <span className={`ref-icon${checkoutTarget === b.name ? " spinning" : ""}`}>
-                  {checkoutTarget === b.name ? "◌" : b.isHead ? "✓" : local ? "⎇" : "☁"}
+                  <Icon name={checkoutTarget === b.name ? "pending" : b.isHead ? "check" : local ? "branch" : "cloud"} />
                 </span>
                 <span className="ref-name">{folder ? b.name.slice(folder.length + 1) : b.name}</span>
                 {(b.ahead || b.behind) && (
@@ -931,7 +941,7 @@ function BranchSection({
                     onToggleHidden(b.name);
                   }}
                 >
-                  {hiddenRefs.includes(b.name) ? "◌" : "◉"}
+                  <Icon name={hiddenRefs.includes(b.name) ? "eye-off" : "eye"} size={13} />
                 </button>
               </div>
             ))}
@@ -1008,7 +1018,7 @@ function RemoteSection({
     <div className="section">
       <div className="section-header" onClick={() => setOpen((o) => !o)}>
         <span className="caret">{open ? "▾" : "▸"}</span>
-        <span className="sec-icon">☁</span>
+        <span className="sec-icon"><Icon name="cloud" /></span>
         Remote
         <span className="count">{total}</span>
         <button
@@ -1042,7 +1052,7 @@ function RemoteSection({
                 onContextMenu={(event) => remote && onRemoteMenu(event, remote)}
               >
                 <span className="caret">{shut ? "▸" : "▾"}</span>
-                <span className="ref-icon">☁</span>
+                <span className="ref-icon"><Icon name="cloud" /></span>
                 <span className="ref-name">{name}</span>
                 {!configured.has(name) && <span className="remote-orphan">not configured</span>}
                 <span className="ref-count">{branches.length}</span>
@@ -1062,7 +1072,7 @@ function RemoteSection({
                     onContextMenu={(e) => onMenu(e, b, false)}
                   >
                     <span className={`ref-icon${checkoutTarget === b.name ? " spinning" : ""}`}>
-                      {checkoutTarget === b.name ? "◌" : "☁"}
+                      <Icon name={checkoutTarget === b.name ? "pending" : "cloud"} />
                     </span>
                     <span className="ref-name">
                       {b.name.startsWith(`${name}/`) ? b.name.slice(name.length + 1) : b.name}
@@ -1075,7 +1085,7 @@ function RemoteSection({
                         onToggleHidden(b.name);
                       }}
                     >
-                      {hiddenRefs.includes(b.name) ? "◌" : "◉"}
+                      <Icon name={hiddenRefs.includes(b.name) ? "eye-off" : "eye"} size={13} />
                     </button>
                   </div>
                 ))}
@@ -1102,7 +1112,7 @@ function PlainSection({
   items: BranchInfo[];
   onOpen: (b: BranchInfo) => void;
   onMenu?: (e: React.MouseEvent, b: BranchInfo) => void;
-  icon: string;
+  icon: IconName;
 }) {
   const [open, setOpen] = useState(true);
   return (

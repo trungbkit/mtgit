@@ -88,8 +88,18 @@
 
 .dline {
   display: flex;
+  /* Both come from settings (`stores/settings.ts:applyAppearance`). */
   white-space: pre;
+  tab-size: var(--diff-tab-size, 4);
   min-width: max-content;
+}
+/* Wrapping also has to drop `min-width: max-content`, which exists to stop
+   long lines collapsing under horizontal scroll — with wrapping on there is no
+   horizontal scroll left to protect. */
+:root[data-diff-wrap] .dline {
+  white-space: pre-wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .dline .gutter {
   flex-shrink: 0;
@@ -112,16 +122,16 @@
   flex: 1;
 }
 .dline.add {
-  background: #2ea04326;
+  background: var(--diff-add-bg);
 }
 .dline.add .gutter {
-  background: #2ea04340;
+  background: var(--diff-add-bg-strong);
 }
 .dline.del {
-  background: #f8514926;
+  background: var(--diff-del-bg);
 }
 .dline.del .gutter {
-  background: #f8514940;
+  background: var(--diff-del-bg-strong);
 }
 .dline.empty {
   background: #0000001a;
@@ -147,11 +157,11 @@
 
 /* Word-level intra-line highlights */
 .word-del {
-  background: #f8514966;
+  background: var(--diff-del-word);
   border-radius: 2px;
 }
 .word-add {
-  background: #2ea04366;
+  background: var(--diff-add-word);
   border-radius: 2px;
 }
 

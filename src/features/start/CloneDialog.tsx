@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { cancelGitNetwork, cloneRepo } from "../../ipc/commands";
 import type { RepoInfo } from "../../ipc/types";
 import { joinPath, parseProgress, repoNameFromUrl, validateCloneUrl } from "../../lib/cloneurl";
+import { settings } from "../../stores/settings";
 import { toastError, useToasts } from "../../stores/toasts";
 import "./start.css";
 
@@ -18,7 +19,11 @@ const LAST_DIR_KEY = "mtgit.cloneParentDir";
  */
 export function CloneDialog({ onClose, onCloned }: { onClose: () => void; onCloned: (repo: RepoInfo) => void }) {
   const [url, setUrl] = useState("");
-  const [parent, setParent] = useState(() => localStorage.getItem(LAST_DIR_KEY) ?? "");
+  // The configured default wins; the last directory used is the fallback,
+  // which is the behaviour there was before the setting existed.
+  const [parent, setParent] = useState(
+    () => settings().defaultCloneDir || localStorage.getItem(LAST_DIR_KEY) || "",
+  );
   const [folder, setFolder] = useState("");
   // The folder name follows the URL until the user types one, and then stops:
   // overwriting a name they chose is the more annoying failure of the two.

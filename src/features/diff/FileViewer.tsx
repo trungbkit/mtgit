@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useQueryClient } from "@tanstack/react-query";
-import type { FileDiff, Hunk } from "../../ipc/types";
+import type { DiffViewMode, FileDiff, Hunk } from "../../ipc/types";
 import { applyPatch } from "../../ipc/commands";
 import { refreshRepo } from "../../ipc/repoState";
-import { useSession } from "../../stores/session";
+import { Icon } from "../../components/Icon";
+import { useSettings } from "../../stores/settings";
 import { toastError, useToasts } from "../../stores/toasts";
 import { confirmDialog } from "../../stores/dialog";
 import { DiffView } from "./DiffView";
@@ -35,8 +36,11 @@ export function FileViewer({
   onClose?: () => void;
   onSelectCommit?: (oid: string) => void;
 }) {
-  const mode = useSession((s) => s.diffMode);
-  const setMode = useSession((s) => s.setDiffMode);
+  // Inline/split is a preference, not session state: it moved to the settings
+  // file so it survives a restart, which is what `02` of the appearance tab
+  // promises.
+  const mode = useSettings((s) => s.settings.diffMode);
+  const setMode = (next: DiffViewMode) => useSettings.getState().set({ diffMode: next });
   const [sub, setSub] = useState<SubMode>("diff");
   const qc = useQueryClient();
   const pushToast = useToasts((state) => state.push);
@@ -77,7 +81,7 @@ export function FileViewer({
           disabled={!isWorkingTree && diff.status === "deleted"}
           title="Open file in the working directory"
         >
-          ✎ Edit in Working Directory
+          <Icon name="pencil" size={12} /> Edit in Working Directory
         </button>
         <span className="fv-path">
           {dir}

@@ -22,7 +22,9 @@ import { FileViewer } from "../diff/FileViewer";
 import { FileList } from "../commit-detail/FileList";
 import { ConflictEditor } from "./ConflictEditor";
 import { ContextMenu, type MenuState } from "../../components/ContextMenu";
+import { matches } from "../../lib/keys";
 import { copyText } from "../../lib/clipboard";
+import { useSettings } from "../../stores/settings";
 import "./staging.css";
 
 export function StagingView() {
@@ -72,11 +74,10 @@ export function StagingView() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.shiftKey && event.key.toLowerCase() === "c") {
+      if (matches(event, "commit.focus")) {
         event.preventDefault();
         summaryRef.current?.focus();
-      } else if (event.key === "Enter") {
+      } else if (matches(event, "commit.submit")) {
         event.preventDefault();
         onCommit();
       }
@@ -85,8 +86,9 @@ export function StagingView() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const ignoreWhitespace = useSettings((s) => s.settings.diffIgnoreWhitespace);
   const { data: diffs } = useQuery({
-    queryKey: ["worktreeDiff", repo.path, sel?.path, sel?.staged],
+    queryKey: ["worktreeDiff", repo.path, sel?.path, sel?.staged, ignoreWhitespace],
     enabled: !!sel,
     queryFn: () => getWorktreeDiff(repo.path, sel!.staged, sel!.path),
   });

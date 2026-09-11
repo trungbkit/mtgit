@@ -203,7 +203,7 @@
 .ref-item.droppable {
   outline: 1px dashed var(--accent);
   outline-offset: -2px;
-  background: #316dca1a;
+  background: var(--accent-tint);
 }
 
 .ref-item[draggable="true"] {

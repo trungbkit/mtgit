@@ -55,16 +55,28 @@ a change by hand. It prints the topology when it finishes.
 
 ### The gate
 
-There is **no frontend test runner (no Vitest) and no CI** — both are planned in
-`GITKRAKEN_PARITY_PLAN.md` P7. Until they exist, the whole gate is:
-
 ```
 cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
-cd .. && pnpm exec tsc --noEmit && pnpm build
+cd .. && pnpm exec tsc --noEmit && pnpm check:ipc && pnpm test && pnpm build
 ```
 
-Run all four before saying a change works. `tsc` is strict with `noUnusedLocals` and
+Run all six before saying a change works. `tsc` is strict with `noUnusedLocals` and
 `noUnusedParameters`, so a stale import is a build failure, not a warning.
+
+`pnpm test` is Vitest (jsdom + Testing Library), colocated as `*.test.ts` beside what it
+covers. Suites that touch a store call `resetStores()` from `src/test/stores.ts` in
+`beforeEach` — the stores are module-level singletons, so state leaks between tests otherwise.
+Three of them read `localStorage` at construction, which is why anything testing *that* has to
+`vi.resetModules()` and re-import rather than poke the live store.
+
+`pnpm check:ipc` is invariant 1's fourth layer, and the only thing that reads `commands.rs`,
+`lib.rs` and `ipc/commands.ts` together. Neither test suite can see a command missing from
+`invoke_handler!`: the Rust tests call `core::` directly, the frontend tests mock the IPC layer,
+and the failure is at runtime.
+
+**CI** (`.github/workflows/ci.yml`) runs the same gate on macOS, Windows and Linux. It has never
+gone green — expect Windows fallout the first time. It does **not** run `cargo fmt --check`, for
+the reason below.
 
 ### Do not run `cargo fmt` across the tree
 
@@ -171,7 +183,19 @@ Frontend reports them with `toastError(e)`. Note that `gitNetwork` *resolves* wi
 - **Tests are behavioural and use real repos.** `TestRepo` (`testutil.rs`) builds fixtures with
   git2 — fast, deterministic, no shelling out. Assert on observable behaviour, and give the
   test a name that states the rule it protects
-  (`graph_cache_rebuilds_when_a_branch_moves`, not `test_cache`).
+  (`graph_cache_rebuilds_when_a_branch_moves`, not `test_cache`). The same rule holds on the
+  frontend: name the rule, not the function (`closing the only tab returns to the start screen
+  with no repo`).
+- **Settings and keybindings each have one home.** A persisted preference belongs in
+  `core/settings.rs` + `stores/settings.ts`, never mirrored into the session store — a second
+  source of truth for one question is the shape defect A1 had. A keyboard shortcut belongs in
+  `lib/keys.ts`; handlers call `matches(event, "id")` rather than reading `event.metaKey`
+  themselves, which is what keeps the cheat sheet and the rebinding UI honest.
+- **Colours come from `theme.css`, including the translucent ones.** A tint is a per-theme
+  token (`--accent-tint`, `--diff-add-bg`), not one alpha value used over both grounds: what
+  reads as a highlight on near-black is invisible on white. And never write
+  `var(--token, #hex)` with a dark fallback for a token that does not exist — that rule then
+  ignores the theme, silently, which is how six stylesheets stayed dark until P6.
 - **A bug fix lands with a test that fails without it.** Where a regression is a hang rather
   than a wrong value, guard the test with a channel timeout so it fails instead of hanging —
   see `drain_does_not_deadlock_when_stdout_fills_the_pipe`.
@@ -202,11 +226,13 @@ Frontend reports them with `toastError(e)`. Note that `gitNetwork` *resolves* wi
 ## Roadmap
 
 `GITKRAKEN_PARITY_PLAN.md` is the live plan: gap analysis vs GitKraken, phases P0–P8, and a
-status marker per phase. **P0 and P2–P5 are done; P1 (clone/init/remotes/start screen), P6–P7
-and P8 (the GitLens-derived surfaces, G16–G28) are unstarted.** Its §8 says what to pick up
-next; STATUS.md §1's defects (A1–A5) are cleared and P5's commit search has landed, so the
-answer is now **P1** — the only phase left that stands between MTGit and a user who has never
-opened a terminal.
+status marker per phase. **P0–P6 are done. P7 is partly done** — CI, the Vitest suite and
+`check:ipc` are in; e2e and code signing are not, and both need something this repo does not
+have (a driver on the runner, certificates). **P8 has started**: item 1 (worktrees, G18) and
+terminal links (G19) landed. Its §8 says what to pick up next; the answer is now **the rest of
+P8**, starting with the unified conflict panel (item 2), except that `--follow` in file history
+(G22) should jump the queue — without it, blame across a refactor is quietly wrong, which makes
+it a correctness fix rather than a feature.
 
 `docs/feature-requirements/` is the spec for the seven core features (commit, checkout, push,
 pull, merge, rebase, cherry-pick) plus `08-search-and-filter.md` (commit search — built; its

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { RepoInfo } from "../ipc/types";
+import { persistRecentRepos, restorableRecentRepos } from "./settings";
 
 const RECENT_KEY = "mtgit.recentRepos";
 const RECENT_LIMIT = 12;
@@ -48,16 +49,33 @@ function saveRecent(recent: RecentRepo[]) {
   } catch {
     /* ignore quota errors */
   }
+  // Mirrored into the settings file as well: `localStorage` is synchronous, so
+  // it is what lets the start screen draw on the first frame, but it is also
+  // what a cleared WebView takes with it.
+  persistRecentRepos(recent);
+}
+
+/**
+ * Adopt the recent list from the settings file, if this WebView has none.
+ *
+ * Called once, after settings load. It cannot happen at construction because
+ * the file is read over IPC and the store is built synchronously.
+ */
+export function hydrateRecentRepos(): void {
+  const restored = restorableRecentRepos(useSession.getState().recentRepos);
+  if (restored) useSession.setState({ recentRepos: restored });
 }
 
 function basename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
 }
 
-export type DiffMode = "inline" | "split";
-
+/**
+ * Ephemeral graph options. `relativeDates` used to live here too; it is a
+ * persisted preference now (`stores/settings`), and keeping a session copy
+ * would have been a second source of truth for the same question.
+ */
 export interface GraphOpts {
-  relativeDates: boolean;
   showAuthor: boolean;
 }
 
@@ -80,7 +98,6 @@ interface SessionState {
   tabViews: Record<string, TabView>;
   recentRepos: RecentRepo[];
   terminalOpen: boolean;
-  diffMode: DiffMode;
   paletteOpen: boolean;
   sidebarCollapsed: boolean;
   graphOpts: GraphOpts;
@@ -100,7 +117,6 @@ interface SessionState {
   selectOid: (oid: string | null) => void;
   selectFile: (path: string | null) => void;
   toggleTerminal: () => void;
-  setDiffMode: (m: DiffMode) => void;
   setPaletteOpen: (v: boolean) => void;
   toggleSidebar: () => void;
   setGraphOpts: (o: Partial<GraphOpts>) => void;
@@ -143,10 +159,9 @@ export const useSession = create<SessionState>((set) => ({
   tabViews: {},
   recentRepos: loadRecent(),
   terminalOpen: false,
-  diffMode: "inline",
   paletteOpen: false,
   sidebarCollapsed: false,
-  graphOpts: { relativeDates: true, showAuthor: true },
+  graphOpts: { showAuthor: true },
   hiddenRefs: {},
   checkoutTarget: null,
   cloneOpen: false,
@@ -229,7 +244,6 @@ export const useSession = create<SessionState>((set) => ({
   selectOid: (oid) => set({ selectedOid: oid, selectedFile: null }),
   selectFile: (path) => set({ selectedFile: path }),
   toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
-  setDiffMode: (m) => set({ diffMode: m }),
   setPaletteOpen: (v) => set({ paletteOpen: v }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setGraphOpts: (o) => set((s) => ({ graphOpts: { ...s.graphOpts, ...o } })),

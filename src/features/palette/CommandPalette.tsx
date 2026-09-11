@@ -5,6 +5,7 @@ import { createBranch, listRefs, openRepo } from "../../ipc/commands";
 import { refreshRepo } from "../../ipc/repoState";
 import { smartCheckout } from "../../lib/checkout";
 import { push, runNet } from "../network/net";
+import { openSettings } from "../../stores/settings";
 import { useSession } from "../../stores/session";
 import { seedSearch } from "../../stores/search";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -75,6 +76,14 @@ export function CommandPalette() {
           const sel = await openDialog({ directory: true, multiple: false });
           if (typeof sel === "string") setRepo(await openRepo(sel));
         }),
+      },
+      {
+        id: "settings",
+        label: "Settings…",
+        run: () => {
+          setOpen(false);
+          openSettings();
+        },
       },
     ];
     if (repo) {

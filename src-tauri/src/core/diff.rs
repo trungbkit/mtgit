@@ -110,6 +110,18 @@ fn base_options() -> DiffOptions {
     opts
 }
 
+/// Apply the "ignore whitespace changes" preference.
+///
+/// `ignore_whitespace_change` rather than `ignore_whitespace`: the setting is
+/// about reindentation and trailing spaces, and the stronger flag also hides a
+/// change that *adds* whitespace where there was none, which in Python or a
+/// Makefile is a behaviour change the user must see.
+fn apply_whitespace(opts: &mut DiffOptions, ignore_whitespace: bool) {
+    if ignore_whitespace {
+        opts.ignore_whitespace_change(true);
+    }
+}
+
 fn enable_rename_detection(diff: &mut Diff) {
     let mut find = git2::DiffFindOptions::new();
     find.renames(true).copies(true);
@@ -149,33 +161,53 @@ pub fn commit_detail(repo: &Repository, oid: &str) -> Result<CommitDetail> {
 }
 
 /// Structured diff of a commit against its first parent (root vs empty tree).
-pub fn commit_diff(repo: &Repository, oid: &str, path_filter: Option<&str>) -> Result<Vec<FileDiff>> {
+pub fn commit_diff(
+    repo: &Repository,
+    oid: &str,
+    path_filter: Option<&str>,
+    ignore_whitespace: bool,
+) -> Result<Vec<FileDiff>> {
     let oid = Oid::from_str(oid).map_err(|_| Error::Msg(format!("bad oid: {oid}")))?;
     let commit = repo.find_commit(oid)?;
     let tree = commit.tree()?;
     let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
     let mut opts = base_options();
     apply_path_filter(&mut opts, path_filter);
+    apply_whitespace(&mut opts, ignore_whitespace);
     let mut diff =
         repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
     enable_rename_detection(&mut diff);
     file_diffs(&diff)
 }
 
-pub fn compare_commits(repo: &Repository, old: &str, new: &str) -> Result<Vec<FileDiff>> {
+pub fn compare_commits(
+    repo: &Repository,
+    old: &str,
+    new: &str,
+    ignore_whitespace: bool,
+) -> Result<Vec<FileDiff>> {
     let old_tree = repo.revparse_single(old)?.peel_to_commit()?.tree()?;
     let new_tree = repo.revparse_single(new)?.peel_to_commit()?.tree()?;
-    let mut diff = repo.diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None)?;
+    let mut opts = base_options();
+    apply_whitespace(&mut opts, ignore_whitespace);
+    let mut diff =
+        repo.diff_tree_to_tree(Some(&old_tree), Some(&new_tree), Some(&mut opts))?;
     enable_rename_detection(&mut diff);
     file_diffs(&diff)
 }
 
 /// Structured diff of the working tree. `staged=true` diffs HEAD..index,
 /// otherwise index..workdir.
-pub fn worktree_diff(repo: &Repository, staged: bool, path_filter: Option<&str>) -> Result<Vec<FileDiff>> {
+pub fn worktree_diff(
+    repo: &Repository,
+    staged: bool,
+    path_filter: Option<&str>,
+    ignore_whitespace: bool,
+) -> Result<Vec<FileDiff>> {
     let mut opts = base_options();
     opts.include_untracked(!staged).recurse_untracked_dirs(!staged);
     apply_path_filter(&mut opts, path_filter);
+    apply_whitespace(&mut opts, ignore_whitespace);
 
     let mut diff = if staged {
         let head_tree = head_tree(repo)?;
@@ -350,7 +382,7 @@ mod tests {
         let a = t.commit("first", &[]);
         let b = t.commit("second", &[a]);
 
-        let diffs = commit_diff(&t.repo, &b.to_string(), None).unwrap();
+        let diffs = commit_diff(&t.repo, &b.to_string(), None, false).unwrap();
         assert_eq!(diffs.len(), 1);
         let fd = &diffs[0];
         assert_eq!(fd.path, "file.txt");
@@ -360,11 +392,57 @@ mod tests {
         assert!(fd.additions > 0);
     }
 
+    /// Build two commits whose only difference is indentation.
+    fn whitespace_only_change(t: &TestRepo) -> String {
+        let write = |content: &str, parents: &[git2::Oid]| {
+            let blob = t.repo.blob(content.as_bytes()).unwrap();
+            let mut tb = t.repo.treebuilder(None).unwrap();
+            tb.insert("file.txt", blob, 0o100644).unwrap();
+            let tree = t.repo.find_tree(tb.write().unwrap()).unwrap();
+            let sig = git2::Signature::new("T", "t@e", &git2::Time::new(1_600_000_000, 0)).unwrap();
+            let parent_commits: Vec<_> =
+                parents.iter().map(|p| t.repo.find_commit(*p).unwrap()).collect();
+            let refs: Vec<&git2::Commit> = parent_commits.iter().collect();
+            t.repo.commit(None, &sig, &sig, "c", &tree, &refs).unwrap()
+        };
+        let first = write("fn main() {\n  let x = 1;\n}\n", &[]);
+        write("fn main() {\n      let x = 1;\n}\n", &[first]).to_string()
+    }
+
+    #[test]
+    fn ignoring_whitespace_hides_a_reindentation() {
+        let t = TestRepo::new();
+        let oid = whitespace_only_change(&t);
+
+        let shown = commit_diff(&t.repo, &oid, None, false).unwrap();
+        assert_eq!(shown.len(), 1, "the change is a real one and is reported by default");
+        assert!(shown[0].additions > 0);
+
+        // git2 still reports the *file* as changed — the blob differs — but the
+        // hunk that only reindents is gone, which is what the setting promises.
+        let hidden = commit_diff(&t.repo, &oid, None, true).unwrap();
+        assert!(
+            hidden.is_empty() || hidden[0].hunks.is_empty(),
+            "a whitespace-only hunk must not survive: {hidden:?}",
+        );
+    }
+
+    #[test]
+    fn ignoring_whitespace_keeps_a_real_change() {
+        let t = TestRepo::new();
+        let a = t.commit("first", &[]);
+        let b = t.commit("second", &[a]);
+
+        let diffs = commit_diff(&t.repo, &b.to_string(), None, true).unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert!(!diffs[0].hunks.is_empty(), "content changes are still reported");
+    }
+
     #[test]
     fn root_commit_diffs_against_empty_tree() {
         let t = TestRepo::new();
         let a = t.commit("root", &[]);
-        let diffs = commit_diff(&t.repo, &a.to_string(), None).unwrap();
+        let diffs = commit_diff(&t.repo, &a.to_string(), None, false).unwrap();
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].status, FileStatus::Added);
     }

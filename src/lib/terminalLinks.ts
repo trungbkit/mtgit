@@ -23,7 +23,10 @@ export interface Candidate {
 /** Object ids, ranges, and the revision syntax git prints in its own messages. */
 const SHA = /\b[0-9a-f]{7,40}\b/g;
 const RANGE = /(?:[\w./@{}~^-]+)?\.{2,3}(?:[\w./@{}~^-]+)?/g;
-const REVISION = /\bHEAD(?:[~^]\d*)*\b/g;
+// The tail is `(?!\w)` rather than `\b`: `HEAD^` ends on a non-word character,
+// so `\b` fails there and the match falls back to a bare `HEAD` — a candidate
+// that resolves, to the wrong commit. `(?!\w)` still keeps `HEADER` out.
+const REVISION = /\bHEAD(?:[~^]\d*)*(?!\w)/g;
 
 /** Escape a ref name for inclusion in a RegExp source. */
 function escape(value: string): string {

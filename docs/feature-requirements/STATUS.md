@@ -15,8 +15,12 @@ read out of the source, not inferred from the plan. The gate is green at this co
 > gate is at **78 Rust tests** (42 + 25 for search + 11 for clone, init and remotes).
 > **P8 item 1 (worktrees, G18) and terminal links (G19) landed on 2026-09-11 too**, taking the
 > gate to **92 Rust tests**. §6's per-doc backlog below is annotated with what that closed.
-> `GITKRAKEN_PARITY_PLAN.md` §8 now points at **P6 → P7 → the rest of P8**, and argues for
-> pulling P7 forward: everything added today is frontend state with no test runner behind it.
+> **P6 and most of P7 landed on 2026-09-11 as well.** P6 closed G13–G15 (settings file + git
+> identity, both themes, the keybinding registry with its `?` cheat sheet, and the SVG icon set)
+> and took the Rust gate to **107**; it also closed **B9** below and added the diff
+> ignore-whitespace option. P7 added CI, `scripts/check-ipc.mjs` and a **154-test** Vitest suite
+> — which found and fixed four real defects, recorded in §5. `GITKRAKEN_PARITY_PLAN.md` §8 now
+> points at **the rest of P8**, with P7's e2e and code signing left over.
 >
 > P1 has no doc of its own here: `docs/feature-requirements/` specifies the seven core
 > operations plus search, and clone / init / remote management are repo *lifecycle*, not one of
@@ -50,7 +54,7 @@ analysis (its §2.6 and P8).
 | `04-pull.md` | Pull & fetch | **Substantially complete** — 5 of 6; auto-fetch lifecycle bugs, sidebar entry points missing |
 | `05-merge.md` | Merge | **Complete** — 5 of 6; conflict panes are labelled "Ours/Theirs", not by branch |
 | `06-rebase.md` | Rebase + interactive | **Complete** — 5 of 6; no in-progress graph ghosting, no force-push hint |
-| `07-cherry-pick.md` | Cherry-pick | **Complete** — 5 of 6; no per-commit sequence progress, no dirty-tree auto-stash |
+| `07-cherry-pick.md` | Cherry-pick | **Complete** — 5 of 6; no per-commit sequence progress, no dirty-tree auto-stash (its `-x` flag landed in P6) |
 | `08-search-and-filter.md` | Commit search & filtering | **Substantially complete** — 13 of 15 criteria; no minimap (P8 item 3), and autocomplete completes operators and refs but not contributors or paths. See its §7.1 |
 
 ---
@@ -171,7 +175,7 @@ out another branch.
 | B6 | **Commit button never becomes "Continue \<operation\>".** Continue lives only in the banner. | `01-commit.md` §5 |
 | B7 | **Command palette lists local branches only** — remote branches are not checkout targets there. | `02-checkout.md` §2 |
 | B8 | **Interactive rebase ignores a multi-select range**; it always plans `<clicked commit>..HEAD`. Equivalent only when the selection ends at HEAD. | overview §1.3 |
-| B9 | **Cherry-pick `-x` has no toggle.** `cherryPickMany(..., appendOrigin)` is plumbed all the way through and hardcoded `false` at the call site. Needs the settings flag (or a popover checkbox). | `07-cherry-pick.md` B1 |
+| ~~B9~~ | ✅ **FIXED in P6.** The settings flag this row asked for exists now (General → Commits, "Record the source of a cherry-pick"), and `CherryPickPopover` passes `settings().cherryPickAppendOrigin` at the call site that was hardcoded `false`. | `07-cherry-pick.md` B1 |
 
 ## 3. Dialogs simplified below spec
 
@@ -206,8 +210,8 @@ out another branch.
   bottom-left toast — a deliberate, better placement; the requirement now says so.
 - **`Pop` is enabled with no stash** and fails with "No stashes to pop" instead of being
   disabled with a tooltip (overview §3).
-- **No busy-gating**: during a checkout only the target pill shows `◌`; every other mutating
-  control stays live (`02-checkout.md` §3).
+- **No busy-gating**: during a checkout only the target pill shows a pending marker; every other
+  mutating control stays live (`02-checkout.md` §3).
 - **Rebase onto an ancestor** toasts "Rebased 0 commit(s)" rather than "Already up to date"
   (`06-rebase.md` B7).
 - **Merge commits are silently excluded** from the interactive plan (`advanced.rs:351`); the
@@ -257,11 +261,31 @@ What it does **not** cover: `page_hint` against a real 2000-row page boundary, a
 cancellation path (the SIGTERM branch is exercised by no test — killing a child mid-walk
 deterministically needs a fixture big enough to still be running).
 
-There is still no frontend test runner (P7). Given how much behaviour now lives in
-`net.ts`, `lib/checkout.ts`, `stores/search.ts` and the stores generally, Vitest is worth pulling
-forward. Search made that argument stronger, not weaker: three-mode result handling, hit
-navigation across page loads, and the filter-mode restore are all frontend state machines with
-no machine checking them.
+~~There is still no frontend test runner (P7).~~ **There is now**, and the argument this
+paragraph made was right in a way it could not demonstrate. P7 added Vitest + Testing Library +
+jsdom and **154 tests**, covering the session store's tab rules and recent-repo migration, the
+search store's three modes and hit navigation, the settings store, `lib/keys`, `refname`,
+`cloneurl`, `terminalLinks`, `DialogHost`, and the two things §1.1 and §1.2 each closed by
+naming them "still unverified by machine": **the mutation seam** and **`net.ts`**.
+
+Writing them found four real defects, each fixed with the test that caught it:
+
+- **`HEAD^` in terminal output produced a link to the wrong commit.** `REVISION`'s trailing
+  `\b` cannot match after `^`, so the regex fell back to a bare `HEAD` — which resolves, to
+  something else. `(?!\w)` instead.
+- **Escape did nothing on a confirm or a choice dialog.** `onKey` is bound to the dialog
+  element, and focus never entered it: a prompt got focus through its input, and the other two
+  kinds have no input to land in. The container is focused on open now, which also makes
+  `aria-modal` true in practice rather than only in markup.
+- **The settings store never adopted the backend's clamped values.** Its in-flight guard tested
+  the timer handle, which is cleared as the write starts, so the check was always true. A write
+  token instead.
+- **`isTypingTarget` could return `undefined`** where its signature promised a boolean.
+
+What the frontend suite still does **not** cover: `GraphView` and `Sidebar` (the two largest
+components, both needing a virtualizer and a query client to render), `lib/checkout.ts`'s
+collision-recovery dialog flow, and the diff renderer. E2E (P7) is unstarted, so no test in
+either suite drives the real app.
 
 ---
 
@@ -274,7 +298,7 @@ it is listed in one place so the unchecked boxes scattered through seven docs ar
 | Doc | New criteria | Weight |
 |---|---|---|
 | ~~`08-search-and-filter.md`~~ | ~~15 — the whole doc~~ | ✅ **Done.** `core/search.rs` (grammar + git mapping + execution), `search_commits` / `cancel_search`, `features/graph/SearchBar.tsx`, `stores/search.ts`, `ScrollMarkers` in `GraphView`. 25 tests. Four items outstanding, listed in that doc's §7.1. |
-| `00-overview.md` | configurable/reorderable graph columns · Changes column · minimap · scroll markers · ref overflow `+N` · ghost refs on hover · stacked detail sheets · ~~WORKTREES~~ + CONTRIBUTORS sidebar sections · sidebar-scopes-the-graph · jump to HEAD/upstream/merge target · one date-style setting · ~~terminal links~~ · autolinks · rich hovers · blame heatmap · file/line history following renames · revision navigation · guided command palette | **Medium, and mostly independent.** ✅ **WORKTREES section and terminal links done.** Still a day each: heatmap, date style, `+N` overflow; the column model and the detail stack are refactors. |
+| `00-overview.md` | configurable/reorderable graph columns · Changes column · minimap · scroll markers · ref overflow `+N` · ghost refs on hover · stacked detail sheets · ~~WORKTREES~~ + CONTRIBUTORS sidebar sections · sidebar-scopes-the-graph · jump to HEAD/upstream/merge target · ~~one date-style setting~~ · ~~terminal links~~ · autolinks · rich hovers · blame heatmap · file/line history following renames · revision navigation · guided command palette | **Medium, and mostly independent.** ✅ **WORKTREES section, terminal links and the date-style setting done** — the last of those is now one app-wide preference (P6), and the graph's gear toggle writes it rather than a per-session copy. Still a day each: heatmap, `+N` overflow; the column model and the detail stack are refactors. |
 | `01-commit.md` | 5 — ~~per-worktree WIP row~~ · co-author picker · `commit.template` · autolinks in preview · stash / copy-to-worktree actions | ✅ **Per-worktree WIP rows done**, with one deviation: clicking another worktree's row **opens that worktree as a tab** rather than opening the commit panel on it. A different worktree has a different index, and this tab's handle cannot stage into it honestly. §3.1's "selecting it opens the commit panel for *that* worktree" is therefore reached by a different route, not met as written. |
 | `02-checkout.md` | 5 + new §7 — `/` branch finder · remote branches in the palette · ~~**Open in worktree…**~~ · worktree-holds-branch dialog · ~~sidebar worktree management~~ | ✅ **Open in worktree… and sidebar management done** (B7, B9, B10, B11, and B8's remote-branch half — a remote branch gets a tracking local branch, tested). **Left: B8's detached case** — a worktree from a bare commit gets a branch named after the worktree rather than a detached HEAD, because git2's `WorktreeAddOptions` wants a reference — and the **worktree-holds-branch dialog**, still git's raw refusal. |
 | `03-push.md` | 2 — unpushed row markers · ~~worktree-aware push target~~ | ✅ **Worktree-aware push target falls out for free**: a worktree opened as a tab *is* the repo handle, so `push_target` reads that worktree's HEAD. §5's silent-wrong-branch failure needed B9, which landed. Unpushed row markers are still open. |

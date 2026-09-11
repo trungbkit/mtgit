@@ -369,3 +369,62 @@ export interface FileContent {
   binary: boolean;
   isLarge: boolean;
 }
+
+// ---- P6: settings and identity ---------------------------------------------
+
+export type Theme = "system" | "light" | "dark";
+export type Density = "compact" | "normal" | "comfortable";
+export type DateStyle = "relative" | "absolute";
+
+/**
+ * Mirrors `core::settings::Settings`. Persisted to a JSON file in the app's
+ * config directory, not to `localStorage` — see that module's note.
+ */
+export interface Settings {
+  theme: Theme;
+  density: Density;
+  fontSize: number;
+  dateStyle: DateStyle;
+
+  diffMode: DiffViewMode;
+  diffIgnoreWhitespace: boolean;
+  diffWordWrap: boolean;
+  diffTabWidth: number;
+
+  defaultCloneDir: string | null;
+  /** Default minutes between background fetches; 0 is off. A repository may
+   *  override it, in which case the override wins. */
+  autoFetchMinutes: number;
+  cherryPickAppendOrigin: boolean;
+
+  terminalFontSize: number;
+  terminalShell: string | null;
+
+  /** Action id -> chord, for the actions the user has rebound. */
+  keybindings: Record<string, string>;
+  recentRepos: PersistedRecentRepo[];
+}
+
+/** `diffMode`'s own name, kept distinct from `stores/session`'s `DiffMode`. */
+export type DiffViewMode = "inline" | "split";
+
+export interface PersistedRecentRepo {
+  path: string;
+  name: string;
+  lastOpened: number;
+  branch: string | null;
+}
+
+export type IdentityScope = "global" | "repo";
+
+/** Mirrors `core::identity::IdentityInfo`. */
+export interface IdentityInfo {
+  globalName: string | null;
+  globalEmail: string | null;
+  /** The repository's own override; null means "inherited". */
+  repoName: string | null;
+  repoEmail: string | null;
+  /** What git would stamp on a commit made right now. */
+  effectiveName: string | null;
+  effectiveEmail: string | null;
+}

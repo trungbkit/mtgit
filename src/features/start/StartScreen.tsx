@@ -5,6 +5,7 @@ import type { RepoInfo } from "../../ipc/types";
 import { joinPath } from "../../lib/cloneurl";
 import { timeAgo } from "../../lib/time";
 import { promptDialog } from "../../stores/dialog";
+import { Icon } from "../../components/Icon";
 import { useSession } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import "./start.css";
@@ -148,7 +149,11 @@ export function StartScreen() {
                   >
                     <span className="recent-name">{entry.name}</span>
                     <span className="recent-path">{entry.path}</span>
-                    {entry.branch && <span className="recent-branch">⎇ {entry.branch}</span>}
+                    {entry.branch && (
+                      <span className="recent-branch">
+                        <Icon name="branch" size={11} /> {entry.branch}
+                      </span>
+                    )}
                     <span className="recent-when">
                       {busy === entry.path
                         ? "Opening…"

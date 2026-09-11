@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { cancelGitNetwork, cancelSearch, getStatus, gitAvailable, listRefs } from "../../ipc/commands";
 import { toastError } from "../../stores/toasts";
+import { Icon } from "../../components/Icon";
 import { useSession } from "../../stores/session";
 import "./statusbar.css";
 
@@ -62,7 +63,9 @@ export function StatusBar() {
       <div className="sb-left">
         {repo ? (
           <>
-            <span className="sb-branch">⎇ {head ?? (repo.head.detached ? "detached" : "—")}</span>
+            <span className="sb-branch">
+              <Icon name="branch" size={12} /> {head ?? (repo.head.detached ? "detached" : "—")}
+            </span>
             <span className={`sb-clean${dirty ? " dirty" : ""}`}>
               {dirty ? `${dirty} uncommitted` : "clean"}
             </span>
@@ -108,7 +111,7 @@ export function StatusBar() {
           title="Toggle sidebar"
           onClick={toggleSidebar}
         >
-          ▤
+          <Icon name="layout" />
         </button>
         <button
           className={`sb-icon${terminalOpen ? " on" : ""}`}

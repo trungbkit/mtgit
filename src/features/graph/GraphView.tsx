@@ -33,6 +33,9 @@ import { Avatar } from "../../components/Avatar";
 import { copyText } from "../../lib/clipboard";
 import { smartCheckout } from "../../lib/checkout";
 import { timeAgo, formatTimestamp } from "../../lib/time";
+import { Icon } from "../../components/Icon";
+import { matches } from "../../lib/keys";
+import { useSettings } from "../../stores/settings";
 import { laneColor } from "./palette";
 import { CherryPickPopover } from "./CherryPickPopover";
 import { RebasePlanDialog } from "./RebasePlanDialog";
@@ -89,6 +92,8 @@ export function GraphView() {
   const selectOid = useSession((s) => s.selectOid);
   const setRepo = useSession((s) => s.setRepo);
   const graphOpts = useSession((s) => s.graphOpts);
+  // One date style for the whole app, persisted — not a per-session toggle.
+  const dateStyle = useSettings((s) => s.settings.dateStyle);
   const setGraphOpts = useSession((s) => s.setGraphOpts);
   const hiddenRefs = useSession((s) =>
     repo ? s.hiddenRefs[repo.path] ?? EMPTY_HIDDEN_REFS : EMPTY_HIDDEN_REFS,
@@ -669,17 +674,23 @@ export function GraphView() {
   // F3 / ⌘G and their reverses, plus the two ways into the field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const mod = event.metaKey || event.ctrlKey;
-      const key = event.key.toLowerCase();
-      if (key === "f3" || (mod && key === "g")) {
+      // Previous before next: both are F3-shaped and the shifted one is the
+      // more specific match, so testing next first would swallow it.
+      if (matches(event, "search.prev")) {
         event.preventDefault();
-        void navigateHits(event.shiftKey ? -1 : 1);
+        void navigateHits(-1);
         return;
       }
-      // ⌘F when the graph has focus, ⇧⌘F from anywhere (§2); the sidebar
-      // keeps ⌘F for its ref filter otherwise.
+      if (matches(event, "search.next")) {
+        event.preventDefault();
+        void navigateHits(1);
+        return;
+      }
+      // The bound chord works from anywhere; the sidebar's ⌘F also reaches the
+      // search while the graph has focus, because two panes cannot both own
+      // one chord and focus is the tiebreak (`08-search-and-filter.md` §2).
       const graphFocused = !!document.activeElement?.closest(".graph-container");
-      if (mod && key === "f" && (event.shiftKey || graphFocused)) {
+      if (matches(event, "search.focus") || (graphFocused && matches(event, "sidebar.filter"))) {
         event.preventDefault();
         window.dispatchEvent(new CustomEvent("mtgit:focus-search"));
       }
@@ -846,15 +857,17 @@ export function GraphView() {
           />
         )}
         <button className="gh-gear" title="Graph options" onClick={() => setGearOpen((v) => !v)}>
-          ⚙
+          <Icon name="gear" />
         </button>
         {gearOpen && (
           <div className="gh-gear-pop" onMouseLeave={() => setGearOpen(false)}>
             <label>
               <input
                 type="checkbox"
-                checked={graphOpts.relativeDates}
-                onChange={(e) => setGraphOpts({ relativeDates: e.target.checked })}
+                checked={dateStyle === "relative"}
+                onChange={(e) =>
+                  useSettings.getState().set({ dateStyle: e.target.checked ? "relative" : "absolute" })
+                }
               />
               Relative dates
             </label>
@@ -958,7 +971,7 @@ export function GraphView() {
                 onSearchAuthor={() =>
                   repo && seedSearch(repo.path, `author:${row.email || row.author}`)
                 }
-                opts={graphOpts}
+                opts={{ relativeDates: dateStyle === "relative", showAuthor: graphOpts.showAuthor }}
                 onSelect={(event) => selectRow(event, row)}
                 onContextMenu={(e) => rowContextMenu(e, row)}
                 onCheckoutRef={(name) =>
@@ -1068,7 +1081,7 @@ function WipRowView({
       <div className="wip-refs" style={{ width: BRANCH_COL_WIDTH }}>
         {worktree && (
           <span className="wip-worktree">
-            🌿 {worktree}
+            <Icon name="worktree" size={11} /> {worktree}
             {branch ? ` · ${branch}` : ""}
           </span>
         )}
@@ -1083,7 +1096,7 @@ function WipRowView({
         // WIP
       </span>
       <span className="wip-count">
-        ✎ {changed} changed file{changed === 1 ? "" : "s"}
+        <Icon name="pencil" size={11} /> {changed} changed file{changed === 1 ? "" : "s"}
       </span>
     </div>
   );
@@ -1175,10 +1188,13 @@ function GraphRowView({
             }}
             onDrop={(event) => r.kind !== "tag" && onRefDrop(event, r.name, r.isHead)}
           >
-            {r.kind === "tag" ? "🏷 " : ""}
-            {r.isHead ? "✓ 💻 " : ""}
-            {r.kind === "remoteBranch" || (r.kind === "localBranch" && collapsedRemotes.has(r.name)) ? "☁ " : ""}
-            {checkoutTarget === r.name ? "◌ " : ""}
+            {r.kind === "tag" && <Icon name="tag" size={11} />}
+            {r.isHead && <Icon name="check" size={11} />}
+            {(r.kind === "remoteBranch" ||
+              (r.kind === "localBranch" && collapsedRemotes.has(r.name))) && (
+              <Icon name="cloud" size={11} />
+            )}
+            {checkoutTarget === r.name && <Icon name="pending" size={11} />}
             {r.name}
           </span>
         ))}
