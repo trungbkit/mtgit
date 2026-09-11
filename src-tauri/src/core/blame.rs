@@ -1,4 +1,10 @@
 //! Per-line blame for a file at a commit (or the working tree).
+//!
+//! Each line carries an `age` bucket as well as its commit, because the
+//! heatmap gutter (G21) is a *per-file* ramp: the useful question is "which
+//! lines in this file are the recent ones", not "how old is this line in
+//! absolute terms". A file untouched for three years would be uniformly cold
+//! on an absolute scale and tell the reader nothing.
 
 use crate::error::{Error, Result};
 use git2::{BlameOptions, Oid, Repository};
@@ -16,6 +22,9 @@ pub struct BlameLine {
     pub summary: String,
     pub timestamp: i64,
     pub content: String,
+    /// Heatmap bucket, 0 (oldest change in this file) to 9 (newest). Lines
+    /// with no blame hunk get 0.
+    pub age: u8,
 }
 
 /// Blame `file`. When `at` (an oid) is given, blame is computed at that commit;
@@ -59,6 +68,7 @@ pub fn blame_file(repo: &Repository, file: &str, at: Option<&str>) -> Result<Vec
                     summary,
                     timestamp,
                     content: line.to_string(),
+                    age: 0,
                 });
             }
             None => out.push(BlameLine {
@@ -68,10 +78,35 @@ pub fn blame_file(repo: &Repository, file: &str, at: Option<&str>) -> Result<Vec
                 summary: String::new(),
                 timestamp: 0,
                 content: line.to_string(),
+                age: 0,
             }),
         }
     }
+    assign_age_buckets(&mut out);
     Ok(out)
+}
+
+/// Spread the file's own timestamp span over ten buckets.
+///
+/// Lines with no blame hunk carry `timestamp == 0` and are excluded from the
+/// span — one of them would otherwise stretch the ramp back to 1970 and flatten
+/// every real line into the coldest bucket.
+fn assign_age_buckets(lines: &mut [BlameLine]) {
+    let mut stamps = lines.iter().map(|l| l.timestamp).filter(|t| *t > 0);
+    let Some(first) = stamps.next() else { return };
+    let (min, max) = stamps.fold((first, first), |(lo, hi), t| (lo.min(t), hi.max(t)));
+
+    for line in lines.iter_mut() {
+        if line.timestamp <= 0 {
+            continue;
+        }
+        line.age = if max == min {
+            9
+        } else {
+            let span = (max - min) as f64;
+            ((line.timestamp - min) as f64 / span * 9.0).round() as u8
+        };
+    }
 }
 
 fn read_content(repo: &Repository, file: &str, at: Option<&str>) -> Result<Vec<u8>> {
@@ -108,5 +143,35 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].oid, a.to_string());
         assert_eq!(lines[0].line_no, 1);
+    }
+
+    /// The ramp is per-file, so the oldest surviving line is bucket 0 and the
+    /// newest is bucket 9 whatever the absolute dates are.
+    #[test]
+    fn blame_age_buckets_span_the_files_own_history() {
+        let t = TestRepo::new();
+        let a = t.commit_files("old", &[], &[("f.txt", "old\n")]);
+        let b = t.commit_files("new", &[a], &[("f.txt", "old\nnew\n")]);
+        t.set_head_to(b);
+
+        let lines = blame_file(&t.repo, "f.txt", Some(&b.to_string())).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].age, 0, "the line from the root commit is coldest");
+        assert_eq!(lines[1].age, 9, "the line from the tip is hottest");
+    }
+
+    /// A line libgit2 could not attribute has timestamp 0; letting it into the
+    /// span would drag the ramp back to the epoch and flatten the real lines.
+    #[test]
+    fn unattributed_lines_do_not_flatten_the_age_ramp() {
+        let mut lines = vec![
+            BlameLine { line_no: 1, oid: String::new(), author: String::new(), summary: String::new(), timestamp: 0, content: "?".into(), age: 0 },
+            BlameLine { line_no: 2, oid: "x".into(), author: "a".into(), summary: String::new(), timestamp: 1_600_000_000, content: "a".into(), age: 0 },
+            BlameLine { line_no: 3, oid: "y".into(), author: "b".into(), summary: String::new(), timestamp: 1_600_000_600, content: "b".into(), age: 0 },
+        ];
+        assign_age_buckets(&mut lines);
+        assert_eq!(lines[0].age, 0);
+        assert_eq!(lines[1].age, 0);
+        assert_eq!(lines[2].age, 9);
     }
 }

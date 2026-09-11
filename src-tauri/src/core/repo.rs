@@ -174,7 +174,8 @@ mod tests {
         let oid = repo.commit(Some("HEAD"), &sig, &sig, "first", &tree, &[]).unwrap();
 
         let wt_dir = dir.path().join("side");
-        worktree::add(&repo, "side", wt_dir.to_str().unwrap(), Some(&oid.to_string())).unwrap();
+        worktree::add(&repo, "side", wt_dir.to_str().unwrap(), Some(&oid.to_string()), false)
+            .unwrap();
 
         assert_eq!(open(main.to_str().unwrap()).unwrap().worktree, None);
         assert_eq!(open(wt_dir.to_str().unwrap()).unwrap().worktree.as_deref(), Some("side"));

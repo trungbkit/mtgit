@@ -1,25 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetStores } from "../../test/stores";
 import { useToasts } from "../../stores/toasts";
-import type { GitOpResult, PushTarget, RepoInfo } from "../../ipc/types";
-import { gitNetwork, pushTarget } from "../../ipc/commands";
+import type { GitOpResult, PushTarget, RemoteInfo, RepoInfo } from "../../ipc/types";
+import { gitNetwork, listRemotes, pushTarget } from "../../ipc/commands";
 import { requireNoPausedOperation } from "../../ipc/repoState";
-import { confirmDialog } from "../../stores/dialog";
-import { push, runNet } from "./net";
+import { confirmDialog, publishDialog } from "../../stores/dialog";
+import { useSession } from "../../stores/session";
+import { classifyFailure, push, runNet } from "./net";
 
-vi.mock("../../ipc/commands", () => ({ gitNetwork: vi.fn(), pushTarget: vi.fn() }));
+vi.mock("../../ipc/commands", () => ({
+  gitNetwork: vi.fn(),
+  pushTarget: vi.fn(),
+  listRemotes: vi.fn(),
+}));
 vi.mock("../../ipc/repoState", () => ({ requireNoPausedOperation: vi.fn() }));
-// Only `confirmDialog` is replaced: the store itself is left real, because
+// Only the dialog raisers are replaced: the store itself is left real, because
 // `resetStores` holds a reference to it.
 vi.mock("../../stores/dialog", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../stores/dialog")>()),
   confirmDialog: vi.fn(),
+  publishDialog: vi.fn(),
 }));
 
 const mockGitNetwork = vi.mocked(gitNetwork);
 const mockPushTarget = vi.mocked(pushTarget);
+const mockListRemotes = vi.mocked(listRemotes);
 const mockRequire = vi.mocked(requireNoPausedOperation);
 const mockConfirm = vi.mocked(confirmDialog);
+const mockPublish = vi.mocked(publishDialog);
 
 const repo = { path: "/repo", name: "repo" } as RepoInfo;
 
@@ -31,6 +39,10 @@ function target(over: Partial<PushTarget> = {}): PushTarget {
   return { branch: "feature", remote: "origin", hasUpstream: true, ...over };
 }
 
+function remote(name: string): RemoteInfo {
+  return { name, url: `https://example.com/${name}.git`, pushUrl: null, branches: 1 };
+}
+
 const toasts = () => useToasts.getState().toasts;
 const lastToast = () => toasts()[toasts().length - 1];
 
@@ -38,8 +50,12 @@ beforeEach(() => {
   resetStores();
   vi.mocked(mockGitNetwork).mockReset();
   vi.mocked(mockPushTarget).mockReset();
+  mockListRemotes.mockReset().mockResolvedValue([remote("origin")]);
   mockRequire.mockReset().mockResolvedValue(undefined);
   mockConfirm.mockReset().mockResolvedValue(true);
+  mockPublish
+    .mockReset()
+    .mockResolvedValue({ remote: "origin", remoteBranch: "feature", setUpstream: true });
 });
 
 /**
@@ -110,11 +126,11 @@ describe("push", () => {
     expect(mockGitNetwork).toHaveBeenCalledWith("/repo", "push", undefined, undefined);
   });
 
-  it("offers to publish an unpublished branch, then sets upstream", async () => {
+  it("raises the publish form for an unpublished branch, then sets upstream", async () => {
     mockPushTarget.mockResolvedValue(target({ hasUpstream: false }));
     mockGitNetwork.mockResolvedValue(result());
     await expect(push(repo)).resolves.toBe(true);
-    expect(mockConfirm).toHaveBeenCalledOnce();
+    expect(mockPublish).toHaveBeenCalledOnce();
     expect(mockGitNetwork).toHaveBeenCalledWith("/repo", "push", undefined, [
       "--set-upstream",
       "origin",
@@ -122,23 +138,42 @@ describe("push", () => {
     ]);
   });
 
-  it("does nothing when the publish offer is declined", async () => {
+  it("does nothing when the publish form is cancelled", async () => {
     mockPushTarget.mockResolvedValue(target({ hasUpstream: false }));
-    mockConfirm.mockResolvedValue(false);
+    mockPublish.mockResolvedValue(null);
     await expect(push(repo)).resolves.toBe(false);
     expect(mockGitNetwork).not.toHaveBeenCalled();
   });
 
-  it("names the resolved remote, which is not always origin", async () => {
-    mockPushTarget.mockResolvedValue(target({ hasUpstream: false, remote: "upstream" }));
+  /** STATUS C1: the form's whole reason to exist is that these can differ. */
+  it("writes a full refspec when the remote branch name was changed", async () => {
+    mockPushTarget.mockResolvedValue(target({ hasUpstream: false }));
+    mockPublish.mockResolvedValue({ remote: "fork", remoteBranch: "pr/feature", setUpstream: true });
+    mockListRemotes.mockResolvedValue([remote("origin"), remote("fork")]);
     mockGitNetwork.mockResolvedValue(result());
-    await push(repo);
-    expect(mockConfirm.mock.calls[0][0].message).toContain("upstream");
+
+    await expect(push(repo)).resolves.toBe(true);
     expect(mockGitNetwork).toHaveBeenCalledWith("/repo", "push", undefined, [
       "--set-upstream",
-      "upstream",
-      "feature",
+      "fork",
+      "feature:pr/feature",
     ]);
+  });
+
+  it("omits --set-upstream when the form says not to track", async () => {
+    mockPushTarget.mockResolvedValue(target({ hasUpstream: false }));
+    mockPublish.mockResolvedValue({ remote: "origin", remoteBranch: "feature", setUpstream: false });
+    mockGitNetwork.mockResolvedValue(result());
+    await push(repo);
+    expect(mockGitNetwork).toHaveBeenCalledWith("/repo", "push", undefined, ["origin", "feature"]);
+  });
+
+  it("offers the resolved remote as the default, which is not always origin", async () => {
+    mockPushTarget.mockResolvedValue(target({ hasUpstream: false, remote: "upstream" }));
+    mockListRemotes.mockResolvedValue([remote("origin"), remote("upstream")]);
+    mockGitNetwork.mockResolvedValue(result());
+    await push(repo);
+    expect(mockPublish.mock.calls[0][0].defaultRemote).toBe("upstream");
   });
 
   it("trusts git's verdict over a stale pre-flight read", async () => {
@@ -171,14 +206,15 @@ describe("push", () => {
     mockPushTarget.mockResolvedValue(target({ branch: null, hasUpstream: false }));
     await expect(push(repo)).resolves.toBe(false);
     expect(lastToast().message).toMatch(/Detached HEAD/);
-    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockPublish).not.toHaveBeenCalled();
   });
 
   it("explains a repository with no remote", async () => {
     mockPushTarget.mockResolvedValue(target({ remote: null, hasUpstream: false }));
+    mockListRemotes.mockResolvedValue([]);
     await expect(push(repo)).resolves.toBe(false);
     expect(lastToast().message).toMatch(/No remote configured/);
-    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockPublish).not.toHaveBeenCalled();
   });
 
   it("reports a failed target read rather than pushing blind", async () => {
@@ -186,5 +222,88 @@ describe("push", () => {
     await expect(push(repo)).resolves.toBe(false);
     expect(mockGitNetwork).not.toHaveBeenCalled();
     expect(lastToast()).toMatchObject({ kind: "error", message: "not a repository" });
+  });
+});
+
+/**
+ * STATUS C2, C3 and C7. Each of these used to surface as git's last line of
+ * output, which names the problem and not the way out.
+ */
+describe("classifyFailure", () => {
+  it("recognises a credential failure", () => {
+    expect(classifyFailure("fatal: Authentication failed for 'https://host/r.git/'")).toBe("auth");
+    expect(classifyFailure("git@host: Permission denied (publickey).")).toBe("auth");
+    expect(classifyFailure("could not read Username for 'https://host': terminal prompts disabled")).toBe(
+      "auth",
+    );
+  });
+
+  it("recognises a stale lease, and does not confuse it with a plain rejection", () => {
+    expect(
+      classifyFailure("! [rejected] main -> main (stale info)\nerror: failed to push some refs"),
+    ).toBe("lease");
+    expect(
+      classifyFailure("! [rejected] main -> main (non-fast-forward)\nhint: fetch first"),
+    ).toBe("nonFastForward");
+  });
+
+  it("recognises an autostash that landed in conflicts", () => {
+    expect(classifyFailure("Applying autostash resulted in conflicts.")).toBe("autostash");
+  });
+
+  it("returns null for a failure with no special recovery", () => {
+    expect(classifyFailure("fatal: not a git repository")).toBeNull();
+    expect(classifyFailure("")).toBeNull();
+  });
+});
+
+describe("failure recovery", () => {
+  it("offers the terminal for an auth failure, and opens it on yes", async () => {
+    mockGitNetwork.mockResolvedValue(
+      result({ success: false, code: 128, output: "fatal: Authentication failed" }),
+    );
+    await expect(runNet(repo, "push")).resolves.toBe(false);
+    expect(mockConfirm.mock.calls[0][0].confirmLabel).toBe("Open terminal");
+    expect(useSession.getState().terminalOpen).toBe(true);
+  });
+
+  it("leaves the terminal alone when the auth offer is declined", async () => {
+    mockConfirm.mockResolvedValue(false);
+    mockGitNetwork.mockResolvedValue(
+      result({ success: false, code: 128, output: "fatal: Authentication failed" }),
+    );
+    await runNet(repo, "push");
+    expect(useSession.getState().terminalOpen).toBe(false);
+  });
+
+  it("offers a fetch after a stale lease, and never force-pushes on its own", async () => {
+    mockGitNetwork
+      .mockResolvedValueOnce(result({ success: false, code: 1, output: "! [rejected] (stale info)" }))
+      .mockResolvedValueOnce(result());
+    await expect(runNet(repo, "push")).resolves.toBe(false);
+    expect(mockGitNetwork).toHaveBeenLastCalledWith("/repo", "fetch", undefined, [
+      "--all",
+      "--prune",
+    ]);
+    expect(
+      mockGitNetwork.mock.calls.some((call) => (call[3] ?? []).includes("--force")),
+    ).toBe(false);
+  });
+
+  it("says the stash was kept when an autostash pull conflicts", async () => {
+    mockGitNetwork.mockResolvedValue(
+      result({ success: false, code: 1, output: "Applying autostash resulted in conflicts." }),
+    );
+    await runNet(repo, "pull");
+    expect(lastToast()).toMatchObject({ kind: "error" });
+    expect(lastToast().message).toMatch(/stash was kept/);
+  });
+
+  it("still quotes git for a failure it has no advice about", async () => {
+    mockGitNetwork.mockResolvedValue(
+      result({ success: false, code: 1, output: "hint: x\nfatal: not a git repository" }),
+    );
+    await runNet(repo, "fetch");
+    expect(lastToast().message).toContain("fatal: not a git repository");
   });
 });

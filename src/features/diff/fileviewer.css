@@ -91,3 +91,25 @@
   flex-direction: column;
   overflow: hidden;
 }
+
+/* Revision stepper. Sits with the Blame/History actions because it answers the
+   same question they do — "what else happened to this file" — rather than
+   with the diff-mode toggle, which is about how the current one is drawn. */
+.fv-revnav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+.fv-revnav button {
+  padding: 0 6px;
+  min-width: 20px;
+  line-height: 18px;
+  font-size: 13px;
+}
+.fv-revnav button:disabled {
+  opacity: 0.35;
+}

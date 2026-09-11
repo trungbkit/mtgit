@@ -32,9 +32,9 @@ through and annotated as they land.
 > gaps). **P5 closed with commit search (G10)**, the last item in it; **P1 (clone / init /
 > remote management / start screen / tabs) landed 2026-09-11** and closed G1–G4 and G12.
 > **P6 landed 2026-09-11** (settings file, both themes, keybinding registry, SVG icon set),
-> closing G13–G15; **P7 is half in** — CI and a 154-test frontend suite exist, e2e and signing
-> do not. **P8 has started** — item 1 (worktrees in the UI, G18) and terminal links (G19) have
-> landed. Sections 2.4 and 4/P0 record the P0 work; the P2–P5 sections below
+> closing G13–G15; **P7 is half in** — CI and a frontend suite exist, e2e and signing
+> do not. **P8 is complete as of 2026-09-11** — all six items, closing G16–G28. Sections 2.4
+> and 4/P0 record the P0 work; the P2–P5 sections below
 > describe what was intended, not what shipped — where the two differ, STATUS.md is the record.
 >
 > **Revised after the GitLens pass:** §2.6 adds G16–G28 (gaps visible only once GitLens is
@@ -48,11 +48,13 @@ Measured, not assumed: `pnpm exec tsc --noEmit` exits 0, `vite build` succeeds, 
 0 ignored** at the time of that audit — the 50k-commit perf gate runs in the default suite.
 The suite is at **78 passed** after P5's search (25 tests for the grammar and its git mapping)
 and P1 (11 for clone, init and remote management), at **92** after P8 item 1 and terminal
-links (9 for worktrees and WIP-row placement, 5 for token resolution), and at **107** after P6
-(7 for the settings file, 7 for git identity, 2 for the diff whitespace option).
+links (9 for worktrees and WIP-row placement, 5 for token resolution), at **107** after P6
+(7 for the settings file, 7 for git identity, 2 for the diff whitespace option), and at
+**162** after the rest of P8 — `STATUS.md` §5 lists what those 55 pin and why each needed a
+test rather than a look.
 
-**There is now a frontend runner too.** P7 added Vitest and **154 tests**, so the gate is five
-commands rather than four:
+**There is now a frontend runner too.** P7 added Vitest; the suite is at **204 tests** after
+P8. The gate is five commands rather than four:
 
 ```
 cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
@@ -114,7 +116,7 @@ a user who switches from it to MTGit today. §2.6 adds the gaps that only become
 | G7 | **Thin commit form** | One textarea. Missing summary/description split, 50/72 guidance, amend-message prefill, co-author trailer, commit template, GPG signing toggle, "stage all and commit". |
 | G8 | **No interactive rebase** | No reorder / squash / fixup / drop / edit / reword. |
 | G9 | **No undo/redo** | Toolbar buttons are hardcoded `disabled`. GitKraken's undo is a signature safety feature. |
-| ~~G10~~ | ~~**No commit search / filter**~~ ✅ **closed in P5** | GitLens's grammar, parsed in Rust (`core/search.rs`), with highlight / filter / select modes, hit navigation across unloaded pages, scroll markers, and `ref:` as the branch-scoped ("solo") view. Outstanding: the minimap (P8 item 3) and value autocomplete for contributors and paths — `docs/feature-requirements/08-search-and-filter.md` §7.1. |
+| ~~G10~~ | ~~**No commit search / filter**~~ ✅ **closed in P5** | GitLens's grammar, parsed in Rust (`core/search.rs`), with highlight / filter / select modes, hit navigation across unloaded pages, scroll markers, and `ref:` as the branch-scoped ("solo") view. The minimap and contributor autocomplete followed in P8; `file:` path autocomplete is the only remainder — `docs/feature-requirements/08-search-and-filter.md` §7.1. |
 
 ### 2.3 Interaction fidelity
 
@@ -167,19 +169,19 @@ turns G10 from a design problem into an implementation one.
 
 | # | Gap | Detail |
 |---|---|---|
-| G16 | **Graph has three fixed columns** | GitLens's graph carries BRANCH/TAG, GRAPH, MESSAGE, **Author, Changes, Date, SHA** — reorderable by dragging headers, toggleable by right-clicking them, persisted per repo. The Changes column (green added / red deleted diffstat bar) is the highest-value of the missing ones: it shows the shape of a commit without selecting it. |
-| G17 | **No minimap** (scroll markers ◐ **done**) | P5's search shipped the markers this row demanded — hits, HEAD and the selection at their proportional positions in the whole history (`ScrollMarkers`), sampled to 400 marks so a 5,000-hit query does not become a solid bar. The **minimap** proper — activity over the whole history beside the markers — is still unbuilt, and stays in P8 item 3. |
+| ~~G16~~ | ~~**Graph has three fixed columns**~~ ✅ **closed in P8 item 3** | Author / Changes / Date / SHA, toggleable and reorderable from the gear popover, persisted in `settings.graphColumns` — a preference, not session state, which is why `graphOpts.showAuthor` is gone rather than wrapped. Reorder is ▲/▼ rather than header dragging: the popover is 200px wide and drag inside it would fight the graph's own row dragging. Changes is the one column that costs a diff per row, so it is off by default and fetched per visible window in 50-row blocks. |
+| ~~G17~~ | ~~**No minimap**~~ ✅ **closed in P8 item 3** | The markers landed with P5's search; the minimap followed. It is a *density* strip beside them, shown only while a search is submitted — "where are my matches clustered" has no answer when nothing is searched for. Bucketed and shaded by count, because at 12,000 commits in 600px each pixel row is twenty commits and one mark per hit loses every cluster to overlap. |
 | ~~G18~~ | ~~**Worktrees exist in the backend and nowhere in the UI**~~ ✅ **closed in P8 item 1** | The sidebar WORKTREES section lists every worktree — main included, which `Repository::worktrees()` omits — with add, open-as-a-tab and remove; "Open in worktree…" sits beside Checkout on branch menus and graph rows; the toolbar names the linked worktree the tab is in; and each *dirty* worktree gets its own WIP row on its own HEAD's lane. Backend grew `remove`, a main-worktree-aware `list`, and ref-aware `add`. |
 | ~~G19~~ | ~~**No terminal links**~~ ✅ **closed in P8 item 6** | It was the regex plus a call into the graph-selection path this row predicted, with one correction: the regex alone cannot tell "main" in a branch listing from "main" in a sentence, so candidates are extracted in `lib/terminalLinks.ts` and *resolved* by `core/terminal.rs` against the repository. A token only becomes a link when git can resolve it. Ranges reveal their right end; not-yet-loaded commits pull pages until they turn up. |
-| G20 | **No autolinks** | Issue references in commit messages (`#123`, `ABC-456`) are inert text in the message column and the detail panel. Link out only — resolving issue *state* is provider integration (§2.5). |
-| G21 | **File viewer has no annotations** | Blame exists (`core/blame.rs`) as a list. Missing: the age **heatmap** gutter, a **recent-changes** annotation in the file-at-commit viewer, and **rich hovers** (message, author, dates, file count, actions) over blame rows, graph rows and ref pills — one shared hover component, not three. |
-| G22 | **History does not follow renames; no revision navigation** | `core/history.rs` has no `--follow`, and there is no line history (`-L`). Blame across a refactor is therefore untrustworthy. No prev/next stepping through a file's own versions. |
-| G23 | **No merge-target concept, no jump-to navigation** | Ahead/behind is computed against the upstream only. GitLens also tracks the **merge target** — the branch this one is destined to merge into — and offers jump-to-HEAD / upstream / merge-target. Being 40 behind the merge target while level with the upstream is currently invisible. |
-| G24 | **Detail panel is a single slot** | Selecting a branch or opening a comparison destroys the commit the user was reading. GitLens stacks details as sheets with a back affordance; it is also what makes "compare two commits" usable rather than a mode. |
-| G25 | **Conflict resolution is a per-file mode** | P4 shipped a 3-pane editor per file. GitLens collects every conflicted file into one panel with cross-file region navigation. An eleven-file rebase stop is navigated dozens of times, and a mode boundary per file is dozens of round trips. Subsumes STATUS C4 (panes labelled "Ours"/"Theirs"). |
-| G26 | **Interactive rebase does not predict conflicts** | GitLens marks, before execution, which rows will conflict. It is the feature that changes how the plan editor feels — reordering is otherwise a guess about which guess costs twenty minutes. The only genuinely new *algorithm* in this table: trial-apply the plan against a scratch index without moving any ref. |
-| G27 | **Command palette is a flat action list** | GitLens's Git Command Palette walks the user through a command's arguments step by step. Ours fires actions with no argument-gathering, so anything needing a target is unreachable from `⌘K`. |
-| G28 | **No contributors view** | No way to see who has committed and how much. It is also the natural picker for `author:` search (G10) and for co-author trailers (G7), which is why it is cheap to justify. |
+| ~~G20~~ | ~~**No autolinks**~~ ✅ **closed in P8 item 6** | `core/autolink.rs` reads per-repo patterns from config and adds a built-in `#` pattern **only** for hosts whose issue URL shape we know — a guess at an unknown host produces a link that 404s, and a broken link is worse than plain text because the user follows it. `lib/autolinks.ts` splits the text (longest match wins; no reference may start mid-word, so `#ff0012` stays a colour). Link out only, exactly as this row said. |
+| ~~G21~~ | ~~**File viewer has no annotations**~~ ✅ **closed in P8 item 6** | The heatmap ramp is **per file** (`blame_file` returns an age bucket): "which lines here are recent" is the useful question, and an absolute scale renders an untouched file uniformly cold. One shared `CommitHover`, as this row asked — it fetches on hover rather than prefetching thousands of lines' worth, shares the commit panel's query key, and flips rather than clips near the bottom of a scroll container. The separate *recent-changes* annotation is not built; the heatmap and hover answer the same question. |
+| ~~G22~~ | ~~**History does not follow renames; no revision navigation**~~ ✅ **closed in P8 item 6**, pulled forward as a correctness fix | `file_log(.., follow)` keeps the cheap pathspec walk and falls back to a full rename-detected diff only at the commit where the tracked path appears as `Added` — that is the only place a rename can hide, because a pathspec filters the old name out and makes the rename look like an add. `line_log` maps a range backwards hunk by hunk. Following defaults **on**: not following is not a cheaper view of the same answer, it is a wrong one. Revision navigation steps through the *file's* own versions, which on a busy repo is far from "the previous commit". |
+| ~~G23~~ | ~~**No merge-target concept, no jump-to navigation**~~ ✅ **closed in P8 item 6** | Git has no config for "merge target", so the resolution rule is ours and lives at `refs::merge_target` rather than spread across the UI: an explicit config override, then `refs/remotes/<remote>/HEAD`, then the first conventional name that exists. A branch is never its own merge target. Jump-to is one control, not three buttons — the destinations are alternatives and only HEAD always exists. Per-row unpushed/unpulled markers came with it. |
+| ~~G24~~ | ~~**Detail panel is a single slot**~~ ✅ **closed in P8 item 4** | Sheets with a crumb trail; compare is a sheet rather than a mode, and following a parent link is a detour that leaves the row you came from where it was. The base of the stack stays the graph selection rather than being copied into the new store — one question, one answer, which is the shape defect A1 had. |
+| ~~G25~~ | ~~**Conflict resolution is a per-file mode**~~ ✅ **closed in P8 item 2** | One `conflict_set` call feeds a panel whose `n`/`p` cross file boundaries, with `conflict i of n · file j of k`. It did subsume C4: the panes are named by ref and tinted with each side's lane colour. The correction to this row is that naming the sides is not cosmetic — during a rebase `ours` is the branch you are rebasing **onto**, and two tests pin merge and rebase separately for that reason. |
+| ~~G26~~ | ~~**Interactive rebase does not predict conflicts**~~ ✅ **closed in P8 item 5** | It was the only genuinely new algorithm, as predicted. `core/rebase_predict.rs` carries a base tree through in-memory three-way merges. Two corrections to this row: conflicts **cascade** (a reorder of two commits touching one line predicts two, because git stops twice), and "without moving any ref" is true but "writes nothing" is not — unreferenced tree objects are written, because git2's merge takes `Tree` handles. Both are stated in the module doc rather than glossed. |
+| ~~G27~~ | ~~**Command palette is a flat action list**~~ ✅ **closed in P8 item 6** | Commands declare *steps*; the palette walks them with a breadcrumb, and Escape or Backspace-on-empty undoes the last choice rather than closing — closing is what Escape does at the first step, where there is nothing to undo. It also deleted the row-per-branch expansion that used to crowd out every real command, which is how it closed STATUS B7. |
+| ~~G28~~ | ~~**No contributors view**~~ ✅ **closed in P8 item 6** | A collapsed sidebar section, capped with "show all" — a reference list, not a navigation tree, and four hundred contributors would push every other section off the screen. It does serve the two pickers this row named. Co-authorship is counted **separately** from authorship: someone with twenty co-authored commits and none of their own is a name worth offering in a trailer picker and a misleading entry in a "top committers" list. |
 
 `docs/feature-requirements/00-overview.md` §8.2 records what was ruled **out** — Git CodeLens
 and caret-line blame (MTGit has no editing surface), VS Code panel/layout management, the
@@ -394,9 +396,10 @@ records the test coverage this still owes (CRLF, no-trailing-newline, added-line
 
 ### P3 — Commit experience + undo — ✅ **DONE** → closed G7, G9
 
-Shipped as summary/description, amend, hook handling, and the undo/redo journal. Outstanding
-against the specs: the co-author picker and `commit.template` (G7's last two items, now
-criteria in `01-commit.md`), and the inline Undo on mutation toasts (§3.3).
+Shipped as summary/description, amend, hook handling, and the undo/redo journal. Its three
+leftovers — the co-author picker, `commit.template` (G7's last two items, now criteria in
+`01-commit.md`) and the inline Undo on mutation toasts (§3.3) — were **closed by P8 item 6**.
+`commit.gpgsign` passthrough with a per-commit toggle is still the one unbuilt line below.
 
 - Commit form: summary input (with 50-char soft counter) + description textarea (72-col guide),
   amend prefills the previous message, co-author trailer picker, `commit.template` support,
@@ -414,9 +417,9 @@ labelled as not undoable.
 
 ### P4 — Conflict resolution editor — ✅ **DONE** → closed G6
 
-Shipped as a 3-pane editor with per-file take-side. Outstanding: pane labels still read
-"Ours"/"Theirs" (STATUS C4) and resolution is a per-file mode rather than one unified panel
-(G25) — both now criteria in `05-merge.md` §5, and both carried into P8.
+Shipped as a 3-pane editor with per-file take-side. Its two leftovers — panes labelled
+"Ours"/"Theirs" (STATUS C4) and resolution as a per-file mode rather than one unified panel
+(G25) — became criteria in `05-merge.md` §5 and were **closed by P8 item 2**.
 
 - Backend: `conflict_detail(file)` reading index stages 1/2/3 (`index.conflicts()`) → base /
   ours / theirs blobs, plus a 3-way merged buffer with markers; `resolve_conflict(file, content)`
@@ -448,8 +451,8 @@ Shipped as a 3-pane editor with per-file take-side. Outstanding: pane labels sti
     child, and an edge between them asserts a parentage that does not exist. The footer says the
     topology is not continuous, and entering filter mode pulls the rest of the history in,
     because "showing 37 of 12,481" must not be counting our own pagination.
-  - Outstanding: the minimap (P8 item 3) and value autocomplete for contributors and paths
-    (needs G28). `docs/feature-requirements/08-search-and-filter.md` §7.1 is the list.
+  - The minimap and `author:` autocomplete followed in P8; **`file:` path autocomplete** is the
+    only remainder. `docs/feature-requirements/08-search-and-filter.md` §7.1 is the list.
 
   The original specification, kept because it is still the contract: a graph-header search, specified in full in
   `docs/feature-requirements/08-search-and-filter.md`. **Use GitLens's grammar rather than
@@ -537,7 +540,8 @@ were not clicked through.
   format gate would fail on the first run for reasons unrelated to any change. It has still
   never *run* — expect Windows path and line-ending fallout on first green, which is the point
   of standing it up.
-- **Frontend tests** ✅ — Vitest + Testing Library + jsdom, **154 tests** over the state machines
+- **Frontend tests** ✅ — Vitest + Testing Library + jsdom, **154 tests at the time** (204 after
+  P8) over the state machines
   that had nothing checking them: the session store's tab rules and recent-repo migration, the
   search store's three modes and hit navigation, the settings store, `lib/keys`, `refname`,
   `cloneurl`, `terminalLinks`, `DialogHost`, and — the two the STATUS §1 record singled out as
@@ -565,12 +569,12 @@ were not clicked through.
 **Exit — not yet met:** a stranger can build all three platforms from a tag, but not install a
 signed one.
 
-### P8 — GitLens-derived surfaces (2–2.5 weeks) → closes G16–G28 — **items 1 and 6's terminal links done**
+### ~~P8 — GitLens-derived surfaces~~ → closes G16–G28 — ✅ **DONE (2026-09-11)**
 
-Everything in §2.6. It is one phase because the items share the graph and the detail panel, not
-because they ship together — most are independently landable, and the ordering below is by
-dependency, not priority. `docs/feature-requirements/STATUS.md` §6 is the criterion-level
-backlog; each item there is already marked against its own doc.
+Everything in §2.6. It was one phase because the items share the graph and the detail panel,
+not because they shipped together — most were independently landable, and the ordering below is
+by dependency, not priority. `docs/feature-requirements/STATUS.md` §6 is the criterion-level
+record of what each one closed.
 
 1. **Worktrees in the UI (G18)** — ✅ **DONE.** All four parts landed, plus the backend gaps
    they exposed. Three decisions worth knowing:
@@ -593,45 +597,88 @@ backlog; each item there is already marked against its own doc.
      which repository it is acting on. Opening it reaches the same place honestly, and the tab
      strip P1 built is what makes that cheap. Recorded as a deviation, not a completion.
 
-   Two §7 criteria in `02-checkout.md` remain: **B8's detached case** (a worktree from a bare
-   commit gets a branch named after the worktree, not a detached HEAD — git2's
-   `WorktreeAddOptions` wants a reference) and the **worktree-holds-branch dialog**, which is
-   still git's raw refusal.
-2. **Unified conflict panel (G25)** — reworks P4's per-file editor into one panel with cross-file
-   region navigation (`n`/`p` crossing file boundaries, `conflict i of n · file j of k`), and
-   relabels the panes by ref with lane colour, closing STATUS C4. Prerequisite for item 5.
-3. **Graph column model + gutter (G16, G17)** — configurable/reorderable/toggleable columns with
-   Author / Changes / Date / SHA; ~~scroll markers~~ and an on-search minimap. The scroll markers
-   landed **with** search in P5, for the reason this line gives: a search whose hits cannot be
-   located in the scrollbar is half a feature. `ScrollMarkers` in `GraphView` is where they live,
-   and the minimap belongs beside them.
-4. **Detail stack (G24)** — push details as sheets with a back affordance; makes
-   compare-two-commits a sheet rather than a mode.
-5. **Interactive-rebase conflict prediction (G26)** — the one new algorithm here. Trial-apply the
-   plan against a scratch index (temp worktree, or in-memory `git2` merge per step) and mark the
-   rows that will clash, recomputing on every reorder. **No ref moves and nothing is written to
-   the repo to find out.** It is an estimate; label it as one — a clean prediction must not read
-   as a guarantee.
-6. **The cheap independent wins**, in value-per-hour order:
-   ~~**terminal links (G19)**~~ — ✅ **DONE.** `core/terminal.rs` resolves a token against the
-   repository and `lib/terminalLinks.ts` finds the candidates; xterm's link provider asks per
-   hovered line, so it is one batched IPC call per line the mouse passes over. The decision
-   "is this a ref" stays on the git side, which is what keeps prose from becoming links —
-   `prose_and_filenames_do_not_become_links` pins it. Reveal pulls pages until the commit is
-   loaded, the same way hit navigation does.
-   The rest, still outstanding:
-   **blame heatmap + rich hovers + recent-changes annotation (G21)** — CSS and one shared hover
-   component over data we already fetch;
-   **autolinks (G20)** — per-repo patterns, link out only, no API calls;
-   **merge target + jump-to navigation (G23)** and per-row ahead/behind markers;
-   **contributors view (G28)**, which is also the `author:` and co-author picker;
-   **`--follow` / `-L` history and revision navigation (G22)** — without `--follow`, blame
-   across a refactor is quietly wrong, which makes this a correctness item, not a polish one;
-   **guided command palette (G27)**.
+   Both `02-checkout.md` §7 leftovers are now closed too: **B8's detached case** goes through a
+   scratch reference that is deleted once the worktree's own HEAD is moved off it — which is
+   what git does internally, and is the only route git2 offers, since `WorktreeAddOptions`
+   insists on a reference — and the **worktree-holds-branch dialog** names the holder via
+   `worktree_holding` and offers to open it as a tab.
+2. **Unified conflict panel (G25)** — ✅ **DONE.** One panel with cross-file region navigation
+   (`n`/`p` crossing file boundaries, `conflict i of n · file j of k`), panes relabelled by ref
+   with lane colour. Closes STATUS C4. Two things the plan did not anticipate:
+   - **The region cursor is computed from the live textarea, not from `conflict_set`.** The user
+     edits the output; a cursor keyed to the server's list points at a region that no longer
+     exists. The backend's list is what makes *cross-file* counting possible, which is a
+     different question.
+   - **Naming the sides is the correctness fix, not the cosmetic one.** `conflict_sides` reads
+     the rebase state directory for `head-name` and `onto`, because during a rebase `ours` is
+     the branch you are rebasing **onto** — the opposite of what almost everyone assumes.
+     `a_merge_conflict_names_both_branches` and
+     `a_rebase_conflict_names_the_base_as_ours_and_the_replayed_branch_as_theirs` pin the two
+     directions separately for exactly that reason.
+3. **Graph column model + gutter (G16, G17)** — ✅ **DONE.** Configurable, reorderable,
+   toggleable columns (Author / Changes / Date / SHA), scroll markers (which landed with search
+   in P5) and the on-search minimap. Three decisions:
+   - **Columns are a persisted preference**, in `core/settings.rs` + `stores/settings.ts`. The
+     old `graphOpts.showAuthor` in the session store was exactly the second source of truth the
+     conventions forbid, and it is deleted rather than wrapped.
+   - **The Changes column is the only expensive one** — a diff per row — so it is off by default
+     and fetched per *visible window*, rounded to a 50-row block so dragging the scrollbar is
+     not a fetch per frame. A row with no counts yet shows a dash, never a zero.
+   - **The minimap is a density strip, not a scaled graph.** At 12,000 commits in 600px of
+     height each pixel row is twenty commits; one mark per hit loses every cluster to overlap.
+     Clicking a bucket jumps to its first *hit* rather than to the offset, because the user is
+     looking for a match and landing near one is not landing on one.
+4. **Detail stack (G24)** — ✅ **DONE.** Details push as sheets with a back affordance, and
+   compare-two-commits is a sheet rather than a mode. The base of the stack is deliberately
+   *not* in the new store: it is the graph selection, which stays the single source of truth
+   for "which row is highlighted", and selecting a row clears the stack — clicking a commit
+   means "look at this", not "add a layer".
+5. **Interactive-rebase conflict prediction (G26)** — ✅ **DONE**, and it was the one genuinely
+   new algorithm as predicted. `core/rebase_predict.rs` replays the plan as in-memory
+   three-way merges, carrying a base tree forward. Three findings worth recording:
+   - **Conflicts cascade, and that is correct.** Reordering two commits that touch the same line
+     predicts *two* conflicts, because git stops twice — once on the reorder, once on the
+     resolution. The carried-forward guess (favouring the incoming side) is what makes the
+     second prediction possible at all, and is also why a later prediction is weaker than an
+     earlier one.
+   - **"Writes nothing to the repo" turned out not to be quite true**, and the honest version is
+     in the module doc: no ref moves, no index writes, no `ORIG_HEAD`, no working tree — but
+     *unreferenced tree objects are written*, because git2's merge takes `Tree` handles and the
+     only way to turn a merged index back into one is to write it. `git gc` prunes them.
+   - **It never gates Start Rebase**, per this document's own risk table, and it is warn-toned
+     rather than danger-toned: a red row would read as a refusal rather than a forecast.
+6. **The cheap independent wins** — ✅ **all done**, in the value-per-hour order this list gave:
+   **terminal links (G19)** — `core/terminal.rs` resolves a token against the repository and
+   `lib/terminalLinks.ts` finds the candidates; xterm's link provider asks per hovered line, so
+   it is one batched IPC call per line the mouse passes over. The decision "is this a ref" stays
+   on the git side, which is what keeps prose from becoming links —
+   `prose_and_filenames_do_not_become_links` pins it.
+   **`--follow` / `-L` history and revision navigation (G22)** — pulled forward out of order, as
+   §8 said to, because it is a correctness fix. Following only pays for a full rename-detected
+   diff at the one commit where the tracked path appears as `Added`; a pathspec filters the old
+   name out, which is what makes a rename look like an add. `-L` maps the range backwards hunk
+   by hunk, so an insertion above it moves it.
+   **blame heatmap + rich hovers (G21)** — a per-file ramp, because "which lines here are
+   recent" is the useful question; an absolute scale renders an untouched file uniformly cold
+   and says nothing. Hovers fetch on hover and share the commit panel's query key.
+   **autolinks (G20)** — per-repo patterns plus a built-in only for hosts whose issue URL we
+   actually know. Link out only, no API calls — a guess at an unknown host produces a link that
+   404s, and a broken link is worse than plain text because the user follows it.
+   **merge target + jump-to navigation (G23)** and per-row unpushed/unpulled markers — the
+   resolution rule git does not have is documented at `refs::merge_target` rather than spread
+   across the UI.
+   **contributors view (G28)** — also the `author:` autocomplete and the co-author picker, which
+   is why co-authorship is counted separately from authorship.
+   **guided command palette (G27)** — commands declare *steps*; the palette walks them with a
+   breadcrumb, and Escape or Backspace-on-empty undoes the last choice rather than closing. It
+   also deleted the row-per-branch expansion that used to crowd out every real command, which
+   is how it closed STATUS B7.
 
-**Exit:** the graph answers the three questions it cannot answer today — *which* commits are
-unpushed, *where* is the commit I am looking for, and *what will this rebase cost me* — and no
-GitLens feature is absent by accident rather than by the §2.5 / overview §8.2 decision.
+**Exit — met.** The graph answers the three questions it could not: *which* commits are unpushed
+(per-row markers), *where* is the commit I am looking for (minimap + scroll markers), and *what
+will this rebase cost me* (prediction). No GitLens feature is absent by accident rather than by
+the §2.5 / overview §8.2 decision — the two that remain unbuilt, `+N` ref overflow and ghost
+refs on hover, are named in `STATUS.md` §6 rather than merely missing.
 
 ---
 
@@ -677,16 +724,27 @@ wip_rows() -> [{ worktree, lane, color, headIndex, changed, isCurrent }]
                                         # DONE — its own command, not folded into get_graph:
                                         # it costs a status scan per worktree, and get_graph
                                         # runs once per scroll page
-predict_rebase_conflicts(onto, todo[]) -> [{ index, files[] }]   # trial-apply, moves no refs
-conflict_set() -> [{ file, kind, regions[] }]                    # every conflicted file at once
-blame_file(file, at)                    # DONE — add age buckets for the heatmap ramp
-file_log(file, limit, follow)           # follow: --follow (G22)
-line_log(file, start, end, limit)       # -L (G22)
-merge_target(branch) -> { ref, ahead, behind }
-contributors() -> [{ name, email, commits, lastCommit }]
+predict_rebase_conflicts(onto, todo[]) -> [{ index, files[] }]   # DONE — moves no ref, writes
+                                        # no index; it *does* write unreferenced tree objects,
+                                        # because git2's merge takes Tree handles
+conflict_set() -> { kind, oursLabel, theirsLabel, files[] }      # DONE — every conflicted file
+                                        # at once, plus the two sides named and lane-coloured
+blame_file(file, at)                    # DONE — carries a per-file age bucket for the heatmap
+file_history(file, limit, follow)       # DONE — --follow (G22)
+line_history(file, start, end, limit)   # DONE — -L (G22)
+path_at_commit(file, oid)               # DONE — the name a file had before a rename
+merge_target(branch) -> { ref, oid, ahead, behind, source }      # DONE — `source` says which
+                                        # rule resolved it, so a surprise is explainable
+merge_relation(target, source)          # DONE — is a fast-forward even possible (STATUS C6)
+list_contributors(limit?)               # DONE — co-authorship counted separately
+commit_stats(oids[])                    # DONE — batched, for the graph's Changes column
+commit_template()                       # DONE — `commit.template`, comments stripped
+worktree_holding(branch)                # DONE — who already has it checked out
+unset_upstream(local)                   # DONE — the prune-orphan recovery (STATUS C8)
 resolve_terminal_tokens(tokens[]) -> [{ token, kind, oid, label }]   # DONE — batched per
                                         # hovered line; only resolvable tokens come back
-autolink_patterns()                     # per-repo patterns + a built-in for origin's host
+autolink_patterns()                     # DONE — per-repo patterns + a built-in only for hosts
+                                        # whose issue URL shape we actually know
 ```
 
 Two contract notes that are easy to get wrong:
@@ -698,8 +756,14 @@ Two contract notes that are easy to get wrong:
   index to scroll to the hit *after* loading the page the hint named — and a `null` index is how
   a hit the graph does not contain (a stash commit) reports itself instead of being dropped.
 - `predict_rebase_conflicts` is read-only and therefore takes **no op guard** (invariant 2), and
-  must leave no trace: no ref moves, no index writes, no `ORIG_HEAD`. If it needs a worktree, it
-  needs a temporary one it removes.
+  leaves no trace a user can see: no ref moves, no index writes, no `ORIG_HEAD`, no working tree
+  — it never needed a temporary one, because git2's `merge_trees` works in memory. The one place
+  the promise had to be weakened: **unreferenced tree objects are written**, because that merge
+  takes `Tree` handles and the only way to turn a merged index back into one is to write it.
+  `git gc` prunes them and nothing points at them; the module doc says so rather than hiding
+  behind "read-only".
+- `conflict_set` also takes no op guard, and that has to stay true: the panel refetches after
+  every resolve, and suppressing the watcher on a *read* would hide the user's own editor saves.
 
 ---
 
@@ -715,7 +779,7 @@ Two contract notes that are easy to get wrong:
 | **Windows has never been built.** | CI on all three OSes lands in P7, but run a manual Windows build **now** — P0 is done, and the longer it waits the worse the path/CRLF debt. (P0 note: the D4 deadlock tests are `#[cfg(unix)]`, so that path is unverified on Windows.) |
 | **Scope creep into provider integrations.** | §2.5 is the contract: PR/issue panels are out until P7 ships. `docs/feature-requirements/00-overview.md` §8.2–§8.3 extends that contract over GitLens's whole account-gated tier, so "GitLens has it" is not an argument for building it. |
 | **GitLens as a reference is licence-shaped.** Its `plus/` tree (Launchpad, AI, agents, Cloud Patches) is under `LICENSE.plus`, not MIT — and that is precisely the half whose features are most tempting to copy. | Read `plus/` for understanding only; never lift code from it. For the MIT half, matching *behaviour* is free but copying *code* owes attribution — cite the source file in a comment. §2.5 keeps the whole `plus/` feature set deferred anyway, which makes this mostly self-enforcing. |
-| **Conflict prediction (G26) can be wrong**, and a wrong prediction is worse than none: a clean forecast that then conflicts destroys trust in the plan editor. | Label it an estimate in the UI, recompute on every reorder, and never gate Start Rebase on it. Test it against a fixture with a known-conflicting reorder, and against one where the conflict only appears *after* a squash — the case a naive per-commit check misses. |
+| ~~**Conflict prediction (G26) can be wrong**, and a wrong prediction is worse than none.~~ | ✅ **Discharged in P8 item 5**, as prescribed: labelled an estimate, recomputed (debounced) on every reorder, warn-toned rather than danger-toned, and never gating Start Rebase. Tested against the reorder case and — in the shape this row asked for, a conflict a per-commit check cannot see — a **dropped prerequisite**, where each commit is individually fine and only the plan conflicts. One thing the row did not foresee: the prediction **cascades**, because carrying a guessed resolution forward is the only way later steps can be predicted at all. That is faithful to git, which also stops twice, and the module doc says a later prediction is weaker than an earlier one. |
 | ~~**Search values reach the real `git` binary** (invariant 6), so a term beginning with `-` is command injection rather than a formatting bug.~~ | ✅ **Discharged in P5.** `no_operator_lets_a_leading_dash_reach_git_as_an_option` asserts, per operator, that a value beginning with `-` is either attached to its flag, after `--`, or rejected. `ref:` and `commit:` reject; the rest attach. Note that search does **not** go through `shellout.rs` — that path accepts fetch/pull/push only — so the guard lives in `core/search.rs::guard_standalone`. |
 
 ---
@@ -728,24 +792,29 @@ Two contract notes that are easy to get wrong:
 | ~~P1~~ | ~~Clone/init/remotes/start screen/tabs~~ | ✅ **done** (clone + init + remote management + start screen + first-class tabs) |
 | ~~P2~~ | ~~Hunk + line staging~~ | ✅ **done** (`applyPatch` + per-hunk/per-line UI) |
 | ~~P3~~ | ~~Commit form + undo journal~~ | ✅ **done** (summary/description, amend, hooks, undo/redo) |
-| ~~P4~~ | ~~Conflict editor~~ | ✅ **done** (3-pane + per-file take-side); labels and region nav outstanding |
+| ~~P4~~ | ~~Conflict editor~~ | ✅ **done** (3-pane + per-file take-side); the labels and cross-file region nav it left outstanding landed with P8 item 2 |
 | ~~P5~~ | ~~Search, drag-drop, interactive rebase~~ | ✅ **done** (search grammar in Rust + three result modes + scroll markers; drag-drop; interactive rebase) |
 | ~~P6~~ | ~~Settings, light theme, keybindings, icons~~ | ✅ **done** (settings file + identity, both themes, keybinding registry + cheat sheet, SVG icon set) |
-| P7 | CI, tests, packaging | ◐ **partly done** — CI, 154 frontend tests and the IPC check are in; e2e and signing/updater are not |
-| P8 | GitLens-derived surfaces (G16–G28) | 2–2.5 wk — **started**: item 1 (worktrees, G18) and terminal links (G19) done; items 2–5 and the rest of item 6 outstanding |
-| **Remaining** | P7's e2e + signing, P8 items 2–6 + the gaps in `docs/feature-requirements/STATUS.md` | **~2.5–3.5 wk** (one dev) |
+| P7 | CI, tests, packaging | ◐ **partly done** — CI, the frontend suite (204 tests) and the IPC check are in; e2e and signing/updater are not |
+| ~~P8~~ | ~~GitLens-derived surfaces (G16–G28)~~ | ✅ **done** — all six items; G16–G28 closed bar `+N` ref overflow and ghost refs on hover, both named in `STATUS.md` §6 |
+| **Remaining** | P7's **e2e + code signing**, and the short list in `docs/feature-requirements/STATUS.md` §4 (rebase ghosting, cherry-pick sequence progress, two flashes) | **~3–5 days of feature work, plus whatever the certificates and the runner take** |
 
-The UI/UX fidelity work in §3 is distributed across P1 (shell + start screen), P3 (undo toasts),
-P5 (drop affordances), P6 (tokens, density, icons) and P8 (columns, gutter, detail stack) rather
-than batched — a separate "make it look like GitKraken" phase at the end would mean rebuilding
-components twice.
+The UI/UX fidelity work in §3 was distributed across P1 (shell + start screen), P3 and P8 (undo
+toasts), P5 (drop affordances), P6 (tokens, density, icons) and P8 (columns, minimap, detail
+stack) rather than batched — a separate "make it look like GitKraken" phase at the end would
+have meant rebuilding components twice. It is done bar the four items in
+`docs/feature-requirements/STATUS.md` §4.
 
-P8 is deliberately sequenced **after** P7 rather than before it, despite containing items
-cheaper than anything in P6. The reason is that P7 stands up CI and the first frontend test
-runner, and P8 is the largest body of *frontend* work left in the plan — landing it against a
-suite that exists is worth more than landing it a fortnight sooner. The exception is anything in
-P8 that is a correctness fix rather than a feature: `--follow` in file history (G22), and the
-argument-injection guard that comes with search, should not wait for a phase boundary.
+P8 was deliberately sequenced **after** P7 rather than before it, despite containing items
+cheaper than anything in P6. The reason was that P7 stands up CI and the first frontend test
+runner, and P8 was the largest body of *frontend* work left in the plan — landing it against a
+suite that exists is worth more than landing it a fortnight sooner. **That call paid off**: the
+50 frontend tests P8 added are mostly over logic it extracted precisely because a runner existed
+to point them at (`lib/autolinks`, `lib/dropMenu`, `lib/undoToast`, `lib/coauthors`), and two of
+them — the drop menu's fast-forward computation and the undo capture — found their own bugs
+while being written. The exception the paragraph named held too: `--follow` (G22) was pulled
+forward out of order, because history that stops at a rename reports the wrong author for the
+code, which is a confident wrong answer rather than a missing feature.
 
 ## 8. Suggested order of attack
 
@@ -754,8 +823,12 @@ If you want the shortest path to "this feels like GitKraken":
 1. ~~**P0.D1 + P0.D2** — a stale or laggy graph undermines everything else.~~ ✅ done (all of
    P0 landed, not just D1/D2).
 2. ~~**P2** — hunk staging is the feature users notice missing within five minutes.~~ ✅ done.
-3. ~~**P3 undo** + toast affordance~~ ✅ done as a phase; the inline Undo *on toasts* is still
-   outstanding (§3.3), and it is a half-day that changes how safe the app feels.
+3. ~~**P3 undo** + toast affordance~~ ✅ **done, both halves.** The inline Undo *on toasts*
+   (§3.3) landed with P8: `lib/undoToast.ts`, wired into the graph's and the sidebar's shared
+   `run` helpers and into the interactive-rebase completion toast. It offers Undo only when the
+   journal actually **grew** — an unchanged label means the operation recorded nothing, and
+   undoing then would reverse the *previous* one. Two identical operations in a row therefore
+   lose the offer, which is a false negative and the right side to err on.
 4. ~~**P4** conflict editor~~ ✅ done; **P5** drag-drop and interactive rebase ✅ done.
 5. ~~**The defects in `STATUS.md` §1 first**, A1 in particular.~~ ✅ **done — all five.** The
    mutation seam (`src/ipc/repoState.ts`: `syncOperation` + `refreshRepo`) closed A1 and is now
@@ -769,25 +842,31 @@ If you want the shortest path to "this feels like GitKraken":
    stop and the one Rust test that pins the contract it rests on.
 6. ~~**P5-search (G10)**~~ ✅ **done**, together with the half of P8 item 3 it depended on: the
    scroll markers landed with it, because hits you cannot locate are half a search. The minimap
-   did not, and stays in P8.
+   followed in P8, beside them.
 7. ~~**P1.** Clone / init / remotes / start screen~~ ✅ **done.** The app is self-sufficient
    without the CLI: a user who has never opened a terminal can clone, init, manage remotes and
    work. It also picked up STATUS B3 and B4, which were blocked on the per-remote sidebar node
    this phase had to build anyway.
 8. ~~**P8 item 1 (worktrees).**~~ ✅ **done** — sidebar section with add/open/remove,
    "Open in worktree…" beside every Checkout, the active worktree named in the toolbar, and a
-   per-worktree WIP row on its own lane. Two `02-checkout.md` §7 criteria are left (the
-   detached-commit case and the worktree-holds-branch dialog).
+   per-worktree WIP row on its own lane. Both `02-checkout.md` §7 leftovers closed later in P8:
+   the detached-commit case and the worktree-holds-branch dialog.
 9. ~~**Terminal links (G19)**~~ ✅ **done** — the best value-per-hour item, as advertised.
-   The rest of P8 item 6's cheap wins are still there: blame heatmap + rich hovers,
+   ~~The rest of P8 item 6's cheap wins~~ ✅ **all done**: blame heatmap + rich hovers,
    autolinks, merge target + jump-to, contributors, `--follow` / `-L`, guided palette.
 10. ~~**P6**~~ ✅ **done** — settings file, both themes, the keybinding registry with its cheat
     sheet, and the SVG icon set; it also closed STATUS B9 and the ignore-whitespace option.
-11. **P7** ◐ — CI, the 154-test frontend suite and `check-ipc` landed; **e2e and code signing are
-    what is left**, and both need something this repo does not have yet (a driver on the runner,
-    and certificates).
-12. **The rest of P8** ← **next**, in the order §4/P8 gives: the unified conflict panel (item 2,
-    which subsumes STATUS C4 and unblocks two rebase items), then the column model and gutter,
-    the detail stack, conflict prediction, and item 6's cheap wins. `--follow` (G22) is the one
-    to pull forward out of order: without it, blame across a refactor is quietly wrong, which
-    makes it a correctness fix rather than a feature.
+10b. ~~**The rest of P8**~~ ✅ **done**, in the order §4/P8 gave: the unified conflict panel
+    (item 2, which did subsume STATUS C4 and did unblock two rebase items), then the column
+    model and the minimap, the detail stack, conflict prediction, and item 6's cheap wins.
+    `--follow` (G22) was pulled forward out of order as this line said to.
+11. **P7** ◐ ← **what is left.** CI, the frontend suite (204 tests) and `check-ipc` landed;
+    **e2e and code signing are the remainder**, and both need something this repository does not
+    have (a `tauri-driver` on the runner, an Apple Developer ID plus a notarytool password, a
+    Windows code-signing certificate, and an updater keypair). The secret names `tauri-action`
+    reads are already in `.github/workflows/release.yml`, so adding them is the whole change on
+    that side.
+12. **Then the four polish items in `docs/feature-requirements/STATUS.md` §4**, of which only
+    one is hard: in-progress rebase ghosting needs the graph to represent "a commit that will
+    exist", and inventing rows for those collides with `search_commits` returning row indices —
+    the same constraint that kept WIP rows out of the row list.

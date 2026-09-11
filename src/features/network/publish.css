@@ -1,0 +1,77 @@
+.publish-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  background: #0008;
+}
+.publish-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(460px, 92vw);
+  padding: 16px 18px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 20px 70px #000b;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.publish-dialog header h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.publish-dialog header p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.publish-dialog header code {
+  font-family: var(--font-mono);
+  color: var(--accent-text);
+}
+.publish-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.publish-dialog label > span {
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.publish-dialog input[type="text"],
+.publish-dialog input:not([type]),
+.publish-dialog select {
+  padding: 5px 7px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12.5px;
+}
+.publish-check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+}
+.publish-check span {
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+}
+.publish-check em {
+  font-style: normal;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.publish-error {
+  color: var(--danger);
+  font-size: 11.5px;
+}
+.publish-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

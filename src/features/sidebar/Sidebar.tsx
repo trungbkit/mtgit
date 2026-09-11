@@ -14,9 +14,11 @@ import {
   gitNetwork,
   listRefs,
   listRemotes,
+  listContributors,
   listSubmodules,
   listWorktrees,
   mergeAdvanced,
+  mergeRelation,
   openRepo,
   rebaseStandard,
   removeRemote,
@@ -29,10 +31,11 @@ import {
   stashDrop,
   stashList,
   stashPop,
+  unsetUpstream,
   updateSubmodules,
 } from "../../ipc/commands";
 import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
-import type { BranchInfo, RemoteInfo, WorktreeInfo } from "../../ipc/types";
+import type { BranchInfo, Contributor, RemoteInfo, WorktreeInfo } from "../../ipc/types";
 import { useSession } from "../../stores/session";
 import { seedSearch, useSearch } from "../../stores/search";
 import { toastError, useToasts } from "../../stores/toasts";
@@ -43,7 +46,11 @@ import { Icon, type IconName } from "../../components/Icon";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
 import { matches } from "../../lib/keys";
 import { copyText } from "../../lib/clipboard";
+import { Avatar } from "../../components/Avatar";
+import { timeAgo } from "../../lib/time";
 import { smartCheckout } from "../../lib/checkout";
+import { dropMenuItems } from "../../lib/dropMenu";
+import { captureUndoPoint, toastWithUndo } from "../../lib/undoToast";
 import "./sidebar.css";
 
 const EMPTY_HIDDEN_REFS: string[] = [];
@@ -132,6 +139,15 @@ export function Sidebar() {
     enabled: !!repo,
     queryFn: () => listRemotes(repo!.path),
   });
+  const { data: contributors } = useQuery({
+    queryKey: ["contributors", repo?.path],
+    enabled: !!repo,
+    queryFn: () => listContributors(repo!.path),
+    // A full-history walk is the most expensive thing the sidebar asks for,
+    // and the answer moves only when commits land — which a refresh
+    // invalidates anyway.
+    staleTime: 30_000,
+  });
 
   if (!repo) return <aside className="sidebar" />;
   const path = repo.path;
@@ -139,10 +155,13 @@ export function Sidebar() {
 
   const refresh = () => refreshRepo(qc, path);
   async function run(fn: () => Promise<unknown>, ok?: string) {
+    // Read before the mutation, so the toast only offers Undo for what *this*
+    // operation did rather than for whatever came before it (§3.3).
+    const capture = await captureUndoPoint(path);
     try {
       await fn();
-      if (ok) pushToast("success", ok);
-      refresh();
+      await refresh();
+      if (ok) await toastWithUndo(qc, path, ok, capture);
     } catch (e) {
       toastError(e);
     }
@@ -175,7 +194,7 @@ export function Sidebar() {
       return;
     }
     const result = await rebaseStandard(path, target);
-    reportRebase(result);
+    reportRebase(result, info.commits);
   }
 
   async function deleteBranchFlow(b: BranchInfo) {
@@ -272,7 +291,27 @@ export function Sidebar() {
       },
     ];
     if (local) {
-      if (b.isHead && b.upstream) {
+      if (b.upstreamGone && b.upstream) {
+        // `04-pull.md` §5 (STATUS C8). Both recoveries are offered because
+        // only the user knows which it is: a branch merged and deleted on the
+        // remote is finished, and one deleted by mistake is not.
+        items.push(
+          { separator: true },
+          { label: `${b.upstream} no longer exists on the remote`, disabled: true },
+          {
+            label: "Stop tracking it",
+            onClick: () => run(() => unsetUpstream(path, b.name), `${b.name} no longer tracks anything`),
+          },
+          {
+            label: "Delete this local branch",
+            danger: true,
+            disabled: b.isHead,
+            onClick: () => deleteBranchFlow(b),
+          },
+          { separator: true },
+        );
+      }
+      if (b.isHead && b.upstream && !b.upstreamGone) {
         items.push({
           label: `Pull (fast-forward) from ${b.upstream}`,
           disabled: !b.behind,
@@ -554,6 +593,27 @@ export function Sidebar() {
     setMenu({ x: e.clientX, y: e.clientY, items });
   }
 
+  /**
+   * Push-tag rows: one per remote when there is more than one, so picking a
+   * remote never silently means "origin".
+   */
+  function pushTagItems(tag: BranchInfo): MenuItem[] {
+    const names = (remotes ?? []).map((r) => r.name);
+    if (!names.length) return [{ label: "Push tag (no remote configured)", disabled: true }];
+    const pushTo = (remote: string) =>
+      run(async () => {
+        const result = await gitNetwork(path, "push", remote, [`refs/tags/${tag.name}`]);
+        if (!result.success) throw new Error(result.output);
+      }, `Pushed tag ${tag.name} to ${remote}`);
+    if (names.length === 1) {
+      return [{ label: `Push tag to ${names[0]}`, onClick: () => pushTo(names[0]) }];
+    }
+    return names.map((remote) => ({
+      label: `Push tag to ${remote}`,
+      onClick: () => pushTo(remote),
+    }));
+  }
+
   function tagMenu(e: React.MouseEvent, tag: BranchInfo) {
     e.preventDefault();
     setMenu({
@@ -561,6 +621,11 @@ export function Sidebar() {
       y: e.clientY,
       items: [
         { label: "Copy SHA", onClick: () => copyText(tag.oid) },
+        // `03-push.md` §5 (STATUS B2). A tag nobody can push is a tag that
+        // only exists on one machine, and `git_network` has always been able
+        // to push a refspec — the entry point was simply missing.
+        ...pushTagItems(tag),
+        { separator: true },
         {
           label: "Delete tag",
           danger: true,
@@ -586,11 +651,15 @@ export function Sidebar() {
     }
   }
 
-  function reportRebase(r: Awaited<ReturnType<typeof rebaseStandard>>) {
-    if (r.success) {
-      pushToast("success", "Rebase complete");
-    } else {
+  function reportRebase(r: Awaited<ReturnType<typeof rebaseStandard>>, commits?: number) {
+    if (!r.success) {
       pushToast("error", `Rebase paused — ${r.conflicts.length} conflicted file(s).`);
+    } else if (commits === 0) {
+      // `06-rebase.md` B7: onto an ancestor there was nothing to replay, and
+      // reporting a successful rebase of nothing reads as a no-op that failed.
+      pushToast("info", "Already up to date.");
+    } else {
+      pushToast("success", "Rebase complete");
     }
   }
 
@@ -667,25 +736,24 @@ export function Sidebar() {
           headBranch={headBranch}
           dragged={dragged}
           setDragged={setDragged}
-          onDropMerge={async (target, source) => {
+          // A menu at the cursor, not a modal (STATUS C5) — the graph already
+          // did it this way, and the same gesture must not behave differently
+          // depending on where it lands. Both sites now share `dropMenuItems`,
+          // which is also what computes whether a fast-forward is possible.
+          onDropMerge={async (event, target, source) => {
             if (target === source) return;
-            const action = await choiceDialog({
-              title: `Drop ${source} onto ${target}`,
-              message:
-                headBranch === target
-                  ? "Choose an operation."
-                  : `${target} is not checked out. MTGit will check it out before applying the selected operation.`,
-              choices: [
-                { label: `Merge ${source} into ${target}`, value: "merge" },
-                { label: `Rebase ${target} onto ${source}`, value: "rebase" },
-                { label: `Fast-forward ${target} to ${source}`, value: "ff" },
-              ],
-            });
-            if (!action) return;
-            run(async () => {
-              if (headBranch !== target) await smartCheckout(path, target);
-              if (action === "rebase") return doRebase(source);
-              return doMerge(source, action === "ff" ? "ffOnly" : "noFf");
+            const { clientX, clientY } = event;
+            const relation = await mergeRelation(path, target, source).catch(() => null);
+            setMenu({
+              x: clientX,
+              y: clientY,
+              items: dropMenuItems(target, source, relation, (action) =>
+                run(async () => {
+                  if (headBranch !== target) await smartCheckout(path, target);
+                  if (action === "rebase") return doRebase(source);
+                  return doMerge(source, action === "ff" ? "ffOnly" : "noFf");
+                }),
+              ),
             });
           }}
           hiddenRefs={hiddenRefs}
@@ -786,6 +854,28 @@ export function Sidebar() {
           </div>
         )}
 
+        <ContributorSection
+          items={contributors ?? []}
+          onFilter={(c) => seedSearch(path, `author:${c.email}`, true)}
+          onSelect={(c) => selectOid(c.lastCommit)}
+          onMenu={(event, c) => {
+            event.preventDefault();
+            setMenu({
+              x: event.clientX,
+              y: event.clientY,
+              items: [
+                { label: "Filter graph by this author", onClick: () => seedSearch(path, `author:${c.email}`, true) },
+                { label: "Go to their latest commit", onClick: () => selectOid(c.lastCommit) },
+                { label: "Copy name and email", onClick: () => copyText(`${c.name} <${c.email}>`) },
+                {
+                  label: "Copy Co-authored-by trailer",
+                  onClick: () => copyText(`Co-authored-by: ${c.name} <${c.email}>`),
+                },
+              ],
+            });
+          }}
+        />
+
         <div className="section">
           <SectionHead title="Submodules" icon="commit" count={submodules?.length ?? 0} />
           {(submodules ?? []).map((submodule) => (
@@ -819,6 +909,68 @@ export function Sidebar() {
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </aside>
+  );
+}
+
+/**
+ * CONTRIBUTORS (G28).
+ *
+ * Collapsed by default and capped, because it is a reference list rather than
+ * a navigation tree: a repository with four hundred contributors would push
+ * every other section off the screen to show information nobody scrolls to.
+ * "Show all" is there for when they do.
+ */
+function ContributorSection({
+  items,
+  onFilter,
+  onSelect,
+  onMenu,
+}: {
+  items: Contributor[];
+  onFilter: (c: Contributor) => void;
+  onSelect: (c: Contributor) => void;
+  onMenu: (event: React.MouseEvent, c: Contributor) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [all, setAll] = useState(false);
+  const shown = all ? items : items.slice(0, 8);
+
+  return (
+    <div className="section">
+      <SectionHead
+        title="Contributors"
+        icon="person"
+        count={items.length}
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+      />
+      {open &&
+        shown.map((c) => (
+          <div
+            key={c.email}
+            className="ref-item contributor"
+            style={{ paddingLeft: 20 }}
+            title={`${c.name} <${c.email}>\n${c.commits} commit(s)${
+              c.coAuthored ? `, ${c.coAuthored} co-authored` : ""
+            } · last ${timeAgo(c.lastTimestamp)}`}
+            onClick={() => onSelect(c)}
+            onDoubleClick={() => onFilter(c)}
+            onContextMenu={(event) => onMenu(event, c)}
+          >
+            <Avatar email={c.email} name={c.name} size={16} />
+            <span className="ref-name">{c.name || c.email}</span>
+            <span className="ref-count">
+              {c.commits}
+              {c.coAuthored > 0 && <span className="contributor-co" title="Co-authored">+{c.coAuthored}</span>}
+            </span>
+          </div>
+        ))}
+      {open && items.length > shown.length && (
+        <button className="section-more" onClick={() => setAll(true)}>
+          Show all {items.length}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -891,7 +1043,7 @@ function BranchSection({
   headBranch?: string | null;
   dragged: string | null;
   setDragged: (s: string | null) => void;
-  onDropMerge?: (target: string, source: string) => void;
+  onDropMerge?: (event: React.DragEvent, target: string, source: string) => void;
   hiddenRefs: string[];
   onToggleHidden: (name: string) => void;
   checkoutTarget: string | null;
@@ -909,13 +1061,19 @@ function BranchSection({
                 key={b.name}
                 className={`ref-item${b.isHead ? " head" : ""}${dragged && dragged !== b.name && local ? " droppable" : ""}`}
                 style={{ paddingLeft: folder ? 34 : 20 }}
-                title={b.upstream ? `tracks ${b.upstream}` : b.name}
+                title={
+                  b.upstreamGone
+                    ? `${b.name} — its upstream ${b.upstream} is gone from the remote`
+                    : b.upstream
+                      ? `tracks ${b.upstream}`
+                      : b.name
+                }
                 draggable
                 onDragStart={() => setDragged(b.name)}
                 onDragEnd={() => setDragged(null)}
                 onDragOver={(e) => local && e.preventDefault()}
-                onDrop={() => {
-                  if (local && dragged && onDropMerge) onDropMerge(b.name, dragged);
+                onDrop={(e) => {
+                  if (local && dragged && onDropMerge) onDropMerge(e, b.name, dragged);
                   setDragged(null);
                 }}
                 onClick={() => onOpen(b)}
@@ -926,6 +1084,13 @@ function BranchSection({
                   <Icon name={checkoutTarget === b.name ? "pending" : b.isHead ? "check" : local ? "branch" : "cloud"} />
                 </span>
                 <span className="ref-name">{folder ? b.name.slice(folder.length + 1) : b.name}</span>
+                {b.upstreamGone && (
+                  /* Not an error tone: a merged-and-deleted branch is the
+                     normal end of a branch's life, not a fault. */
+                  <span className="upstream-gone" title={`${b.upstream} is gone from the remote`}>
+                    orphaned
+                  </span>
+                )}
                 {(b.ahead || b.behind) && (
                   <span className="ahead-behind">
                     {b.ahead ? <span className="ahead">↑{b.ahead}</span> : null}

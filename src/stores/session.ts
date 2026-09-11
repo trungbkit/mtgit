@@ -70,15 +70,6 @@ function basename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
 }
 
-/**
- * Ephemeral graph options. `relativeDates` used to live here too; it is a
- * persisted preference now (`stores/settings`), and keeping a session copy
- * would have been a second source of truth for the same question.
- */
-export interface GraphOpts {
-  showAuthor: boolean;
-}
-
 /** Per-tab view state, so switching tabs does not discard a selection (G12). */
 interface TabView {
   selectedOid: string | null;
@@ -100,7 +91,6 @@ interface SessionState {
   terminalOpen: boolean;
   paletteOpen: boolean;
   sidebarCollapsed: boolean;
-  graphOpts: GraphOpts;
   hiddenRefs: Record<string, string[]>;
   checkoutTarget: string | null;
   /** Is the clone form up? Hoisted here so the toolbar can raise it too. */
@@ -119,7 +109,6 @@ interface SessionState {
   toggleTerminal: () => void;
   setPaletteOpen: (v: boolean) => void;
   toggleSidebar: () => void;
-  setGraphOpts: (o: Partial<GraphOpts>) => void;
   toggleHiddenRef: (repoPath: string, ref: string) => void;
   setCheckoutTarget: (ref: string | null) => void;
 }
@@ -161,7 +150,6 @@ export const useSession = create<SessionState>((set) => ({
   terminalOpen: false,
   paletteOpen: false,
   sidebarCollapsed: false,
-  graphOpts: { showAuthor: true },
   hiddenRefs: {},
   checkoutTarget: null,
   cloneOpen: false,
@@ -246,7 +234,6 @@ export const useSession = create<SessionState>((set) => ({
   toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
   setPaletteOpen: (v) => set({ paletteOpen: v }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  setGraphOpts: (o) => set((s) => ({ graphOpts: { ...s.graphOpts, ...o } })),
   toggleHiddenRef: (repoPath, ref) =>
     set((state) => {
       const current = new Set(state.hiddenRefs[repoPath] ?? []);
@@ -256,3 +243,15 @@ export const useSession = create<SessionState>((set) => ({
     }),
   setCheckoutTarget: (checkoutTarget) => set({ checkoutTarget }),
 }));
+
+/**
+ * Show the terminal panel from outside the tree.
+ *
+ * `features/network/net.ts` is a plain module — it has no hook to call — and
+ * the auth-failure recovery (STATUS C3) has to be able to put the panel in
+ * front of the user. Idempotent on purpose: "open the terminal" must not
+ * close an already-open one, which is what `toggleTerminal` would do.
+ */
+export function openTerminal(): void {
+  if (!useSession.getState().terminalOpen) useSession.getState().toggleTerminal();
+}

@@ -68,15 +68,15 @@ Vertical layout, top to bottom:
 - [x] Failed hook shows output and offers `--no-verify` retry.
 - [x] Undo restores pre-commit state exactly (index + message). — message replayed via the `mtgit-restore-commit-message` event
 - [x] Discard actions always confirm and never touch files not listed.
-- [ ] Commit button becomes **Continue \<operation\>** while a merge / rebase / cherry-pick is paused. — Continue exists only in the banner
-- [ ] `⌘⇧C` works with the commit panel closed. — handler lives in `StagingView`, which is unmounted until WIP is selected
+- [x] Commit button becomes **Continue \<operation\>** while a merge / rebase / cherry-pick is paused. — reads the conflict store (the seam's single writer), disabled while files are still conflicted, and shows `i of n` for a sequence. The banner keeps its own Continue: this is a second place, not a replacement.
+- [x] `⌘⇧C` works with the commit panel closed. — the chord lives in `App` and selects the WIP row; `StagingView` focuses the summary on mount, so the two halves meet without a second listener.
 
-**New in this revision (GitLens-derived) — none implemented:**
+**New in this revision (GitLens-derived):**
 
 - [ ] A dirty second worktree produces its **own** WIP row, and committing from it touches only that worktree (§3.1). *The row is there, on that worktree's own lane. Clicking it opens that worktree as a tab rather than re-pointing this tab's commit panel: a different worktree has a different index, and staging into it from this handle would be acting on a repository the UI is not showing.*
-- [ ] Co-author picker appends well-formed `Co-authored-by:` trailers from the contributor list.
-- [ ] `commit.template` pre-fills the Description when the fields are empty.
-- [ ] Issue references render as autolinks in the message preview and the graph message column.
+- [x] Co-author picker appends well-formed `Co-authored-by:` trailers from the contributor list. — `lib/coauthors.ts`, fed by `list_contributors` (G28). Already-credited addresses are filtered out, and the trailer joins an existing trailer block rather than starting a paragraph, because git reads trailers only in the last one.
+- [x] `commit.template` pre-fills the Description when the fields are empty. — `core/identity.rs::commit_template`, comment lines stripped (`commit_cli` passes `-m`, which git cleans with `--cleanup=whitespace` and would commit them verbatim). Seeds once, and never over a draft.
+- [x] Issue references render as autolinks in the message preview and the graph message column. — `components/Autolinked` over `lib/autolinks.ts`; patterns come from repo config plus a built-in for origin's host, and nothing calls a network.
 - [ ] **Stash** and **Copy changes to worktree…** are reachable from the commit panel headers.
 
 > Deferred (overview §8.3): **Generate commit message** and **Compose commits** — GitLens's AI

@@ -163,9 +163,11 @@ Modifiers, as toggles beside the field: **match case**, **match whole word**, **
       part of the cache key (`every_search_modifier_changes_the_cache_key`).
 - [x] Truncation at the result cap is stated, never silent — the footer says where it stopped
       and offers **Keep going**, which re-runs the same query uncapped.
-- [ ] Autocomplete offers operators, contributors, paths and refs as described.
-      **Operators and refs only.** Contributors need the CONTRIBUTORS data (`GITKRAKEN_PARITY_PLAN.md`
-      G28) and paths need the selection's tree; both are additions to the same `suggestions` list.
+- [◐] Autocomplete offers operators, contributors, paths and refs as described.
+      **Operators, refs and contributors.** `author:` completes from `list_contributors` (G28) to
+      the *email* rather than the display name — an email is unique and needs no quoting, where
+      "Ada Lovelace" as a bare value would parse as two terms. Paths still wait on a path source
+      for the current selection.
 - [x] Recent queries listed; pinned queries persist per repo (`localStorage`, per repo path,
       migrating into the settings file when P6 lands one).
 - [x] Search is reachable from the graph header, `⌘F`/`⌘⇧F`, the command palette, an author
@@ -178,7 +180,7 @@ Modifiers, as toggles beside the field: **match case**, **match whole word**, **
 
 | Item | State | Waits on |
 |---|---|---|
-| **Minimap** | Not built. Scroll markers *are* — hits, HEAD and the selection at their proportional positions in the whole history (`ScrollMarkers`), sampled to 400 marks. | The minimap proper (activity over time beside the markers) is `GITKRAKEN_PARITY_PLAN.md` P8 item 3. |
-| **Contributor and path autocomplete** | Operators and refs complete; values for `author:` and `file:` do not. | CONTRIBUTORS (G28) and a path source for the current selection. |
+| ~~**Minimap**~~ | ✅ **Built** (`SearchMinimap` in `GraphView`), beside the scroll markers and only while a search is submitted — "where are my matches clustered" has no answer when nothing is searched for. It is a *density* strip, not a scaled graph: at 12,000 commits in 600px each pixel row is twenty commits, so one mark per hit loses every cluster to overlap. Clicking a bucket jumps to its first hit rather than to the offset, because the user is looking for a match and landing near one is not landing on one. | — |
+| **Path autocomplete** | Operators, refs and contributors complete; `file:` values do not. | A path source for the current selection. |
 | **Sidebar eye toggle unified with `ref:`** | The context menu's **Show only this in the graph** and **Search commits on this branch** write a `ref:` term, as §2 requires. The hover **eye** toggle still drives `hiddenRefs`, which hides *badges* rather than rows. | A decision about what the eye should mean. Because it hides no rows, §6's "navigating to a hit hidden by a ref toggle clears the toggle" cannot arise today — there is no hit the toggle can hide. |
 | **A search field in the middle of a full-width diff** | `⇧⌘F` focuses the field from anywhere, but nothing "takes over the centre pane" in the current shell, so there is nothing to scroll back into view. | The focus view / detail stack (P8 item 4). |

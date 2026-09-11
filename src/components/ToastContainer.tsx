@@ -24,6 +24,19 @@ export function ToastContainer() {
           >
             {t.message}
           </button>
+          {t.action && (
+            <button
+              className="toast-action"
+              onClick={async () => {
+                // Dismiss first: the action refreshes the repo, and a toast
+                // still offering "Undo" after it ran invites a second undo.
+                dismiss(t.id);
+                await t.action!.run();
+              }}
+            >
+              {t.action.label}
+            </button>
+          )}
           {t.kind === "error" && (
             <button className="toast-copy" onClick={() => copyText(t.message)} title="Copy error">
               Copy

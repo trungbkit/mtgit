@@ -160,6 +160,49 @@ pub fn commit_detail(repo: &Repository, oid: &str) -> Result<CommitDetail> {
     })
 }
 
+/// Per-commit change counts for the graph's Changes column (G16).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitStats {
+    pub oid: String,
+    pub files: usize,
+    pub additions: usize,
+    pub deletions: usize,
+}
+
+/// Counts for a batch of commits.
+///
+/// Batched deliberately: the column is drawn per visible row, and one IPC call
+/// per row would be forty round trips per scroll tick. `git2::Diff::stats` is
+/// used rather than a full patch build — the column needs three numbers, not
+/// hunks, and asking for hunks would make an expensive column ruinous.
+///
+/// A commit that cannot be read is skipped rather than failing the batch: one
+/// bad oid in a window of forty must not blank the whole column.
+pub fn commit_stats(repo: &Repository, oids: &[String]) -> Result<Vec<CommitStats>> {
+    let mut out = Vec::with_capacity(oids.len());
+    for raw in oids {
+        let Ok(oid) = Oid::from_str(raw) else { continue };
+        let Ok(commit) = repo.find_commit(oid) else { continue };
+        let Ok(tree) = commit.tree() else { continue };
+        let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+        let mut opts = DiffOptions::new();
+        opts.context_lines(0);
+        let Ok(diff) = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))
+        else {
+            continue;
+        };
+        let Ok(stats) = diff.stats() else { continue };
+        out.push(CommitStats {
+            oid: raw.clone(),
+            files: stats.files_changed(),
+            additions: stats.insertions(),
+            deletions: stats.deletions(),
+        });
+    }
+    Ok(out)
+}
+
 /// Structured diff of a commit against its first parent (root vs empty tree).
 pub fn commit_diff(
     repo: &Repository,
@@ -375,6 +418,33 @@ fn split_message(message: &str) -> (String, String) {
 mod tests {
     use super::*;
     use crate::testutil::TestRepo;
+
+    #[test]
+    fn commit_stats_counts_files_and_lines_per_commit() {
+        let t = TestRepo::new();
+        let a = t.commit_files("one", &[], &[("a.txt", "1\n")]);
+        let b = t.commit_files("two", &[a], &[("a.txt", "1\n2\n"), ("b.txt", "x\n")]);
+
+        let stats = commit_stats(&t.repo, &[b.to_string(), a.to_string()]).unwrap();
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].oid, b.to_string());
+        assert_eq!(stats[0].files, 2, "a.txt modified, b.txt added");
+        assert_eq!(stats[0].additions, 2);
+        assert_eq!(stats[0].deletions, 0);
+        assert_eq!(stats[1].files, 1, "the root commit introduces one file");
+    }
+
+    /// One unreadable oid in a scroll window must not blank the column for the
+    /// other thirty-nine rows.
+    #[test]
+    fn commit_stats_skips_an_oid_it_cannot_read() {
+        let t = TestRepo::new();
+        let a = t.commit_files("one", &[], &[("a.txt", "1\n")]);
+        let stats =
+            commit_stats(&t.repo, &["nonsense".into(), a.to_string(), "0".repeat(40)]).unwrap();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].oid, a.to_string());
+    }
 
     #[test]
     fn commit_diff_reports_added_lines() {

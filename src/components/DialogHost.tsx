@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useDialog } from "../stores/dialog";
+import { PublishDialog } from "../features/network/PublishDialog";
 import "./dialog.css";
 
 /** Renders the active modal dialog (prompt/confirm). Mount once, near the root. */
@@ -33,15 +34,36 @@ export function DialogHost() {
 
   if (!current) return null;
 
+  // The publish form owns its own layout and its own three values, so it is
+  // rendered whole rather than squeezed into the generic title/message/input
+  // shell above it.
+  if (current.kind === "publish") {
+    return (
+      <PublishDialog
+        branch={current.branch}
+        remotes={current.remotes}
+        defaultRemote={current.defaultRemote}
+        onCancel={() => {
+          current.resolve(null);
+          close();
+        }}
+        onPublish={(choice) => {
+          current.resolve(choice);
+          close();
+        }}
+      />
+    );
+  }
+
   const cancel = () => {
     if (current.kind === "prompt") current.resolve(null);
     else if (current.kind === "confirm") current.resolve(false);
-    else current.resolve(null);
+    else if (current.kind === "choice") current.resolve(null);
     close();
   };
 
   const submit = () => {
-    if (current.kind === "choice") return;
+    if (current.kind !== "prompt" && current.kind !== "confirm") return;
     if (current.kind === "prompt") {
       const v = value.trim();
       const err = current.validate?.(v) ?? null;

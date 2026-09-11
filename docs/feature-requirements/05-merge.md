@@ -58,6 +58,6 @@ Dragging onto a branch that is *not* checked out offers only "Checkout B then me
 
 **New in this revision (GitLens-derived) — none implemented:**
 
-- [ ] All conflicted files live in one panel; selecting a file swaps the panes without leaving the view (§5).
-- [ ] `n` / `p` navigate conflict regions across every conflicted file, with an `i of n · file j of k` counter.
-- [ ] Take-side shortcuts and pane headers are labelled by ref, not "Ours"/"Theirs" (STATUS C4).
+- [x] All conflicted files live in one panel; selecting a file swaps the panes without leaving the view (§5). — `features/staging/ConflictPanel.tsx`, fed by one `conflict_set` call rather than one per file.
+- [x] `n` / `p` navigate conflict regions across every conflicted file, with an `i of n · file j of k` counter. — crossing a boundary lands on the far end of the neighbour, so `p` from the first region of file 3 reaches the *last* of file 2. Region positions come from the live textarea, not the server's list: the user edits the text, and a cursor keyed to a stale list points at a region that no longer exists.
+- [x] Take-side shortcuts and pane headers are labelled by ref, not "Ours"/"Theirs" (STATUS C4). — `conflict_sides` resolves them per operation, and each pane is topped with that side's lane colour from the graph cache (invariant 5). The rebase case is the point: `ours` is the branch you are rebasing **onto**, which is the opposite of what almost everyone assumes, and two tests pin merge and rebase separately.

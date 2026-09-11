@@ -121,6 +121,49 @@ pub fn write(scope: IdentityScope, repo: Option<&Repository>, name: &str, email:
     }
 }
 
+
+/// The repository's `commit.template`, with comment lines removed.
+///
+/// Teams use a template to ask for a ticket number or a checklist, and an
+/// empty message box is the app quietly ignoring that request. Comments are
+/// stripped here rather than at commit time because `commit_cli` passes the
+/// message with `-m`, which git cleans with `--cleanup=whitespace` — it would
+/// commit the `#` lines verbatim (`01-commit.md` §7).
+///
+/// Returns `None` when no template is configured or the file is unreadable: a
+/// missing template must not block committing.
+pub fn commit_template(repo: &git2::Repository) -> Option<String> {
+    let cfg = repo.config().ok()?;
+    let raw = cfg.get_string("commit.template").ok()?;
+    let comment = cfg
+        .get_string("core.commentChar")
+        .ok()
+        .and_then(|c| c.chars().next())
+        .unwrap_or('#');
+
+    let path = expand_home(&raw)?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let body: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(comment))
+        .collect();
+    let joined = body.join("\n").trim_end().to_string();
+    (!joined.trim().is_empty()).then_some(joined)
+}
+
+/// `~` and `~/...` the way git expands them in config paths.
+fn expand_home(raw: &str) -> Option<std::path::PathBuf> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        let home = std::env::var_os("HOME")?;
+        return Some(std::path::Path::new(&home).join(rest));
+    }
+    Some(std::path::PathBuf::from(raw))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +234,56 @@ mod tests {
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("name = Ada"), "{text}");
         assert!(text.contains("email = ada@example.com"), "{text}");
+    }
+
+    /// `01-commit.md` §7: a team's template is a request, and an empty message
+    /// box ignores it. Comments have to go — `commit_cli` passes the message
+    /// with `-m`, which git cleans with `--cleanup=whitespace` and would
+    /// commit the `#` lines verbatim.
+    #[test]
+    fn a_commit_template_is_read_without_its_comment_lines() {
+        let t = TestRepo::new();
+        let file = t.dir.path().join("template.txt");
+        std::fs::write(&file, "# Please include a ticket\n\nTicket:\n# and a why\n").unwrap();
+        let mut cfg = t.repo.config().unwrap();
+        cfg.set_str("commit.template", file.to_str().unwrap()).unwrap();
+
+        assert_eq!(commit_template(&t.repo).as_deref(), Some("\nTicket:"));
+    }
+
+    #[test]
+    fn a_template_that_is_only_comments_reads_as_none() {
+        // Otherwise the message box opens pre-filled with blank lines.
+        let t = TestRepo::new();
+        let file = t.dir.path().join("empty.txt");
+        std::fs::write(&file, "# just advice\n# and more\n").unwrap();
+        let mut cfg = t.repo.config().unwrap();
+        cfg.set_str("commit.template", file.to_str().unwrap()).unwrap();
+        assert_eq!(commit_template(&t.repo), None);
+    }
+
+    #[test]
+    fn a_missing_template_file_does_not_block_committing() {
+        let t = TestRepo::new();
+        let mut cfg = t.repo.config().unwrap();
+        cfg.set_str("commit.template", "/no/such/file").unwrap();
+        assert_eq!(commit_template(&t.repo), None);
+    }
+
+    #[test]
+    fn no_template_configured_is_none() {
+        let t = TestRepo::new();
+        assert_eq!(commit_template(&t.repo), None);
+    }
+
+    #[test]
+    fn a_custom_comment_char_is_respected() {
+        let t = TestRepo::new();
+        let file = t.dir.path().join("semi.txt");
+        std::fs::write(&file, "; advice\nTicket:\n").unwrap();
+        let mut cfg = t.repo.config().unwrap();
+        cfg.set_str("commit.template", file.to_str().unwrap()).unwrap();
+        cfg.set_str("core.commentChar", ";").unwrap();
+        assert_eq!(commit_template(&t.repo).as_deref(), Some("Ticket:"));
     }
 }

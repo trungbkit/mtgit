@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { cancelSearch, listRefs, searchCommits } from "../../ipc/commands";
+import { cancelSearch, listContributors, listRefs, searchCommits } from "../../ipc/commands";
 import { DEFAULT_MODIFIERS, useSearch, type Modifiers, type SearchMode } from "../../stores/search";
 import "./search.css";
 
@@ -93,6 +93,15 @@ export function SearchBar({
     enabled: !!repoPath && suggestOpen,
     queryFn: () => listRefs(repoPath),
   });
+  // Contributor autocomplete for `author:` (`08-search-and-filter.md` §7.1),
+  // unblocked now that G28 exists. Fetched only while the dropdown is open:
+  // it walks history, and nobody who never opens the dropdown should pay.
+  const { data: contributors } = useQuery({
+    queryKey: ["contributors", repoPath],
+    enabled: !!repoPath && suggestOpen,
+    queryFn: () => listContributors(repoPath),
+    staleTime: 30_000,
+  });
 
   const run = useCallback(
     async (text: string, cap = RESULT_CAP) => {
@@ -174,19 +183,38 @@ export function SearchBar({
     if (!word) return [] as { text: string; label: string; desc: string }[];
     const operator = OPERATORS.find((o) => word.startsWith(o.token) || (o.alias && word.startsWith(o.alias)));
     if (operator) {
-      // Value autocomplete. Only `ref:` has a list we already hold; paths and
-      // contributors wait for the CONTRIBUTORS section (G28).
-      if (operator.token !== "ref:") return [];
       const prefix = word.slice(word.indexOf(":") + 1).toLowerCase();
-      const names = [
-        ...(refs?.local ?? []).map((b) => b.name),
-        ...(refs?.remote ?? []).map((b) => b.name),
-        ...(refs?.tags ?? []).map((b) => b.name),
-      ];
-      return names
-        .filter((name) => name.toLowerCase().startsWith(prefix))
-        .slice(0, 8)
-        .map((name) => ({ text: `ref:${name}`, label: name, desc: "ref" }));
+      if (operator.token === "ref:") {
+        const names = [
+          ...(refs?.local ?? []).map((b) => b.name),
+          ...(refs?.remote ?? []).map((b) => b.name),
+          ...(refs?.tags ?? []).map((b) => b.name),
+        ];
+        return names
+          .filter((name) => name.toLowerCase().startsWith(prefix))
+          .slice(0, 8)
+          .map((name) => ({ text: `ref:${name}`, label: name, desc: "ref" }));
+      }
+      if (operator.token === "author:") {
+        // Completed to the *email*, not the display name: an email is unique
+        // and needs no quoting, and "Ada Lovelace" as a bare value would parse
+        // as two terms. Name and commit count are shown so the row is still
+        // recognisable.
+        return (contributors ?? [])
+          .filter(
+            (c) =>
+              c.email.toLowerCase().startsWith(prefix) ||
+              c.name.toLowerCase().startsWith(prefix),
+          )
+          .slice(0, 8)
+          .map((c) => ({
+            text: `author:${c.email}`,
+            label: c.name || c.email,
+            desc: `${c.email} · ${c.commits} commit${c.commits === 1 ? "" : "s"}`,
+          }));
+      }
+      // `file:` still waits on a path source for the current selection.
+      return [];
     }
     const lower = word.toLowerCase();
     return OPERATORS.filter((o) => o.token.startsWith(lower) || o.alias === lower)
@@ -196,7 +224,7 @@ export function SearchBar({
         label: o.alias ? `${o.token}  (${o.alias})` : o.token,
         desc: o.desc,
       }));
-  }, [query, caret, refs]);
+  }, [query, caret, refs, contributors]);
 
   const accept = (text: string) => {
     const { start } = wordAtCaret(query, caret);

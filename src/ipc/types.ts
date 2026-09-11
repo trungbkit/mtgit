@@ -32,6 +32,8 @@ export interface BranchInfo {
   upstream: string | null;
   ahead: number | null;
   behind: number | null;
+  /** Upstream configured but its remote-tracking ref is gone (STATUS C8). */
+  upstreamGone: boolean;
 }
 
 export interface RefList {
@@ -94,6 +96,10 @@ export interface GraphRow {
   color: number;
   edges: Edge[];
   refs: RefBadge[];
+  /** On this branch but not its upstream — a push would send it. */
+  unpushed: boolean;
+  /** On the upstream but not this branch — a pull would bring it in. */
+  unpulled: boolean;
 }
 
 /** Modifiers beside the search field. Mirrors `core::search::SearchOptions`. */
@@ -277,6 +283,18 @@ export interface RewriteInfo {
 export interface RebaseCommit {
   oid: string;
   summary: string;
+  author: string;
+  email: string;
+  /** A merge commit: flagged, not replayed — an interactive rebase flattens it. */
+  isMerge: boolean;
+}
+
+/** One predicted clash from `predict_rebase_conflicts` (G26). An estimate. */
+export interface PredictedConflict {
+  /** Index of the step in the plan as it was sent. */
+  index: number;
+  oid: string;
+  files: string[];
 }
 
 export interface OperationInfo {
@@ -354,6 +372,8 @@ export interface BlameLine {
   summary: string;
   timestamp: number;
   content: string;
+  /** Heatmap bucket, 0 (oldest change in this file) to 9 (newest) — G21. */
+  age: number;
 }
 
 export interface HistoryEntry {
@@ -362,6 +382,82 @@ export interface HistoryEntry {
   author: string;
   email: string;
   timestamp: number;
+  /** The name the file had at this commit; differs after a followed rename. */
+  path: string;
+  /** Set only on the commit that renamed the file: its previous name. */
+  renamedFrom: string | null;
+}
+
+/** Mirrors `core::contributors::Contributor` (G28). */
+export interface Contributor {
+  name: string;
+  email: string;
+  commits: number;
+  /** Commits where they appear only in a `Co-authored-by:` trailer. */
+  coAuthored: number;
+  lastCommit: string;
+  lastTimestamp: number;
+}
+
+/** Mirrors `core::refs::MergeRelation` — what a ref drop can actually do. */
+export interface MergeRelation {
+  canFastForward: boolean;
+  upToDate: boolean;
+  ahead: number;
+  behind: number;
+}
+
+/** Mirrors `core::refs::MergeTarget` (G23). */
+export interface MergeTarget {
+  ref: string;
+  oid: string;
+  ahead: number;
+  behind: number;
+  /** How it was decided: `config`, `remoteHead` or `conventional`. */
+  source: "config" | "remoteHead" | "conventional";
+}
+
+/** One `<<<<<<< / ======= / >>>>>>>` block. Mirrors `core::advanced::ConflictRegion`. */
+export interface ConflictRegion {
+  index: number;
+  startLine: number;
+  endLine: number;
+  ours: string;
+  theirs: string;
+}
+
+export interface ConflictFileEntry {
+  path: string;
+  binary: boolean;
+  regions: ConflictRegion[];
+}
+
+/**
+ * Every conflicted file at once, with both sides named by ref (G25 / C4).
+ * Mirrors `commands::ConflictSetView`, which flattens `core::advanced::ConflictSet`.
+ */
+export interface ConflictSet {
+  kind: ConflictKindName;
+  /** What "ours" *is* — a branch name or short sha, never the word "ours". */
+  oursLabel: string;
+  theirsLabel: string;
+  oursOid: string | null;
+  theirsOid: string | null;
+  /** Lane palette index, or null when the side is not in the layout. */
+  oursColor: number | null;
+  theirsColor: number | null;
+  files: ConflictFileEntry[];
+}
+
+export type ConflictKindName = "merge" | "rebase" | "cherryPick" | "revert" | "operation";
+
+/** Mirrors `core::autolink::AutolinkPattern` (G20). Link-out only. */
+export interface AutolinkPattern {
+  prefix: string;
+  /** Target URL with `<num>` standing in for the reference. */
+  url: string;
+  alphanumeric: boolean;
+  source: "config" | "builtin";
 }
 
 export interface FileContent {
@@ -396,6 +492,12 @@ export interface Settings {
    *  override it, in which case the override wins. */
   autoFetchMinutes: number;
   cherryPickAppendOrigin: boolean;
+  /** Follow renames in file history and blame (G22). Defaults on. */
+  historyFollowRenames: boolean;
+  /** Tint the blame gutter by line age (G21). */
+  blameHeatmap: boolean;
+  /** Optional graph columns, in display order (G16). */
+  graphColumns: GraphColumnId[];
 
   terminalFontSize: number;
   terminalShell: string | null;
@@ -403,6 +505,20 @@ export interface Settings {
   /** Action id -> chord, for the actions the user has rebound. */
   keybindings: Record<string, string>;
   recentRepos: PersistedRecentRepo[];
+}
+
+/**
+ * The optional graph columns (G16). The message column is not one of them: it
+ * is always present and always takes the remaining width.
+ */
+export type GraphColumnId = "author" | "changes" | "date" | "sha";
+
+/** Mirrors `core::diff::CommitStats` — the Changes column's numbers. */
+export interface CommitStats {
+  oid: string;
+  files: number;
+  additions: number;
+  deletions: number;
 }
 
 /** `diffMode`'s own name, kept distinct from `stores/session`'s `DiffMode`. */

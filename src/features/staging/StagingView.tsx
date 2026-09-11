@@ -8,7 +8,10 @@ import {
   getStatus,
   getWorktreeDiff,
   ignorePath,
+  listContributors,
   listRefs,
+  commitTemplate,
+  operationContinue,
   resolveConflictSide,
   stagePaths,
   unstagePaths,
@@ -20,11 +23,14 @@ import { toastError, useToasts } from "../../stores/toasts";
 import { confirmDialog } from "../../stores/dialog";
 import { FileViewer } from "../diff/FileViewer";
 import { FileList } from "../commit-detail/FileList";
-import { ConflictEditor } from "./ConflictEditor";
-import { ContextMenu, type MenuState } from "../../components/ContextMenu";
+import { ConflictPanel } from "./ConflictPanel";
+import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
+import { Autolinked } from "../../components/Autolinked";
+import { addCoAuthor, coAuthorEmails } from "../../lib/coauthors";
 import { matches } from "../../lib/keys";
 import { copyText } from "../../lib/clipboard";
 import { useSettings } from "../../stores/settings";
+import { conflictLabel, useConflict } from "../../stores/conflict";
 import "./staging.css";
 
 export function StagingView() {
@@ -56,6 +62,34 @@ export function StagingView() {
     queryKey: ["refs", repo.path],
     queryFn: () => listRefs(repo.path),
   });
+  const { data: template } = useQuery({
+    queryKey: ["commitTemplate", repo.path],
+    queryFn: () => commitTemplate(repo.path),
+    staleTime: 60_000,
+  });
+  const { data: contributors } = useQuery({
+    queryKey: ["contributors", repo.path],
+    queryFn: () => listContributors(repo.path),
+    staleTime: 30_000,
+  });
+
+  // `commit.template` seeds an *empty* message only (`01-commit.md` §7).
+  // Overwriting a draft would throw away work the user already typed, and a
+  // template that reappears every time you clear the box is unusable.
+  const seededTemplate = useRef(false);
+  useEffect(() => {
+    if (seededTemplate.current || !template) return;
+    if (summary.trim() || description.trim()) {
+      // There was already a draft; the template's moment has passed.
+      seededTemplate.current = true;
+      return;
+    }
+    seededTemplate.current = true;
+    const [first = "", ...rest] = template.split("\n");
+    setSummary(first);
+    setDescription(rest.join("\n").replace(/^\n+/, ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template]);
 
   useEffect(() => {
     localStorage.setItem(draftKey, JSON.stringify({ summary, description }));
@@ -70,6 +104,13 @@ export function StagingView() {
     };
     window.addEventListener("mtgit-restore-commit-message", restore);
     return () => window.removeEventListener("mtgit-restore-commit-message", restore);
+  }, []);
+
+  // The commit field takes focus as soon as this view mounts, which is what
+  // makes the app-level `commit.focus` chord work from anywhere (STATUS B5):
+  // App selects the WIP row, mounting this, and this lands the caret.
+  useEffect(() => {
+    summaryRef.current?.focus();
   }, []);
 
   useEffect(() => {
@@ -107,6 +148,10 @@ export function StagingView() {
   const staged = status?.staged ?? [];
   const unstaged = status?.unstaged ?? [];
   const conflicted = status?.conflicted ?? [];
+  const conflictedFiles = conflicted.length;
+  // Read, never written, here: `ipc/repoState.ts:syncOperation` is the only
+  // writer to this store in the whole frontend (STATUS §1.1).
+  const operation = useConflict((s) => s.active);
 
   async function onCommit(noVerify = false) {
     if (!summary.trim()) {
@@ -323,7 +368,11 @@ export function StagingView() {
 
       <div className="staging-diff">
         {selectedConflict && sel ? (
-          <ConflictEditor repoPath={repo.path} file={sel.path} />
+          <ConflictPanel
+            repoPath={repo.path}
+            file={sel.path}
+            onSelectFile={(path) => setSel({ path, staged: false })}
+          />
         ) : activeDiff ? (
           <FileViewer
             diff={activeDiff}
@@ -354,6 +403,44 @@ export function StagingView() {
           value={description}
           onChange={(event) => setDescription(event.target.value)}
         />
+        <div className="commit-extras">
+          {/* Co-author picker (`01-commit.md` §7). Pairing is common enough
+              that typing the trailer by hand — and getting the address wrong —
+              is a real cost; the list is the repository's own contributors. */}
+          <button
+            className="commit-coauthor"
+            disabled={!contributors?.length}
+            title={
+              contributors?.length
+                ? "Add a Co-authored-by trailer"
+                : "No contributors to add yet"
+            }
+            onClick={(event) => {
+              const already = coAuthorEmails(description);
+              const items: MenuItem[] = (contributors ?? [])
+                .filter((c) => c.email && !already.has(c.email.toLowerCase()))
+                .slice(0, 25)
+                .map((c) => ({
+                  label: `${c.name || c.email} <${c.email}>`,
+                  onClick: () => setDescription((body) => addCoAuthor(body, c.name, c.email)),
+                }));
+              setMenu({
+                x: event.clientX,
+                y: event.clientY,
+                items: items.length ? items : [{ label: "Everyone is already credited", disabled: true }],
+              });
+            }}
+          >
+            + Co-author
+          </button>
+          {/* Autolinks in the preview, so a ticket reference is verifiable
+              before the commit exists rather than after (G20). */}
+          {(summary.trim() || description.trim()) && (
+            <div className="commit-preview">
+              <Autolinked repoPath={repo.path} text={`${summary}\n${description}`.trim()} />
+            </div>
+          )}
+        </div>
         {amendPushed && (
           <div className="commit-warning">This commit is already pushed. Amending it will require a force push.</div>
         )}
@@ -374,14 +461,43 @@ export function StagingView() {
           ) : (
             <span />
           )}
-          <button
-            className="primary"
-            onClick={() => onCommit()}
-            disabled={!summary.trim() || (staged.length === 0 && !amend)}
-            title={!summary.trim() ? "Enter a summary" : staged.length === 0 && !amend ? "Stage at least one file" : ""}
-          >
-            {amend ? "Amend Previous Commit" : `Commit changes to ${staged.length} file${staged.length === 1 ? "" : "s"}`}
-          </button>
+          {/* STATUS B6 / `01-commit.md` §5: mid-operation, the button that
+              finishes what you are doing is Continue, not Commit. Committing
+              by hand during a rebase creates a commit the sequencer does not
+              know about, which is the mistake this prevents. The banner keeps
+              its own Continue — this is the second place, not a replacement,
+              because this is where the user's hands already are. */}
+          {operation && operation.repoPath === repo.path ? (
+            <button
+              className="primary"
+              onClick={() =>
+                run(async () => {
+                  const result = await operationContinue(repo.path);
+                  if (!result.success) throw new Error(result.output);
+                })
+              }
+              disabled={conflictedFiles > 0}
+              title={
+                conflictedFiles > 0
+                  ? `Resolve ${conflictedFiles} conflicted file(s) first`
+                  : `Continue the ${conflictLabel(operation.kind).toLowerCase()}`
+              }
+            >
+              Continue {conflictLabel(operation.kind)}
+              {operation.total && operation.total > 1
+                ? ` (${operation.current ?? 1} of ${operation.total})`
+                : ""}
+            </button>
+          ) : (
+            <button
+              className="primary"
+              onClick={() => onCommit()}
+              disabled={!summary.trim() || (staged.length === 0 && !amend)}
+              title={!summary.trim() ? "Enter a summary" : staged.length === 0 && !amend ? "Stage at least one file" : ""}
+            >
+              {amend ? "Amend Previous Commit" : `Commit changes to ${staged.length} file${staged.length === 1 ? "" : "s"}`}
+            </button>
+          )}
         </div>
       </div>
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />

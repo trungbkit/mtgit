@@ -50,15 +50,15 @@ One-click push of the current branch from the toolbar, with smart upstream handl
 - [x] Force push uses `--force-with-lease` and its confirmation dialog; plain `--force` is never issued.
 - [x] Pushing a non-checked-out branch works without switching branches. — sidebar context menu, `git push <remote> <branch>`
 - [x] Progress + success/failure toasts appear per overview §4. — progress + Cancel in the status bar; no spinner on the button
-- [ ] Push dropdown lists every remote and defaults to the upstream's (B7).
-- [ ] Lease failure explains itself and offers fetch-and-review (B4).
-- [ ] Auth failure gets a dialog with an "Open terminal" action (§5).
-- [ ] Tag context menu offers **Push tag** (§5).
-- [ ] Push is reachable from the graph pill context menu (§2) — pills have no ref menu at all.
+- [x] Push dropdown lists every remote and defaults to the upstream's (B7). — landed in P1; upstream tracking is deliberately left alone, so picking a second remote once does not silently retarget every later push.
+- [x] Lease failure explains itself and offers fetch-and-review (B4). — `net.ts:classifyFailure` reads it out of git's text (invariant 6 leaves nothing structured to read), and the dialog offers a fetch. It never force-pushes on its own: that is the accident `--force-with-lease` exists to prevent, and a test asserts no `--force` reaches git from this path.
+- [x] Auth failure gets a dialog with an "Open terminal" action (§5). — we run git without a terminal, so a password or passphrase prompt has nowhere to appear; the dialog says so and opens the panel where the credential helper can run.
+- [x] Tag context menu offers **Push tag** (§5). — one row per remote when there is more than one, so "push" never silently means origin. Also on the graph's tag pills.
+- [x] Push is reachable from the graph pill context menu (§2). — pills have their own ref menu now (STATUS B1): checkout, merge, rebase, push, rename, delete, and scope-the-graph, mirroring the sidebar's deliberately.
 
 **New in this revision (GitLens-derived) — none implemented:**
 
-- [ ] Rows ahead of the upstream carry an unpushed marker in the graph (§3).
+- [x] Rows ahead of the upstream carry an unpushed marker in the graph (§3). — `graph::sync_sets` walks the divergence once (bounded by ahead/behind, not by history) and each row carries `unpushed`. No upstream means no marks at all, which is the honest answer rather than marking everything.
 - [x] Push from a secondary worktree targets that worktree's branch (§5). *A worktree opened as a tab is the repo handle, so `push_target` reads its HEAD; the toolbar names the worktree (`02-checkout.md` B9), which is what §5 says this depends on.*
 
 > Deferred (overview §8.3): creating a pull request from the branch after a push, and the

@@ -1,12 +1,15 @@
-pub mod blame;
 pub mod advanced;
+pub mod autolink;
+pub mod blame;
 pub mod branch;
 pub mod commit;
+pub mod contributors;
 pub mod diff;
 pub mod graph;
 pub mod history;
 pub mod identity;
 pub mod ops;
+pub mod rebase_predict;
 pub mod refs;
 pub mod remote;
 pub mod repo;

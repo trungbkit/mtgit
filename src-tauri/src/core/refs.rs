@@ -33,6 +33,11 @@ pub struct BranchInfo {
     /// Commits ahead / behind the upstream (local branches with an upstream).
     pub ahead: Option<usize>,
     pub behind: Option<usize>,
+    /// An upstream is *configured* but its remote-tracking ref is gone —
+    /// almost always a `fetch --prune` after the branch was merged and deleted
+    /// on the remote (`04-pull.md` §5, STATUS C8). Distinct from "no upstream":
+    /// this branch thinks it has one.
+    pub upstream_gone: bool,
 }
 
 #[derive(Debug, Serialize, Clone, Default)]
@@ -113,6 +118,19 @@ pub fn list(repo: &Repository) -> Result<RefList> {
             .as_ref()
             .and_then(|u| u.name().ok().flatten().map(|s| s.to_string()));
 
+        // `branch.upstream()` fails when the tracking ref is missing, so the
+        // configured name has to be read from config to tell "orphaned" apart
+        // from "never had one".
+        let configured_upstream = if bt == BranchType::Local {
+            repo.branch_upstream_name(&format!("refs/heads/{name}"))
+                .ok()
+                .and_then(|buf| buf.as_str().map(|s| s.trim_start_matches("refs/remotes/").to_string()))
+        } else {
+            None
+        };
+        let upstream_gone = upstream.is_none() && configured_upstream.is_some();
+        let upstream = upstream.or(configured_upstream);
+
         // Ahead/behind counts for local branches that track an upstream.
         let (mut ahead, mut behind) = (None, None);
         if bt == BranchType::Local {
@@ -130,7 +148,7 @@ pub fn list(repo: &Repository) -> Result<RefList> {
         }
 
         let is_head = bt == BranchType::Local && head_shorthand.as_deref() == Some(name.as_str());
-        let info = BranchInfo { name, oid, is_head, upstream, ahead, behind };
+        let info = BranchInfo { name, oid, is_head, upstream, ahead, behind, upstream_gone };
         match bt {
             BranchType::Local => out.local.push(info),
             BranchType::Remote => out.remote.push(info),
@@ -153,6 +171,7 @@ pub fn list(repo: &Repository) -> Result<RefList> {
             upstream: None,
             ahead: None,
             behind: None,
+            upstream_gone: false,
         });
         true
     })?;
@@ -244,6 +263,152 @@ pub fn push_target(repo: &Repository) -> Result<PushTarget> {
     Ok(PushTarget { branch, remote, has_upstream })
 }
 
+/// Where a branch is heading (G23) — the branch it will eventually merge into.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeTarget {
+    /// Shorthand of the target ref, e.g. `origin/main` or `develop`.
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub oid: String,
+    /// Commits on the branch that the target does not have.
+    pub ahead: usize,
+    /// Commits on the target that the branch does not have — what a merge or
+    /// rebase would bring in, and the number that makes this worth showing.
+    pub behind: usize,
+    /// How the target was decided: `"config"`, `"remoteHead"` or
+    /// `"conventional"`. Surfaced so a surprising answer is explainable
+    /// rather than magic.
+    pub source: String,
+}
+
+/// Branch names we will fall back to, in order, when nothing else says.
+const CONVENTIONAL: [&str; 4] = ["main", "master", "develop", "trunk"];
+
+/// Resolve the merge target for `branch`.
+///
+/// Git has no standard config for this, so the rule is ours and is documented
+/// here rather than spread across the UI:
+///
+/// 1. `branch.<name>.mtgit-mergetarget`, then repo-wide `mtgit.mergeTarget` —
+///    an explicit answer always wins.
+/// 2. `refs/remotes/<remote>/HEAD`, where `<remote>` is the branch's upstream
+///    remote or `origin`. This is the remote's own default branch, which is
+///    the right answer whenever the repo has one.
+/// 3. The first of `main`, `master`, `develop`, `trunk` that exists locally.
+///
+/// Returns `None` when nothing resolves, and also when the target resolves to
+/// `branch` itself: "merge main into main" is not a target, and a panel that
+/// showed `main → main · 0 ahead 0 behind` would be noise on the one branch
+/// most users sit on.
+pub fn merge_target(repo: &Repository, branch: &str) -> Result<Option<MergeTarget>> {
+    let cfg = repo.config()?;
+    let candidates: Vec<(String, &str)> = [
+        cfg.get_string(&format!("branch.{branch}.mtgit-mergetarget")).ok().map(|v| (v, "config")),
+        cfg.get_string("mtgit.mergeTarget").ok().map(|v| (v, "config")),
+        remote_head(repo, branch).map(|v| (v, "remoteHead")),
+        CONVENTIONAL
+            .iter()
+            .find(|n| **n != branch && repo.find_branch(n, BranchType::Local).is_ok())
+            .map(|n| ((*n).to_string(), "conventional")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let branch_oid = match repo.find_branch(branch, BranchType::Local) {
+        Ok(b) => match b.get().peel_to_commit() {
+            Ok(c) => c.id(),
+            Err(_) => return Ok(None),
+        },
+        Err(_) => return Ok(None),
+    };
+
+    for (name, source) in candidates {
+        if name == branch {
+            continue;
+        }
+        let Some(target_oid) = resolve_shorthand(repo, &name) else { continue };
+        if target_oid == branch_oid && source == "conventional" {
+            // Same tip under a different name; nothing to merge either way.
+            continue;
+        }
+        let (ahead, behind) = repo.graph_ahead_behind(branch_oid, target_oid)?;
+        return Ok(Some(MergeTarget {
+            reference: name,
+            oid: target_oid.to_string(),
+            ahead,
+            behind,
+            source: source.to_string(),
+        }));
+    }
+    Ok(None)
+}
+
+/// The default branch the remote advertises, as `<remote>/<branch>`.
+fn remote_head(repo: &Repository, branch: &str) -> Option<String> {
+    let remote = repo
+        .branch_upstream_remote(&format!("refs/heads/{branch}"))
+        .ok()
+        .and_then(|buf| buf.as_str().map(str::to_string))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "origin".to_string());
+
+    let head = repo.find_reference(&format!("refs/remotes/{remote}/HEAD")).ok()?;
+    let target = head.symbolic_target()?;
+    target.strip_prefix("refs/remotes/").map(str::to_string)
+}
+
+/// Resolve a branch shorthand the way the user typed it: local first, then
+/// remote-tracking, so `main` means the local branch and `origin/main` the
+/// remote one without needing a prefix.
+fn resolve_shorthand(repo: &Repository, name: &str) -> Option<Oid> {
+    for kind in [BranchType::Local, BranchType::Remote] {
+        if let Ok(b) = repo.find_branch(name, kind) {
+            if let Ok(c) = b.get().peel_to_commit() {
+                return Some(c.id());
+            }
+        }
+    }
+    repo.revparse_single(name).ok().and_then(|o| o.peel_to_commit().ok()).map(|c| c.id())
+}
+
+/// How two refs stand to each other, for the drop menu (STATUS C6).
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeRelation {
+    /// `target` can be fast-forwarded to `source`: target's tip is an ancestor
+    /// of source's.
+    pub can_fast_forward: bool,
+    /// `source` is already contained in `target`; there is nothing to merge.
+    pub up_to_date: bool,
+    /// Commits on `target` that `source` lacks, and vice versa.
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+/// Resolve the relation between two refs.
+///
+/// Offering "Fast-forward" for a pair that cannot fast-forward is worse than
+/// hiding it: the user picks it, git refuses, and the drop looks broken. So
+/// the menu asks first (`05-merge.md` §2, §6).
+pub fn merge_relation(repo: &Repository, target: &str, source: &str) -> Result<MergeRelation> {
+    let resolve = |name: &str| -> Result<Oid> {
+        resolve_shorthand(repo, name).ok_or_else(|| Error::Msg(format!("cannot resolve {name}")))
+    };
+    let target_oid = resolve(target)?;
+    let source_oid = resolve(source)?;
+    let (ahead, behind) = repo.graph_ahead_behind(target_oid, source_oid)?;
+    Ok(MergeRelation {
+        // Nothing to fast-forward *to* when the tips are equal, and nothing to
+        // fast-forward *over* when target has commits of its own.
+        can_fast_forward: ahead == 0 && behind > 0,
+        up_to_date: behind == 0,
+        ahead,
+        behind,
+    })
+}
+
 /// URL of a named remote (e.g. "origin"), if it exists.
 pub fn remote_url(repo: &Repository, name: &str) -> Option<String> {
     repo.find_remote(name).ok().and_then(|r| r.url().map(str::to_string))
@@ -307,6 +472,83 @@ mod tests {
         assert!(!target.has_upstream);
     }
 
+    /// STATUS C8: after a `fetch --prune` the branch still *thinks* it tracks
+    /// something. Reporting that as "no upstream" would hide the orphan, and
+    /// reporting it as a live upstream would make ahead/behind lie.
+    #[test]
+    fn an_upstream_whose_tracking_ref_is_gone_is_reported_as_orphaned() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        t.repo.branch("main", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        t.repo.set_head("refs/heads/main").unwrap();
+        t.repo.remote("origin", "https://example.com/o.git").unwrap();
+        t.repo.reference("refs/remotes/origin/main", a, true, "test").unwrap();
+        let mut cfg = t.repo.config().unwrap();
+        cfg.set_str("branch.main.remote", "origin").unwrap();
+        cfg.set_str("branch.main.merge", "refs/heads/main").unwrap();
+
+        let before = list(&t.repo).unwrap();
+        let main = before.local.iter().find(|b| b.name == "main").unwrap();
+        assert_eq!(main.upstream.as_deref(), Some("origin/main"));
+        assert!(!main.upstream_gone);
+        assert_eq!(main.ahead, Some(0));
+
+        // What `git fetch --prune` does when the branch is deleted upstream.
+        t.repo.find_reference("refs/remotes/origin/main").unwrap().delete().unwrap();
+
+        let after = list(&t.repo).unwrap();
+        let main = after.local.iter().find(|b| b.name == "main").unwrap();
+        assert!(main.upstream_gone, "the branch still has the config, not the ref");
+        assert_eq!(main.upstream.as_deref(), Some("origin/main"), "so the UI can name it");
+        assert_eq!(main.ahead, None, "there is nothing to be ahead of any more");
+    }
+
+    #[test]
+    fn a_branch_with_no_upstream_is_not_reported_as_orphaned() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        t.repo.branch("solo", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        let solo = list(&t.repo).unwrap().local.into_iter().find(|b| b.name == "solo").unwrap();
+        assert!(!solo.upstream_gone);
+        assert_eq!(solo.upstream, None);
+    }
+
+    #[test]
+    fn merge_relation_only_allows_a_fast_forward_when_one_is_possible() {
+        let t = TestRepo::new();
+        let base = t.commit("base", &[]);
+        let ahead = t.commit("ahead", &[base]);
+        let side = t.commit("side", &[base]);
+        t.repo.branch("base", &t.repo.find_commit(base).unwrap(), true).unwrap();
+        t.repo.branch("ahead", &t.repo.find_commit(ahead).unwrap(), true).unwrap();
+        t.repo.branch("side", &t.repo.find_commit(side).unwrap(), true).unwrap();
+
+        // base -> ahead: a clean fast-forward.
+        let ff = merge_relation(&t.repo, "base", "ahead").unwrap();
+        assert!(ff.can_fast_forward);
+        assert!(!ff.up_to_date);
+        assert_eq!((ff.ahead, ff.behind), (0, 1));
+
+        // ahead -> base: already contains it, so there is nothing to do.
+        let done = merge_relation(&t.repo, "ahead", "base").unwrap();
+        assert!(!done.can_fast_forward);
+        assert!(done.up_to_date);
+
+        // Diverged: a merge, never a fast-forward.
+        let diverged = merge_relation(&t.repo, "ahead", "side").unwrap();
+        assert!(!diverged.can_fast_forward);
+        assert!(!diverged.up_to_date);
+        assert_eq!((diverged.ahead, diverged.behind), (1, 1));
+    }
+
+    #[test]
+    fn merge_relation_rejects_a_ref_that_does_not_exist() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        t.repo.branch("main", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        assert!(merge_relation(&t.repo, "main", "nope").is_err());
+    }
+
     #[test]
     fn create_and_delete_lightweight_tag() {
         let t = TestRepo::new();
@@ -318,6 +560,75 @@ mod tests {
         delete_tag(&t.repo, "v1").unwrap();
         let refs = list(&t.repo).unwrap();
         assert!(!refs.tags.iter().any(|tag| tag.name == "v1"));
+    }
+
+    #[test]
+    fn merge_target_prefers_the_remotes_default_branch() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let b = t.commit("b", &[a]);
+        let main = t.repo.find_commit(a).unwrap();
+        t.repo.branch("main", &main, true).unwrap();
+        t.repo.branch("feature", &t.repo.find_commit(b).unwrap(), true).unwrap();
+        t.repo.remote("origin", "https://example.com/o.git").unwrap();
+        // What `git remote set-head origin main` writes.
+        t.repo
+            .reference("refs/remotes/origin/main", a, true, "test")
+            .unwrap();
+        t.repo
+            .reference_symbolic("refs/remotes/origin/HEAD", "refs/remotes/origin/main", true, "test")
+            .unwrap();
+
+        let target = merge_target(&t.repo, "feature").unwrap().unwrap();
+        assert_eq!(target.reference, "origin/main");
+        assert_eq!(target.source, "remoteHead");
+        assert_eq!(target.ahead, 1, "feature has one commit main does not");
+        assert_eq!(target.behind, 0);
+    }
+
+    #[test]
+    fn an_explicit_config_override_beats_the_remote_head() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let b = t.commit("b", &[a]);
+        t.repo.branch("develop", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        t.repo.branch("feature", &t.repo.find_commit(b).unwrap(), true).unwrap();
+        t.repo
+            .reference("refs/remotes/origin/main", a, true, "test")
+            .unwrap();
+        t.repo
+            .reference_symbolic("refs/remotes/origin/HEAD", "refs/remotes/origin/main", true, "test")
+            .unwrap();
+
+        let mut cfg = t.repo.config().unwrap();
+        cfg.set_str("branch.feature.mtgit-mergetarget", "develop").unwrap();
+
+        let target = merge_target(&t.repo, "feature").unwrap().unwrap();
+        assert_eq!(target.reference, "develop");
+        assert_eq!(target.source, "config");
+    }
+
+    /// The row a panel must not render: a branch is never its own merge target.
+    #[test]
+    fn a_branch_is_not_its_own_merge_target() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        t.repo.branch("main", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        assert!(merge_target(&t.repo, "main").unwrap().is_none());
+    }
+
+    #[test]
+    fn merge_target_falls_back_to_a_conventional_branch() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let b = t.commit("b", &[a]);
+        t.repo.branch("master", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        t.repo.branch("feature", &t.repo.find_commit(b).unwrap(), true).unwrap();
+
+        let target = merge_target(&t.repo, "feature").unwrap().unwrap();
+        assert_eq!(target.reference, "master");
+        assert_eq!(target.source, "conventional");
+        assert_eq!(target.ahead, 1);
     }
 
     #[test]

@@ -47,15 +47,15 @@ Fetch is continuous and invisible; Pull is a deliberate toolbar action with sele
 
 - [x] Auto-fetch updates counts/pills silently on the configured interval and prunes deleted refs. — the interval is state, so saving it restarts the timer, and one fetch fires at open (STATUS A4 fixed)
 - [x] All three pull strategies work and the default is persisted per repo. — `localStorage`, per repo path
-- [◐] Dirty-tree pull auto-stashes and restores, with the conflict-on-pop fallback. — `--autostash` is passed; the pop-conflict case has no dedicated feedback
+- [x] Dirty-tree pull auto-stashes and restores, with the conflict-on-pop fallback. — `--autostash` is passed, and `net.ts:classifyFailure` now recognises "Applying autostash resulted in conflicts" and says the stash was **kept**, which is the fact that decides what the user does next (B3)
 - [x] Pull conflicts use the shared conflict UI; Abort restores the exact pre-pull state. — the banner now comes from `refreshRepo`'s re-read of `operation_info`, not from the op's return value (STATUS A1 fixed)
 - [x] No-upstream pull shows the upstream dialog. — remote-branch chooser; "set as upstream" is implicit, not a checkbox
 - [x] Offline auto-fetch degrades silently with a warning icon; manual operations surface errors fully. — icon tooltip carries the error and last success time
-- [ ] Sidebar entry points: **Pull (fast-forward)** on the current branch, **Fetch \<remote\>** on remote nodes (§2) — the REMOTE section has no per-remote root node.
-- [ ] Prune that orphans an upstream offers to unset it or delete the local branch (§5).
+- [x] Sidebar entry points: **Pull (fast-forward)** on the current branch, **Fetch \<remote\>** on remote nodes (§2). — landed in P1 with the per-remote root node.
+- [x] Prune that orphans an upstream offers to unset it or delete the local branch (§5). — `BranchInfo.upstreamGone` distinguishes "configured but the tracking ref is gone" from "never had one"; `branch.upstream()` fails in that state, so the configured name is read from config to keep it nameable. The row is tagged `orphaned` and its menu offers both recoveries, because only the user knows whether the branch is finished or the deletion was a mistake.
 
-**New in this revision (GitLens-derived) — none implemented:**
+**New in this revision (GitLens-derived):**
 
-- [ ] Rows behind the upstream carry an unpulled marker in the graph (§3).
-- [ ] Jump-to-HEAD / upstream / merge-target controls exist and select the right rows (overview §3).
-- [ ] Merge target is resolved and displayed, and being behind it is visible even when the upstream is level (§5).
+- [x] Rows behind the upstream carry an unpulled marker in the graph (§3). — the other half of `graph::sync_sets`.
+- [x] Jump-to-HEAD / upstream / merge-target controls exist and select the right rows (overview §3). — one toolbar control rather than three buttons: the destinations are alternatives, and only HEAD always exists.
+- [x] Merge target is resolved and displayed, and being behind it is visible even when the upstream is level (§5). — `refs::merge_target`, resolved by an explicit rule documented at the function: config override, then the remote's advertised default branch, then a conventional name. A branch is never its own merge target, so the chip does not appear on `main` saying `main → main`.

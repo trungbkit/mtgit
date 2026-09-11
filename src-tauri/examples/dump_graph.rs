@@ -18,7 +18,7 @@ fn main() {
     let layout_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let badges = refs::badges_by_oid(&repo);
-    let rows = graph::build_rows(&repo, &layouts, &badges).expect("build rows");
+    let rows = graph::build_rows(&repo, &layouts, &badges, &graph::sync_sets(&repo)).expect("build rows");
 
     println!("repo:   {path}");
     println!("commits: {}", rows.len());

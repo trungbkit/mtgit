@@ -55,6 +55,9 @@ fn lenient_terminal_font_size<'de, D: Deserializer<'de>>(d: D) -> std::result::R
 fn lenient_tab_width<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u8, D::Error> {
     lenient_or(d, default_tab_width())
 }
+fn lenient_true<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<bool, D::Error> {
+    lenient_or(d, true)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -113,6 +116,33 @@ fn default_tab_width() -> u8 {
 fn default_auto_fetch_minutes() -> u32 {
     1
 }
+fn default_true() -> bool {
+    true
+}
+
+/// The columns GitKraken shows by default. `changes` is off because it costs a
+/// diff per visible row, and a user who wants it should be the one asking.
+pub const GRAPH_COLUMNS: [&str; 4] = ["author", "changes", "date", "sha"];
+
+fn default_graph_columns() -> Vec<String> {
+    vec!["author".into(), "date".into(), "sha".into()]
+}
+
+/// Keep only known ids, and only once each.
+///
+/// An unknown id would render as a blank column with no header and no way to
+/// remove it, and a duplicate would render the same value twice — both are
+/// reachable by hand-editing the file, and neither is worth a broken graph.
+fn lenient_columns<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Vec<String>, D::Error> {
+    let raw: Vec<String> = lenient_or(d, default_graph_columns())?;
+    let mut out = Vec::new();
+    for id in raw {
+        if GRAPH_COLUMNS.contains(&id.as_str()) && !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -147,6 +177,22 @@ pub struct Settings {
     #[serde(default, deserialize_with = "lenient")]
     pub cherry_pick_append_origin: bool,
 
+    /// Follow renames in file history and the blame reached through it (G22).
+    /// Defaults **on**: not following is not a cheaper view of the same
+    /// answer, it is a wrong one, and the cost only shows up on the single
+    /// commit where the tracked path was added.
+    #[serde(default = "default_true", deserialize_with = "lenient_true")]
+    pub history_follow_renames: bool,
+    /// Tint the blame gutter by how recent each line is (G21).
+    #[serde(default = "default_true", deserialize_with = "lenient_true")]
+    pub blame_heatmap: bool,
+
+    /// Optional graph columns, in display order (G16). The message column is
+    /// not listed: it is always present and always takes the remaining width,
+    /// so making it removable would leave the graph with nothing to read.
+    #[serde(default = "default_graph_columns", deserialize_with = "lenient_columns")]
+    pub graph_columns: Vec<String>,
+
     #[serde(default = "default_terminal_font_size", deserialize_with = "lenient_terminal_font_size")]
     pub terminal_font_size: u8,
     /// Empty means "the login shell".
@@ -177,6 +223,9 @@ impl Default for Settings {
             default_clone_dir: None,
             auto_fetch_minutes: default_auto_fetch_minutes(),
             cherry_pick_append_origin: false,
+            history_follow_renames: true,
+            blame_heatmap: true,
+            graph_columns: default_graph_columns(),
             terminal_font_size: default_terminal_font_size(),
             terminal_shell: None,
             keybindings: BTreeMap::new(),
@@ -291,6 +340,28 @@ mod tests {
         assert_eq!(loaded.diff_mode, DiffMode::Split);
         assert_eq!(loaded.theme, Theme::System, "unknown variant falls back");
         assert_eq!(loaded.font_size, 13, "wrong type falls back");
+    }
+
+    /// A hand-edited column list must not be able to produce a column with no
+    /// header, or the same column twice.
+    #[test]
+    fn unknown_and_duplicate_graph_columns_are_dropped() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            settings_path(dir.path()),
+            r#"{ "graphColumns": ["sha", "wat", "sha", "author"] }"#,
+        )
+        .unwrap();
+        assert_eq!(load(dir.path()).graph_columns, vec!["sha", "author"]);
+    }
+
+    #[test]
+    fn an_empty_graph_column_list_is_respected() {
+        // "Only the message" is a legitimate choice, and coercing it back to
+        // the defaults would make the checkboxes un-uncheckable.
+        let dir = TempDir::new().unwrap();
+        std::fs::write(settings_path(dir.path()), r#"{ "graphColumns": [] }"#).unwrap();
+        assert!(load(dir.path()).graph_columns.is_empty());
     }
 
     #[test]

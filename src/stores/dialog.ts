@@ -24,6 +24,24 @@ export interface ConfirmOptions {
   danger?: boolean;
 }
 
+/**
+ * The publish form (STATUS C1). A dialog *kind* rather than a component the
+ * caller mounts, because it is raised from `features/network/net.ts` — a
+ * plain module with no place in the tree — and the convention here is that
+ * every modal is awaited from this store.
+ */
+export interface PublishOptions {
+  branch: string;
+  remotes: import("../ipc/types").RemoteInfo[];
+  defaultRemote: string;
+}
+
+export interface PublishChoice {
+  remote: string;
+  remoteBranch: string;
+  setUpstream: boolean;
+}
+
 export interface ChoiceOptions {
   title: string;
   message?: string;
@@ -43,7 +61,11 @@ interface ChoiceRequest extends ChoiceOptions {
   kind: "choice";
   resolve: (value: string | null) => void;
 }
-export type DialogRequest = PromptRequest | ConfirmRequest | ChoiceRequest;
+interface PublishRequest extends PublishOptions {
+  kind: "publish";
+  resolve: (value: PublishChoice | null) => void;
+}
+export type DialogRequest = PromptRequest | ConfirmRequest | ChoiceRequest | PublishRequest;
 
 interface DialogState {
   current: DialogRequest | null;
@@ -74,5 +96,12 @@ export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
 export function choiceDialog(opts: ChoiceOptions): Promise<string | null> {
   return new Promise((resolve) => {
     useDialog.getState().open({ ...opts, kind: "choice", resolve });
+  });
+}
+
+/** Raise the publish form. Resolves to the chosen target, or null if cancelled. */
+export function publishDialog(opts: PublishOptions): Promise<PublishChoice | null> {
+  return new Promise((resolve) => {
+    useDialog.getState().open({ kind: "publish", ...opts, resolve });
   });
 }

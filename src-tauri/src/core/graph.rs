@@ -65,6 +65,12 @@ pub struct GraphRow {
     pub color: usize,
     pub edges: Vec<Edge>,
     pub refs: Vec<RefBadge>,
+    /// On the current branch but not on its upstream — what a push would send
+    /// (`03-push.md` §7). False everywhere when there is no upstream.
+    pub unpushed: bool,
+    /// On the upstream but not on the current branch — what a pull would bring
+    /// in (`04-pull.md` §7).
+    pub unpulled: bool,
 }
 
 /// A worktree's uncommitted state, positioned on the graph (G18).
@@ -127,6 +133,51 @@ pub fn wip_rows(
             }
         })
         .collect()
+}
+
+/// The two commit sets that make "which commits are unpushed" answerable
+/// per row rather than as one ahead/behind number in the toolbar (G23).
+///
+/// Scoped to the *current* branch's upstream, which is what the markers mean
+/// in GitKraken: a row marked unpushed is a row this branch's push would send.
+/// Both sets are bounded by the ahead/behind counts, so they cost a walk of
+/// the divergence rather than of history.
+#[derive(Debug, Default)]
+pub struct SyncSets {
+    pub unpushed: std::collections::HashSet<Oid>,
+    pub unpulled: std::collections::HashSet<Oid>,
+}
+
+/// Compute [`SyncSets`] for HEAD's branch. Empty when HEAD is detached,
+/// unborn, or has no upstream — there is nothing to be ahead *of*.
+pub fn sync_sets(repo: &Repository) -> SyncSets {
+    let mut out = SyncSets::default();
+    let Some(head) = repo.head().ok().filter(|h| h.is_branch()) else { return out };
+    let Some(local) = head.target() else { return out };
+    let Some(name) = head.name() else { return out };
+    let upstream = repo
+        .branch_upstream_name(name)
+        .ok()
+        .and_then(|buf| buf.as_str().map(str::to_string))
+        .and_then(|up| repo.find_reference(&up).ok())
+        .and_then(|r| r.target());
+    let Some(up) = upstream else { return out };
+
+    out.unpushed = walk_excluding(repo, local, up);
+    out.unpulled = walk_excluding(repo, up, local);
+    out
+}
+
+fn walk_excluding(repo: &Repository, include: Oid, exclude: Oid) -> std::collections::HashSet<Oid> {
+    let mut set = std::collections::HashSet::new();
+    let Ok(mut walk) = repo.revwalk() else { return set };
+    if walk.push(include).is_err() || walk.hide(exclude).is_err() {
+        return set;
+    }
+    for oid in walk.flatten() {
+        set.insert(oid);
+    }
+    set
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -241,6 +292,7 @@ pub fn build_rows(
     repo: &Repository,
     layouts: &[RowLayout],
     badges: &HashMap<Oid, Vec<RefBadge>>,
+    sync: &SyncSets,
 ) -> Result<Vec<GraphRow>> {
     let mut rows = Vec::with_capacity(layouts.len());
 
@@ -289,6 +341,8 @@ pub fn build_rows(
             color: rl.lane,
             edges,
             refs: badges.get(&rl.oid).cloned().unwrap_or_default(),
+            unpushed: sync.unpushed.contains(&rl.oid),
+            unpulled: sync.unpulled.contains(&rl.oid),
         });
     }
 
@@ -366,7 +420,7 @@ mod tests {
     fn full(repo: &Repository) -> Vec<GraphRow> {
         let layouts = layout(repo).unwrap();
         let badges = crate::core::refs::badges_by_oid(repo);
-        build_rows(repo, &layouts, &badges).unwrap()
+        build_rows(repo, &layouts, &badges, &sync_sets(repo)).unwrap()
     }
 
     #[test]
@@ -532,7 +586,7 @@ mod tests {
         let a = t.commit("a", &[]);
         let left = t.commit("left", &[a]);
         let right = t.commit("right", &[a]);
-        let rows = build_rows(&t.repo, &layout(&t.repo).unwrap(), &HashMap::new()).unwrap();
+        let rows = build_rows(&t.repo, &layout(&t.repo).unwrap(), &HashMap::new(), &sync_sets(&t.repo)).unwrap();
 
         let lane_of = |oid: Oid| rows.iter().find(|r| r.oid == oid.to_string()).unwrap().lane;
         let index_of = |oid: Oid| rows.iter().position(|r| r.oid == oid.to_string()).unwrap();
@@ -574,7 +628,7 @@ mod tests {
 
         let t = TestRepo::new();
         t.commit("a", &[]);
-        let rows = build_rows(&t.repo, &layout(&t.repo).unwrap(), &HashMap::new()).unwrap();
+        let rows = build_rows(&t.repo, &layout(&t.repo).unwrap(), &HashMap::new(), &sync_sets(&t.repo)).unwrap();
 
         let wips = wip_rows(
             &[WorktreeInfo {
@@ -638,5 +692,53 @@ mod tests {
                 assert!(edge.from_lane < 64 && edge.to_lane < 64);
             }
         }
+    }
+
+    /// The marker answers "which of these would a push send", so it must cover
+    /// exactly the divergence — not the whole branch, and not the upstream's
+    /// own commits.
+    #[test]
+    fn unpushed_marks_only_the_commits_the_upstream_lacks() {
+        let t = TestRepo::new();
+        let base = t.commit("base", &[]);
+        let mine = t.commit("mine", &[base]);
+        let theirs = t.commit("theirs", &[base]);
+
+        t.repo.branch("main", &t.repo.find_commit(mine).unwrap(), true).unwrap();
+        t.repo.set_head("refs/heads/main").unwrap();
+        // The remote itself has to exist: git2 maps `refs/heads/main` to
+        // `refs/remotes/origin/main` through the remote's fetch refspec, not
+        // through the branch config alone.
+        t.repo.remote("origin", "https://example.com/o.git").unwrap();
+        t.repo.reference("refs/remotes/origin/main", theirs, true, "test").unwrap();
+        let mut cfg = t.repo.config().unwrap();
+        cfg.set_str("branch.main.remote", "origin").unwrap();
+        cfg.set_str("branch.main.merge", "refs/heads/main").unwrap();
+
+        let sets = sync_sets(&t.repo);
+        assert_eq!(sets.unpushed.iter().copied().collect::<Vec<_>>(), vec![mine]);
+        assert_eq!(sets.unpulled.iter().copied().collect::<Vec<_>>(), vec![theirs]);
+        assert!(!sets.unpushed.contains(&base), "the merge base is on both sides");
+
+        let rows = full(&t.repo);
+        let row = |oid: Oid| rows.iter().find(|r| r.oid == oid.to_string()).unwrap();
+        assert!(row(mine).unpushed && !row(mine).unpulled);
+        assert!(row(theirs).unpulled && !row(theirs).unpushed);
+        assert!(!row(base).unpushed && !row(base).unpulled);
+    }
+
+    /// No upstream means no answer, and an unmarked graph is the honest one —
+    /// marking every commit unpushed would be true of a branch that has never
+    /// been pushed and misleading everywhere else.
+    #[test]
+    fn no_upstream_marks_nothing() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        t.repo.branch("main", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        t.repo.set_head("refs/heads/main").unwrap();
+
+        let sets = sync_sets(&t.repo);
+        assert!(sets.unpushed.is_empty() && sets.unpulled.is_empty());
+        assert!(full(&t.repo).iter().all(|r| !r.unpushed && !r.unpulled));
     }
 }

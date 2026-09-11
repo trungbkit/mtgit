@@ -78,6 +78,50 @@ impl TestRepo {
         self.repo.reset(&object, git2::ResetType::Hard, None).unwrap();
     }
 
+    /// Commit an explicit set of `(path, content)` entries instead of the
+    /// single `file.txt` [`commit`] writes. Paths absent from `files` are
+    /// dropped, which is what makes a rename expressible: pass the new name
+    /// and omit the old one.
+    pub fn commit_files(&self, message: &str, parents: &[Oid], files: &[(&str, &str)]) -> Oid {
+        let n = self.counter.get() + 1;
+        self.counter.set(n);
+
+        let mut tb = self.repo.treebuilder(None).unwrap();
+        for (path, content) in files {
+            let blob = self.repo.blob(content.as_bytes()).unwrap();
+            tb.insert(*path, blob, 0o100644).unwrap();
+        }
+        let tree_oid = tb.write().unwrap();
+        let tree = self.repo.find_tree(tree_oid).unwrap();
+        let sig = self.sig(n);
+
+        let parent_commits: Vec<_> =
+            parents.iter().map(|p| self.repo.find_commit(*p).unwrap()).collect();
+        let parent_refs: Vec<&git2::Commit> = parent_commits.iter().collect();
+
+        let oid = self
+            .repo
+            .commit(None, &sig, &sig, message, &tree, &parent_refs)
+            .unwrap();
+        let commit = self.repo.find_commit(oid).unwrap();
+        self.repo.branch(&format!("b{n}"), &commit, true).unwrap();
+        oid
+    }
+
+    /// Point HEAD (without touching the working tree) at the branch `commit`
+    /// created for `oid`, so a revwalk from HEAD reaches it.
+    pub fn set_head_to(&self, oid: Oid) {
+        let name = self
+            .repo
+            .branches(Some(git2::BranchType::Local))
+            .unwrap()
+            .filter_map(|b| b.ok())
+            .find(|(b, _)| b.get().target() == Some(oid))
+            .and_then(|(b, _)| b.name().unwrap().map(str::to_string))
+            .expect("no branch points at that commit");
+        self.repo.set_head(&format!("refs/heads/{name}")).unwrap();
+    }
+
     /// Create a parentless root on a distinctly named branch (a second history).
     pub fn commit_orphan(&self, summary: &str, branch: &str) -> Oid {
         let oid = self.commit(summary, &[]);

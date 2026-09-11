@@ -196,6 +196,18 @@ function GeneralTab() {
         label="Record the source of a cherry-pick"
         hint="Adds git's own “(cherry picked from commit …)” line."
       />
+
+      <h3>History</h3>
+      <Toggle
+        setting="historyFollowRenames"
+        label="Follow renames in file history"
+        hint="Off, history stops at the commit that moved the file — and so does the blame you reach from it."
+      />
+      <Toggle
+        setting="blameHeatmap"
+        label="Tint blame by line age"
+        hint="Warmer gutter for lines changed recently, relative to the rest of the file."
+      />
     </section>
   );
 }

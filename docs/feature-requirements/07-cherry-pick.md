@@ -55,8 +55,8 @@ Apply one or more commits from anywhere in the graph onto the checked-out branch
 - [x] `-x` settings flag (B1) — Settings → General → Commits; `CherryPickPopover` passes `settings().cherryPickAppendOrigin` at the call site that used to be hardcoded `false` (P6).
 - [ ] Per-commit sequence progress and the "picked" flash on source commits (§3).
 
-**New in this revision (GitLens-derived) — none implemented:**
+**New in this revision (GitLens-derived):**
 
-- [ ] A `select`-mode search result feeds a multi-commit pick directly (§2).
-- [ ] Conflicts during a sequence use the unified conflict panel (`05-merge.md` §5).
+- [x] A `select`-mode search result feeds a multi-commit pick directly (§2). — the row menu picks the whole multi-selection oldest-first, and select mode is what puts every hit into it.
+- [x] Conflicts during a sequence use the unified conflict panel (`05-merge.md` §5). — the panel names the picked commit as the incoming side rather than "theirs".
 - [ ] Picking onto a branch held by another worktree is offered as a composite action, not a git error (§5).

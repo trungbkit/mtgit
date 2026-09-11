@@ -28,6 +28,44 @@
 .gh-message {
   flex: 1;
   padding-left: 4px;
+  min-width: 0;
+}
+/* One width per column id, applied to both the header cell and the row cell —
+   the two are separate elements in separate components, and a width defined
+   twice is a width that drifts. */
+.gh-col,
+.row-col {
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.col-author {
+  width: 140px;
+}
+.col-changes {
+  width: 118px;
+}
+.col-date {
+  width: 110px;
+}
+.col-sha {
+  width: 62px;
+  text-align: right;
+}
+.row-changes {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.row-changes b {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.row-changes.pending {
+  color: var(--text-faint);
 }
 .gh-gear {
   background: transparent;
@@ -63,6 +101,43 @@
   align-items: center;
   gap: 6px;
   cursor: pointer;
+}
+.gh-gear-sep {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.gh-columns {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 170px;
+}
+.gh-column-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.gh-column-row label {
+  flex: 1;
+}
+.gh-column-row.off label {
+  color: var(--text-faint);
+}
+.gh-column-row button {
+  padding: 0 5px;
+  font-size: 9px;
+  line-height: 16px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.gh-column-row button:disabled {
+  opacity: 0.3;
 }
 
 /* Holds the scroll container and the marker gutter side by side. The gutter
@@ -228,25 +303,21 @@
   text-overflow: ellipsis;
   color: var(--text);
 }
+/* The column *cells* own their widths now (`.col-*` above). What is left here
+   is what the content inside a cell looks like. */
 .row-author {
-  flex-shrink: 0;
-  width: 140px;
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-dim);
 }
-.row-date {
-  flex-shrink: 0;
-  width: 110px;
+.row-col.col-date {
   color: var(--text-faint);
 }
 .row-oid {
-  flex-shrink: 0;
-  width: 62px;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-faint);
-  text-align: right;
 }
 
 .graph-empty {
@@ -323,4 +394,79 @@
 }
 .wip-count {
   padding-right: 14px;
+}
+
+/* Sync markers (G23): a push/pull glyph pinned beside the lane node. */
+.row-sync {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1px solid var(--bg-app);
+  pointer-events: none;
+}
+.row-sync.unpushed {
+  background: var(--accent);
+  color: #fff;
+}
+.row-sync.unpulled {
+  background: var(--yellow);
+  color: #fff;
+}
+
+/* Search minimap (G17). Sits beside the marker gutter, inside `.graph-body`
+   for the same reason the gutter does: a child of the scroller scrolls away. */
+.graph-minimap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 12px;
+  width: 10px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel-2);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  z-index: 3;
+}
+.mm-bucket {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--accent);
+}
+.mm-bucket:disabled {
+  background: transparent;
+}
+.mm-bucket:not(:disabled):hover {
+  background: var(--accent-text);
+}
+.mm-bucket.current {
+  background: var(--yellow);
+  opacity: 1 !important;
+}
+
+/* The "this row just became HEAD" flash (STATUS §4). One pulse, then gone —
+   a persistent highlight would compete with the selection. */
+@keyframes graph-row-flash {
+  0% {
+    background: var(--accent-tint-strong);
+  }
+  100% {
+    background: transparent;
+  }
+}
+.graph-row.flash {
+  animation: graph-row-flash 1.2s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .graph-row.flash {
+    animation: none;
+    background: var(--accent-tint);
+  }
 }

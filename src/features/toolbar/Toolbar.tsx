@@ -10,6 +10,7 @@ import {
   historyStatus,
   listRefs,
   listRemotes,
+  mergeTarget,
   openRepo,
   redo,
   setUpstream,
@@ -29,6 +30,7 @@ import { ContextMenu, type MenuItem, type MenuState } from "../../components/Con
 import { Icon, type IconName } from "../../components/Icon";
 import { matches } from "../../lib/keys";
 import { openSettings, settings } from "../../stores/settings";
+import { revealCommit } from "../../stores/reveal";
 import "./toolbar.css";
 
 /**
@@ -82,7 +84,26 @@ export function Toolbar() {
     queryFn: () => historyStatus(repo!.path),
   });
 
+  // Busy-gating (`02-checkout.md` §3, STATUS §4). A checkout rewrites the
+  // working tree; every other mutating control has to stand down while it
+  // does, or the second operation races the first over the same index. Only
+  // the *mutating* ones: the repository and branch pickers stay live so the
+  // user can see where they are, and so does Fetch.
+  const checkingOut = !!useSession((s) => s.checkoutTarget);
+  const { data: stashes } = useQuery({
+    queryKey: ["stashes", repo?.path],
+    enabled: !!repo,
+    queryFn: () => stashList(repo!.path),
+  });
   const currentBranch = refs?.local.find((branch) => branch.isHead);
+  // Merge target (G23). Keyed on the branch as well as the path, because it is
+  // a per-branch answer and a stale one would point the jump menu at the
+  // previous branch's base.
+  const { data: target } = useQuery({
+    queryKey: ["mergeTarget", repo?.path, currentBranch?.name],
+    enabled: !!repo && !!currentBranch,
+    queryFn: () => mergeTarget(repo!.path, currentBranch!.name),
+  });
   const ahead = currentBranch?.ahead ?? 0;
   const behind = currentBranch?.behind ?? 0;
 
@@ -443,6 +464,57 @@ export function Toolbar() {
             <span className="tb-caret">▾</span>
           </button>
         </div>
+        {/* Jump-to (G23). One control rather than three buttons: the three
+            destinations are alternatives, and only one of them (HEAD) always
+            exists. */}
+        <button
+          className="tb-jump"
+          disabled={!repo}
+          title="Jump to a commit in the graph"
+          onClick={(event) => {
+            const items: MenuItem[] = [];
+            if (repo?.head.oid) {
+              items.push({ label: "Go to HEAD", onClick: () => revealCommit(repo.head.oid!) });
+            }
+            const upstreamOid = currentBranch?.upstream
+              ? refs?.remote.find((b) => b.name === currentBranch.upstream)?.oid
+              : undefined;
+            if (upstreamOid) {
+              items.push({
+                label: `Go to upstream (${currentBranch!.upstream})`,
+                onClick: () => revealCommit(upstreamOid),
+              });
+            }
+            if (target) {
+              items.push({
+                label: `Go to merge target (${target.ref})`,
+                onClick: () => revealCommit(target.oid),
+              });
+            }
+            if (!items.length) items.push({ label: "Nothing to jump to", disabled: true, onClick: () => {} });
+            setMenu({ x: event.clientX, y: event.clientY, items });
+          }}
+        >
+          <Icon name="commit" size={14} />
+        </button>
+        {/* The merge target is where this branch is *heading*; the behind count
+            is the number that makes it worth a chip rather than a tooltip. */}
+        {target && (
+          <button
+            className="tb-mergetarget"
+            title={`Merge target: ${target.ref} (resolved from ${
+              target.source === "config"
+                ? "your configuration"
+                : target.source === "remoteHead"
+                  ? "the remote's default branch"
+                  : "a conventional branch name"
+            }) — ${target.ahead} ahead, ${target.behind} behind`}
+            onClick={() => revealCommit(target.oid)}
+          >
+            → {target.ref}
+            {target.behind > 0 && <span className="tb-mt-behind">{target.behind}</span>}
+          </button>
+        )}
         <button
           className={`tb-target${fetchError ? " warning" : ""}`}
           title={
@@ -464,14 +536,14 @@ export function Toolbar() {
         <ToolBtn
           icon="undo"
           label="Undo"
-          disabled={!history?.undoLabel}
+          disabled={!history?.undoLabel || checkingOut}
           title={history?.undoLabel ? `Undo ${history.undoLabel}` : remoteMutation ? "Remote operations cannot be undone" : "Nothing to undo"}
           onClick={() => historyAction("undo")}
         />
         <ToolBtn
           icon="redo"
           label="Redo"
-          disabled={!history?.redoLabel}
+          disabled={!history?.redoLabel || checkingOut}
           title={history?.redoLabel ? `Redo ${history.redoLabel}` : "Nothing to redo"}
           onClick={() => historyAction("redo")}
         />
@@ -484,7 +556,8 @@ export function Toolbar() {
         <ToolBtn
           icon="pull"
           label="Pull"
-          disabled={!repo}
+          disabled={!repo || checkingOut}
+          title={checkingOut ? "A checkout is in progress" : undefined}
           badge={behind || undefined}
           onClick={defaultPull}
           onCaret={(e) =>
@@ -503,8 +576,14 @@ export function Toolbar() {
           icon="push"
           label="Push"
           badge={ahead || undefined}
-          disabled={!repo || (!!currentBranch?.upstream && ahead === 0)}
-          title={currentBranch?.upstream && ahead === 0 ? "Nothing to push" : "Push"}
+          disabled={!repo || checkingOut || (!!currentBranch?.upstream && ahead === 0)}
+          title={
+            checkingOut
+              ? "A checkout is in progress"
+              : currentBranch?.upstream && ahead === 0
+                ? "Nothing to push"
+                : "Push"
+          }
           onClick={() => net("push")}
           onCaret={(e) =>
             openMenu(e, [
@@ -527,24 +606,33 @@ export function Toolbar() {
             ])
           }
         />
-        <ToolBtn icon="branch" label="Branch" disabled={!repo} onClick={newBranch} />
+        <ToolBtn icon="branch" label="Branch" disabled={!repo || checkingOut} onClick={newBranch} />
         <ToolBtn
           icon="stash-save"
           label="Stash"
-          disabled={!repo}
+          disabled={!repo || checkingOut}
           onClick={() => repo && run(() => stashSave(repo.path, undefined, true), "Stashed")}
         />
+        {/* Disabled with a reason rather than enabled and failing (overview
+            §3): "No stashes to pop" as an error toast is the app telling the
+            user off for pressing a button it offered them. */}
         <ToolBtn
           icon="stash-pop"
           label="Pop"
-          disabled={!repo}
+          disabled={!repo || checkingOut || !stashes?.length}
+          title={
+            checkingOut
+              ? "A checkout is in progress"
+              : !repo
+              ? "Open a repository"
+              : stashes?.length
+                ? `Pop "${stashes[0].message}"`
+                : "There is nothing stashed"
+          }
           onClick={() =>
             repo &&
-            run(async () => {
-              const list = await stashList(repo.path);
-              if (!list.length) throw new Error("No stashes to pop");
-              return stashPop(repo.path, list[0].index);
-            }, "Stash popped")
+            stashes?.length &&
+            run(() => stashPop(repo.path, stashes[0].index), "Stash popped")
           }
         />
         <ToolBtn icon="terminal" label="Terminal" disabled={!repo} onClick={() => repo && toggleTerminal()} />

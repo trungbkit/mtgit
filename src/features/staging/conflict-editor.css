@@ -61,26 +61,6 @@
   font: 11px/1.45 var(--font-mono);
   outline: none;
 }
-.ce-hunks {
-  max-height: 90px;
-  overflow-y: auto;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-}
-.ce-hunks > div {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 8px;
-  font-size: 10.5px;
-  color: var(--text-dim);
-}
-.ce-hunks label {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
 .ce-output textarea {
   background: color-mix(in srgb, var(--bg-app) 88%, var(--accent) 12%);
 }
@@ -101,8 +81,60 @@
   padding-bottom: 12px;
 }
 
+/* Unified panel additions (G25). The counter and the stepper live in the head
+   because they describe the whole conflict set, not this file. */
+.ce-counter {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.ce-nav {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 10px;
+}
+.ce-nav button {
+  font-size: 11px;
+  padding: 1px 8px;
+}
+/* Each pane is topped with its side's lane colour, so the panel and the graph
+   agree about which branch is which. */
+.ce-sides > section {
+  border-top: 2px solid var(--border-strong);
+}
+.ce-side-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.ce-side-label em {
+  font-style: normal;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.ce-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.ce-clean {
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  background: var(--ok-tint);
+  border-bottom: 1px solid var(--ok-tint-border);
+}
+/* The binary case has no panes to navigate: a whole side is the only choice. */
 .ce-binary-actions {
   display: flex;
-  gap: 8px;
-  padding: 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  font-size: 12px;
+  color: var(--text-dim);
 }

@@ -288,3 +288,38 @@
 .wt-flag.dirty {
   color: var(--yellow);
 }
+
+/* Contributors (G28). The avatar replaces the icon slot rather than sitting
+   beside it, so rows line up with every other section's 16px glyph column. */
+.ref-item.contributor {
+  gap: 6px;
+}
+.contributor-co {
+  margin-left: 3px;
+  color: var(--text-faint);
+}
+.section-more {
+  display: block;
+  width: 100%;
+  padding: 4px 20px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--accent-text);
+  font-size: 11px;
+}
+.section-more:hover {
+  background: var(--bg-hover);
+}
+
+/* An upstream that was pruned away (STATUS C8). */
+.upstream-gone {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--warn-tint-strong);
+  border: 1px solid var(--warn-tint-border);
+  color: var(--text-dim);
+  font-size: 10px;
+}

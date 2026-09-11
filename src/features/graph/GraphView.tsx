@@ -3,7 +3,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  commitStats,
   createBranch,
+  deleteBranch,
+  deleteTag,
+  gitNetwork,
+  renameBranch,
   createPatch,
   createTag,
   createWorktree,
@@ -13,25 +18,30 @@ import {
   openRepo,
   wipRows,
   mergeAdvanced,
+  mergeRelation,
   rebaseStandard,
   rewriteInfo,
   resetTo,
   revertCommit,
 } from "../../ipc/commands";
-import type { GraphRow, SearchHit } from "../../ipc/types";
+import type { CommitStats, GraphColumnId, GraphRow, RefBadge, SearchHit } from "../../ipc/types";
 import type { RebaseAction, ResetMode } from "../../ipc/types";
 import { REVEAL_COMMIT_EVENT } from "../../stores/reveal";
+import { pushDetail } from "../../stores/detailStack";
 import { useSession, WORKING } from "../../stores/session";
 import { seedSearch, useRepoSearch, useSearch } from "../../stores/search";
 import { toastError, useToasts } from "../../stores/toasts";
 import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
 import { type ConflictKind, conflictLabel } from "../../stores/conflict";
 import { confirmDialog, promptDialog } from "../../stores/dialog";
-import { validateRefName } from "../../lib/refname";
+import { validateFolderName, validateRefName } from "../../lib/refname";
 import { ContextMenu, type MenuItem, type MenuState } from "../../components/ContextMenu";
 import { Avatar } from "../../components/Avatar";
+import { Autolinked } from "../../components/Autolinked";
 import { copyText } from "../../lib/clipboard";
 import { smartCheckout } from "../../lib/checkout";
+import { dropMenuItems } from "../../lib/dropMenu";
+import { captureUndoPoint, toastWithUndo } from "../../lib/undoToast";
 import { timeAgo, formatTimestamp } from "../../lib/time";
 import { Icon } from "../../components/Icon";
 import { matches } from "../../lib/keys";
@@ -39,7 +49,6 @@ import { useSettings } from "../../stores/settings";
 import { laneColor } from "./palette";
 import { CherryPickPopover } from "./CherryPickPopover";
 import { RebasePlanDialog } from "./RebasePlanDialog";
-import { CompareDialog } from "./CompareDialog";
 import { SearchBar } from "./SearchBar";
 import "./graph.css";
 
@@ -91,10 +100,13 @@ export function GraphView() {
   const selectedOid = useSession((s) => s.selectedOid);
   const selectOid = useSession((s) => s.selectOid);
   const setRepo = useSession((s) => s.setRepo);
-  const graphOpts = useSession((s) => s.graphOpts);
   // One date style for the whole app, persisted — not a per-session toggle.
   const dateStyle = useSettings((s) => s.settings.dateStyle);
-  const setGraphOpts = useSession((s) => s.setGraphOpts);
+  // Columns are a persisted preference, not session state: "a persisted
+  // preference belongs in `core/settings.rs` + `stores/settings.ts`, never
+  // mirrored into the session store". The old `graphOpts.showAuthor` was that
+  // second source of truth, and it is gone.
+  const columns = useSettings((s) => s.settings.graphColumns);
   const hiddenRefs = useSession((s) =>
     repo ? s.hiddenRefs[repo.path] ?? EMPTY_HIDDEN_REFS : EMPTY_HIDDEN_REFS,
   );
@@ -143,20 +155,20 @@ export function GraphView() {
   const [selectedOids, setSelectedOids] = useState<Set<string>>(new Set());
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
   const [pick, setPick] = useState<{ oids: string[]; parents: string[] } | null>(null);
+  /** Row to flash: the new HEAD after a checkout, or a just-picked commit. */
+  const [flashOid, setFlashOid] = useState<string | null>(null);
   const [rebasePlan, setRebasePlan] = useState<{
     base: string;
     targetOid?: string;
     action?: RebaseAction;
     move?: "up" | "down";
   } | null>(null);
-  const [comparison, setComparison] = useState<{ oldOid: string; newOid: string } | null>(null);
 
   useEffect(() => {
     setSelectedOids(new Set());
     setSelectionAnchor(null);
     setPick(null);
     setRebasePlan(null);
-    setComparison(null);
   }, [repo?.path]);
 
   const rowContextMenu = useCallback(
@@ -167,10 +179,13 @@ export function GraphView() {
       const head = repo.head.branch ?? "HEAD";
       const refresh = () => refreshRepo(qc, path);
       const run = async (fn: () => Promise<unknown>, ok?: string) => {
+        // The journal point is read *before* the mutation so the toast can
+        // tell whether this operation is the one Undo would reverse (§3.3).
+        const capture = await captureUndoPoint(path);
         try {
           await fn();
-          if (ok) pushToast("success", ok);
           await refresh();
+          if (ok) await toastWithUndo(qc, path, ok, capture);
         } catch (err) {
           toastError(err);
         }
@@ -193,6 +208,8 @@ export function GraphView() {
           ? rows.filter((candidate) => selectedOids.has(candidate.oid))
           : [row];
       const chosenOldestFirst = [...chosenRows].reverse().map((candidate) => candidate.oid);
+      // Rows are newest-first, so the last chosen row is the oldest commit.
+      const oldestSelected = chosenRows[chosenRows.length - 1];
       const parentRow = rows.find((candidate) => candidate.oid === row.parents[0]);
 
       const standardRebase = async () => {
@@ -222,7 +239,12 @@ export function GraphView() {
           await run(() =>
             rebaseStandard(path, row.oid).then((result) =>
               result.success
-                ? pushToast("success", `Rebased ${info.commits} commit(s)`)
+                ? // `06-rebase.md` B7: rebasing onto an ancestor replays
+                  // nothing, and "Rebased 0 commit(s)" reads as a failure.
+                  pushToast(
+                    info.commits === 0 ? "info" : "success",
+                    info.commits === 0 ? "Already up to date." : `Rebased ${info.commits} commit(s)`,
+                  )
                 : reportConflicts("rebase", result, ""),
             ),
           );
@@ -232,24 +254,32 @@ export function GraphView() {
       };
 
       /**
-       * `target` is a branch name when the row carries one, and the commit
-       * oid otherwise. The backend resolves both (`core/worktree.rs::add`):
-       * a branch is attached as-is, an oid gets a new branch named `name`.
+       * `target` is a branch name when the row carries one, and the commit oid
+       * otherwise. A branch is attached as-is; a bare commit now gets a
+       * **detached HEAD** (`02-checkout.md` B8) rather than a branch named
+       * after the folder — asking for "a worktree at this commit" is not
+       * asking for a new branch, and the invented one occupied the name.
        */
       const createWorktreeFlow = async (target: string, label: string) => {
+        const detach = target === row.oid;
         const name = await promptDialog({
           title: `Open ${label} in a worktree`,
-          label: "Worktree folder / branch name",
-          defaultValue: target === row.oid ? "" : target.split("/").pop() ?? "",
+          message: detach
+            ? "The worktree will sit on a detached HEAD at this commit. Create a branch from it later if you want one."
+            : undefined,
+          label: detach ? "Worktree folder name" : "Worktree folder / branch name",
+          defaultValue: detach ? "" : target.split("/").pop() ?? "",
           confirmLabel: "Choose location…",
-          validate: validateRefName,
+          // A detached worktree's name is only a directory, so it is checked
+          // as one; an attached worktree's name also becomes a branch.
+          validate: detach ? validateFolderName : validateRefName,
         });
         if (!name) return;
         const parent = await openDialog({ directory: true, title: "Choose worktree location" });
         if (typeof parent !== "string") return;
         const wtPath = `${parent}/${name}`;
         run(async () => {
-          await createWorktree(path, name, wtPath, target);
+          await createWorktree(path, name, wtPath, target, detach);
           setRepo(await openRepo(wtPath));
         }, `Worktree ${name} created`);
       };
@@ -312,8 +342,24 @@ export function GraphView() {
           onClick: standardRebase,
         },
         {
-          label: `Interactive rebase ${head} onto this commit`,
-          onClick: () => setRebasePlan({ base: row.oid }),
+          // STATUS B8: with a multi-select, the plan is the selection's own
+          // range — `<oldest selected>^..HEAD` — not `<clicked>..HEAD`. The
+          // two agree only when the selection happens to end at HEAD, which
+          // is why the bug was easy to miss.
+          label:
+            chosenRows.length > 1
+              ? `Interactive rebase ${chosenRows.length} selected commits`
+              : `Interactive rebase ${head} onto this commit`,
+          // The oldest selected commit's parent is the base: rebasing *onto*
+          // the oldest selection itself would leave it out of the plan.
+          disabled: chosenRows.length > 1 && !oldestSelected?.parents[0],
+          onClick: () =>
+            setRebasePlan({
+              base:
+                chosenRows.length > 1
+                  ? (oldestSelected?.parents[0] ?? row.oid)
+                  : row.oid,
+            }),
         },
         {
           label: `Reset ${head} to this commit`,
@@ -397,7 +443,13 @@ export function GraphView() {
           disabled: chosenRows.length !== 2,
           onClick: () =>
             chosenRows.length === 2 &&
-            setComparison({ oldOid: chosenRows[1].oid, newOid: chosenRows[0].oid }),
+            // A sheet on the detail stack, not a modal: the commit you were
+            // reading stays underneath and Back returns to it (G24).
+            pushDetail({
+              kind: "compare",
+              oldOid: chosenRows[1].oid,
+              newOid: chosenRows[0].oid,
+            }),
         },
         { label: "Compare against working directory", onClick: () => selectOid(WORKING) },
       );
@@ -461,6 +513,35 @@ export function GraphView() {
       void fetchNextPage();
     }
   }, [lastVisible, visibleRows.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  // Changes column (G16): counts for the rows actually on screen.
+  //
+  // Per-window rather than per-page, and only when the column is on, because
+  // it is a diff per commit — the one column in the set that is not free.
+  // Rounding the window to a block keeps the key stable while the user drags
+  // the scrollbar a few pixels, which would otherwise be a fetch per frame.
+  const wantsStats = columns.includes("changes");
+  const statsWindow = useMemo(() => {
+    if (!wantsStats || !virtualItems.length) return [] as string[];
+    const block = 50;
+    const from = Math.max(0, Math.floor(virtualItems[0].index / block) * block);
+    const to = Math.min(
+      visibleRows.length,
+      Math.ceil((virtualItems[virtualItems.length - 1].index + 1) / block) * block,
+    );
+    return visibleRows.slice(from, to).map((row) => row.oid);
+  }, [wantsStats, virtualItems, visibleRows]);
+
+  const { data: statsData } = useQuery({
+    queryKey: ["commitStats", repo?.path, statsWindow.join(",")],
+    enabled: !!repo && statsWindow.length > 0,
+    queryFn: () => commitStats(repo!.path, statsWindow),
+    staleTime: Infinity,
+  });
+  const statsByOid = useMemo(
+    () => new Map((statsData ?? []).map((entry) => [entry.oid, entry] as const)),
+    [statsData],
+  );
 
   // Filter mode is only truthful once the whole history is loaded: a hit on a
   // page nobody has scrolled to is not "filtered out", it is unfetched — and
@@ -732,10 +813,26 @@ export function GraphView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.mode]);
 
+  // HEAD moved: scroll to it, and flash the row (STATUS §4).
+  //
+  // The scroll alone was the load-bearing half, but on a long history it looks
+  // identical to not having moved — the row you land on is centred either way.
+  // The flash is what says "this is the one that changed". Skipped on first
+  // paint: opening a repository is not a checkout, and a flash on load reads
+  // as a glitch.
+  const seenHead = useRef<string | null>(null);
   useEffect(() => {
     if (!headOid) return;
     const index = visibleRows.findIndex((row) => row.oid === headOid);
     if (index >= 0) virtualizer.scrollToIndex(index, { align: "center" });
+    if (seenHead.current && seenHead.current !== headOid) {
+      setFlashOid(headOid);
+      const timer = setTimeout(() => setFlashOid(null), 1200);
+      seenHead.current = headOid;
+      return () => clearTimeout(timer);
+    }
+    seenHead.current = headOid;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [headOid]);
 
   if (!repo) {
@@ -784,6 +881,157 @@ export function GraphView() {
     parentRef.current?.focus({ preventScroll: true });
   };
 
+  /**
+   * Right-clicking a ref pill acts on the *ref* (STATUS B1).
+   *
+   * It used to fall through to the commit menu, which made push, rename,
+   * delete and merge-from-here sidebar-only — and the graph is where most
+   * people point at a branch. The entries mirror the sidebar's deliberately:
+   * two menus for one object that disagree about what you can do to it is
+   * worse than either.
+   */
+  const refContextMenu = useCallback(
+    (event: React.MouseEvent, ref: RefBadge) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!repo) return;
+      const path = repo.path;
+      const head = repo.head.branch ?? "HEAD";
+      const run = async (fn: () => Promise<unknown>, ok?: string) => {
+        try {
+          await fn();
+          if (ok) pushToast("success", ok);
+          await refreshRepo(qc, path);
+        } catch (err) {
+          toastError(err);
+        }
+      };
+
+      const items: MenuItem[] = [];
+      if (ref.kind === "tag") {
+        items.push(
+          { label: "Copy tag name", onClick: () => copyText(ref.name) },
+          {
+            label: "Push tag to origin",
+            onClick: () =>
+              run(async () => {
+                const result = await gitNetwork(path, "push", "origin", [`refs/tags/${ref.name}`]);
+                if (!result.success) throw new Error(result.output);
+              }, `Pushed tag ${ref.name}`),
+          },
+          { separator: true },
+          {
+            label: "Delete tag",
+            danger: true,
+            onClick: async () => {
+              if (
+                await confirmDialog({
+                  title: "Delete tag",
+                  message: `Delete tag "${ref.name}"?`,
+                  confirmLabel: "Delete",
+                  danger: true,
+                })
+              ) {
+                void run(() => deleteTag(path, ref.name), "Tag deleted");
+              }
+            },
+          },
+        );
+        setMenu({ x: event.clientX, y: event.clientY, items });
+        return;
+      }
+
+      const isLocal = ref.kind === "localBranch";
+      items.push(
+        {
+          label: `Checkout ${ref.name}`,
+          disabled: ref.isHead,
+          onClick: () => run(() => smartCheckout(path, ref.name), `Checked out ${ref.name}`),
+        },
+        {
+          label: "Show only this in the graph",
+          onClick: () => {
+            seedSearch(path, `ref:${ref.name}`, true);
+            useSearch.getState().setMode(path, "filter");
+          },
+        },
+        { separator: true },
+        {
+          label: `Merge ${ref.name} into ${head}`,
+          disabled: ref.isHead,
+          onClick: () =>
+            run(async () => {
+              await requireNoPausedOperation(path, `merge ${ref.name}`);
+              const result = await mergeAdvanced(path, ref.name, "noFf");
+              if (result.kind === "conflicts") {
+                pushToast("error", `Merge paused — ${result.conflicts.length} conflicted file(s).`);
+              } else {
+                pushToast("success", `Merged ${ref.name}.`);
+              }
+            }),
+        },
+        {
+          label: `Rebase ${head} onto ${ref.name}`,
+          disabled: ref.isHead,
+          onClick: () =>
+            run(async () => {
+              await requireNoPausedOperation(path, `rebase onto ${ref.name}`);
+              const result = await rebaseStandard(path, ref.name);
+              if (result.success) pushToast("success", `Rebased onto ${ref.name}.`);
+              else pushToast("error", `Rebase paused — ${result.conflicts.length} conflicted file(s).`);
+            }),
+        },
+      );
+
+      if (isLocal) {
+        items.push(
+          { separator: true },
+          {
+            label: `Push ${ref.name}`,
+            onClick: () =>
+              run(async () => {
+                const result = await gitNetwork(path, "push", "origin", [ref.name]);
+                if (!result.success) throw new Error(result.output);
+              }, `Pushed ${ref.name}`),
+          },
+          {
+            label: "Rename…",
+            onClick: async () => {
+              const next = await promptDialog({
+                title: "Rename branch",
+                label: "New branch name",
+                defaultValue: ref.name,
+                confirmLabel: "Rename",
+                validate: validateRefName,
+              });
+              if (next && next !== ref.name) void run(() => renameBranch(path, ref.name, next), "Renamed");
+            },
+          },
+          {
+            label: "Delete branch",
+            danger: true,
+            disabled: ref.isHead,
+            onClick: async () => {
+              if (
+                await confirmDialog({
+                  title: "Delete branch",
+                  message: `Delete the local branch "${ref.name}"?`,
+                  confirmLabel: "Delete",
+                  danger: true,
+                })
+              ) {
+                void run(() => deleteBranch(path, ref.name, false), `Deleted ${ref.name}`);
+              }
+            },
+          },
+        );
+      }
+      items.push({ separator: true }, { label: "Copy ref name", onClick: () => copyText(ref.name) });
+      setMenu({ x: event.clientX, y: event.clientY, items });
+    },
+    [repo, qc, pushToast],
+  );
+
   const dropOnRef = (event: React.DragEvent, target: string, isHead: boolean) => {
     event.preventDefault();
     event.stopPropagation();
@@ -826,15 +1074,18 @@ export function GraphView() {
         toastError(error);
       }
     };
-    setMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        { label: `Merge ${source} into ${target}`, onClick: () => runDrop("merge") },
-        { label: `Rebase ${target} onto ${source}`, onClick: () => runDrop("rebase") },
-        { label: `Fast-forward ${target} to ${source}`, onClick: () => runDrop("ff") },
-      ],
-    });
+    // Coordinates are read before the await: React pools nothing here, but the
+    // event object is gone by the time the relation lands.
+    const { clientX, clientY } = event;
+    void mergeRelation(repo.path, target, source)
+      .catch(() => null)
+      .then((relation) =>
+        setMenu({
+          x: clientX,
+          y: clientY,
+          items: dropMenuItems(target, source, relation, runDrop),
+        }),
+      );
   };
 
   return (
@@ -847,6 +1098,11 @@ export function GraphView() {
           GRAPH
         </div>
         <div className="gh-message">COMMIT MESSAGE</div>
+        {columns.map((id) => (
+          <div key={id} className={`gh-col col-${id}`}>
+            {COLUMN_LABELS[id]}
+          </div>
+        ))}
         {repo && (
           <SearchBar
             repoPath={repo.path}
@@ -871,14 +1127,8 @@ export function GraphView() {
               />
               Relative dates
             </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={graphOpts.showAuthor}
-                onChange={(e) => setGraphOpts({ showAuthor: e.target.checked })}
-              />
-              Show author
-            </label>
+            <div className="gh-gear-sep">Columns</div>
+            <ColumnManager columns={columns} />
           </div>
         )}
       </div>
@@ -962,16 +1212,20 @@ export function GraphView() {
               <GraphRowView
                 key={row.oid}
                 row={row}
+                repoPath={repo.path}
                 top={vi.start}
                 gutter={gutterWidth}
                 nodeLeft={BRANCH_COL_WIDTH + laneX(row.lane)}
                 selected={row.oid === selectedOid || selectedOids.has(row.oid)}
                 hit={hitOids.has(row.oid)}
+                flash={row.oid === flashOid}
                 currentHit={row.oid === currentHitOid}
                 onSearchAuthor={() =>
                   repo && seedSearch(repo.path, `author:${row.email || row.author}`)
                 }
-                opts={{ relativeDates: dateStyle === "relative", showAuthor: graphOpts.showAuthor }}
+                columns={columns}
+                stats={statsByOid.get(row.oid)}
+                opts={{ relativeDates: dateStyle === "relative" }}
                 onSelect={(event) => selectRow(event, row)}
                 onContextMenu={(e) => rowContextMenu(e, row)}
                 onCheckoutRef={(name) =>
@@ -984,6 +1238,7 @@ export function GraphView() {
                     .catch(toastError)
                 }
                 onRefDrop={dropOnRef}
+                onRefContextMenu={refContextMenu}
                 hiddenRefs={hiddenRefs}
                 checkoutTarget={checkoutTarget}
               />
@@ -998,6 +1253,20 @@ export function GraphView() {
           </div>
         )}
       </div>
+      {/* The minimap only exists while a search does: it answers "where in
+          the history are my matches clustered", which is not a question with
+          an answer when nothing is searched for. */}
+      {search.submitted && search.hits.length > 0 && (
+        <SearchMinimap
+          total={total}
+          hits={search.hits}
+          cursor={search.cursor}
+          onJump={(index) => {
+            const at = search.hits.findIndex((hit) => hit.index === index);
+            if (at >= 0) void navigateHits(at - search.cursor);
+          }}
+        />
+      )}
       <ScrollMarkers
         total={total}
         hits={search.hits}
@@ -1024,14 +1293,6 @@ export function GraphView() {
           initialAction={rebasePlan.action}
           initialMove={rebasePlan.move}
           onClose={() => setRebasePlan(null)}
-        />
-      )}
-      {comparison && repo && (
-        <CompareDialog
-          repoPath={repo.path}
-          oldOid={comparison.oldOid}
-          newOid={comparison.newOid}
-          onClose={() => setComparison(null)}
         />
       )}
     </div>
@@ -1104,34 +1365,44 @@ function WipRowView({
 
 function GraphRowView({
   row,
+  repoPath,
   top,
   gutter,
   nodeLeft,
   selected,
   hit,
   currentHit,
+  flash,
   onSearchAuthor,
+  columns,
+  stats,
   opts,
   onSelect,
   onContextMenu,
   onCheckoutRef,
   onRefDrop,
+  onRefContextMenu,
   hiddenRefs,
   checkoutTarget,
 }: {
   row: GraphRow;
+  repoPath: string;
   top: number;
   gutter: number;
   nodeLeft: number;
   selected: boolean;
   hit: boolean;
   currentHit: boolean;
+  flash: boolean;
   onSearchAuthor: () => void;
-  opts: { relativeDates: boolean; showAuthor: boolean };
+  columns: GraphColumnId[];
+  stats: CommitStats | undefined;
+  opts: { relativeDates: boolean };
   onSelect: (event: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onCheckoutRef: (name: string) => void;
   onRefDrop: (event: React.DragEvent, target: string, isHead: boolean) => void;
+  onRefContextMenu: (event: React.MouseEvent, ref: RefBadge) => void;
   hiddenRefs: string[];
   checkoutTarget: string | null;
 }) {
@@ -1152,7 +1423,7 @@ function GraphRowView({
     <div
       className={`graph-row${selected ? " selected" : ""}${hit ? " hit" : ""}${
         currentHit ? " current-hit" : ""
-      }`}
+      }${flash ? " flash" : ""}`}
       style={{ top, height: ROW_HEIGHT }}
       onClick={onSelect}
       onContextMenu={onContextMenu}
@@ -1187,6 +1458,7 @@ function GraphRowView({
               if (r.kind !== "tag") event.preventDefault();
             }}
             onDrop={(event) => r.kind !== "tag" && onRefDrop(event, r.name, r.isHead)}
+            onContextMenu={(event) => onRefContextMenu(event, r)}
           >
             {r.kind === "tag" && <Icon name="tag" size={11} />}
             {r.isHead && <Icon name="check" size={11} />}
@@ -1206,26 +1478,129 @@ function GraphRowView({
       >
         <Avatar email={row.email} name={row.author} size={AVATAR_SIZE} />
       </span>
-      <span className="row-summary">{row.summary}</span>
-      {opts.showAuthor && (
+      {/* Sync markers (G23, `03-push.md` §7). A dot beside the node rather
+          than a column: the question is "is this one of mine", which is asked
+          while looking at the graph, not while reading a column. */}
+      {(row.unpushed || row.unpulled) && (
         <span
-          className="row-author"
-          title={`${row.author} — right-click to search this author's commits`}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onSearchAuthor();
-          }}
+          className={`row-sync ${row.unpushed ? "unpushed" : "unpulled"}`}
+          style={{ left: nodeLeft + AVATAR_SIZE / 2 + 2 }}
+          title={row.unpushed ? "Not yet pushed to the upstream" : "On the upstream, not yet pulled"}
         >
-          {row.author}
+          <Icon name={row.unpushed ? "push" : "pull"} size={9} />
         </span>
       )}
-      <span className="row-date" title={formatTimestamp(row.timestamp)}>
-        {opts.relativeDates ? timeAgo(row.timestamp) : formatTimestamp(row.timestamp)}
+      <span className="row-summary">
+        {/* Issue references are links here too (G20): the graph is where most
+            people read a message, and a reference you can only follow from the
+            detail panel is one you mostly do not follow. */}
+        <Autolinked repoPath={repoPath} text={row.summary} />
       </span>
-      <span className="row-oid">{row.oid.slice(0, 7)}</span>
+      {columns.map((id) => (
+        <span key={id} className={`row-col col-${id}`}>
+          {id === "author" && (
+            <span
+              className="row-author"
+              title={`${row.author} — right-click to search this author's commits`}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onSearchAuthor();
+              }}
+            >
+              {row.author}
+            </span>
+          )}
+          {id === "changes" &&
+            (stats ? (
+              <span className="row-changes" title={`${stats.files} file(s) changed`}>
+                <b>{stats.files}</b>
+                <span className="diff-stat add">+{stats.additions}</span>
+                <span className="diff-stat del">−{stats.deletions}</span>
+              </span>
+            ) : (
+              /* A dash, not a zero: the counts are fetched per visible window
+                 and "not loaded yet" is not "changed nothing". */
+              <span className="row-changes pending">–</span>
+            ))}
+          {id === "date" && (
+            <span title={formatTimestamp(row.timestamp)}>
+              {opts.relativeDates ? timeAgo(row.timestamp) : formatTimestamp(row.timestamp)}
+            </span>
+          )}
+          {id === "sha" && <span className="row-oid">{row.oid.slice(0, 7)}</span>}
+        </span>
+      ))}
     </div>
   );
+}
+
+const COLUMN_LABELS: Record<GraphColumnId, string> = {
+  author: "AUTHOR",
+  changes: "CHANGES",
+  date: "DATE",
+  sha: "SHA",
+};
+
+const ALL_COLUMNS: GraphColumnId[] = ["author", "changes", "date", "sha"];
+
+/**
+ * The column manager in the graph's gear popover (G16).
+ *
+ * Reorder is ▲/▼ rather than drag-and-drop on purpose: the popover is 200px
+ * wide, drag inside it would fight the graph's own row dragging, and four
+ * items do not need a gesture. The list shows *all* columns with a checkbox,
+ * so a disabled one is still reachable — a manager that only listed enabled
+ * columns would give no way to get a removed one back.
+ */
+function ColumnManager({ columns }: { columns: GraphColumnId[] }) {
+  const setColumns = (next: GraphColumnId[]) => useSettings.getState().set({ graphColumns: next });
+  const off = ALL_COLUMNS.filter((id) => !columns.includes(id));
+
+  return (
+    <div className="gh-columns">
+      {columns.map((id, i) => (
+        <div key={id} className="gh-column-row">
+          <label>
+            <input
+              type="checkbox"
+              checked
+              onChange={() => setColumns(columns.filter((c) => c !== id))}
+            />
+            {COLUMN_LABELS[id]}
+          </label>
+          <button
+            disabled={i === 0}
+            title="Move left"
+            onClick={() => setColumns(swap(columns, i, i - 1))}
+          >
+            ▲
+          </button>
+          <button
+            disabled={i === columns.length - 1}
+            title="Move right"
+            onClick={() => setColumns(swap(columns, i, i + 1))}
+          >
+            ▼
+          </button>
+        </div>
+      ))}
+      {off.map((id) => (
+        <div key={id} className="gh-column-row off">
+          <label>
+            <input type="checkbox" checked={false} onChange={() => setColumns([...columns, id])} />
+            {COLUMN_LABELS[id]}
+          </label>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function swap<T>(list: T[], a: number, b: number): T[] {
+  const next = [...list];
+  [next[a], next[b]] = [next[b], next[a]];
+  return next;
 }
 
 /**
@@ -1237,6 +1612,64 @@ function GraphRowView({
  * feature. Positions are fractions of `total` (every commit), not of the rows
  * loaded so far, so a marker does not slide as pages arrive.
  */
+/**
+ * The on-search minimap (G17), beside the marker gutter.
+ *
+ * It is a *density* strip, not a scaled-down graph: at 12,000 commits in
+ * 600px of height each pixel row is twenty commits, so drawing one mark per
+ * hit loses every cluster to overlap. Bucketing and shading by count is the
+ * only rendering at that scale that says anything — "the matches are all in
+ * one place near the top" is the answer the strip exists to give.
+ *
+ * Clicking a bucket navigates to its first hit rather than scrolling to the
+ * offset: the user is looking for a match, and landing near one but not on it
+ * would leave them hunting.
+ */
+function SearchMinimap({
+  total,
+  hits,
+  cursor,
+  onJump,
+}: {
+  total: number;
+  hits: SearchHit[];
+  cursor: number;
+  onJump: (index: number) => void;
+}) {
+  const BUCKETS = 60;
+  const buckets = useMemo(() => {
+    const counts = new Array<number>(BUCKETS).fill(0);
+    const first = new Array<number>(BUCKETS).fill(-1);
+    for (const hit of hits) {
+      if (hit.index === null) continue;
+      const b = Math.min(BUCKETS - 1, Math.floor((hit.index / Math.max(1, total)) * BUCKETS));
+      counts[b] += 1;
+      if (first[b] < 0 || hit.index < first[b]) first[b] = hit.index;
+    }
+    return { counts, first, peak: Math.max(1, ...counts) };
+  }, [hits, total]);
+
+  const currentBucket =
+    cursor >= 0 && hits[cursor]?.index != null
+      ? Math.min(BUCKETS - 1, Math.floor((hits[cursor].index! / Math.max(1, total)) * BUCKETS))
+      : -1;
+
+  return (
+    <div className="graph-minimap" title={`${hits.length} match(es) across the history`}>
+      {buckets.counts.map((count, i) => (
+        <button
+          key={i}
+          className={`mm-bucket${i === currentBucket ? " current" : ""}`}
+          disabled={count === 0}
+          style={count ? { opacity: 0.25 + 0.75 * (count / buckets.peak) } : undefined}
+          title={count ? `${count} match(es) here` : undefined}
+          onClick={() => buckets.first[i] >= 0 && onJump(buckets.first[i])}
+        />
+      ))}
+    </div>
+  );
+}
+
 function ScrollMarkers({
   total,
   hits,

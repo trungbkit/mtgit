@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { useQueryClient } from "@tanstack/react-query";
 import type { DiffViewMode, FileDiff, Hunk } from "../../ipc/types";
-import { applyPatch } from "../../ipc/commands";
+import { applyPatch, fileHistory } from "../../ipc/commands";
 import { refreshRepo } from "../../ipc/repoState";
 import { Icon } from "../../components/Icon";
 import { useSettings } from "../../stores/settings";
@@ -11,7 +11,7 @@ import { confirmDialog } from "../../stores/dialog";
 import { DiffView } from "./DiffView";
 import { FileContentView } from "./FileContentView";
 import { BlameView } from "./BlameView";
-import { HistoryView } from "./HistoryView";
+import { HistoryView, type LineRange } from "./HistoryView";
 import "./fileviewer.css";
 
 type SubMode = "diff" | "file" | "blame" | "history";
@@ -42,13 +42,31 @@ export function FileViewer({
   const mode = useSettings((s) => s.settings.diffMode);
   const setMode = (next: DiffViewMode) => useSettings.getState().set({ diffMode: next });
   const [sub, setSub] = useState<SubMode>("diff");
+  const [lineRange, setLineRange] = useState<LineRange | null>(null);
+  const follow = useSettings((s) => s.settings.historyFollowRenames);
   const qc = useQueryClient();
   const pushToast = useToasts((state) => state.push);
 
-  // Reset to the diff tab whenever the selected file changes.
+  // Reset to the diff tab whenever the selected file changes. The line range
+  // goes with it: line 40 of the file you just left means nothing here.
   useEffect(() => {
     setSub("diff");
+    setLineRange(null);
   }, [diff.path]);
+
+  // Revision navigation (G22). The list is the file's own history, so ◀ / ▶
+  // step through the commits that touched *this file* rather than through the
+  // graph — which is the difference between "the previous version of this
+  // file" and "the previous commit", and on a busy repo they are far apart.
+  const { data: revisions } = useQuery({
+    queryKey: ["fileHistory", repoPath, diff.path, follow, null, null],
+    queryFn: () => fileHistory(repoPath, diff.path, 100, follow),
+    enabled: !!onSelectCommit,
+  });
+  const revIndex = useMemo(
+    () => (revisions && commitOid ? revisions.findIndex((r) => r.oid === commitOid) : -1),
+    [revisions, commitOid],
+  );
 
   const fileOid = commitOid ?? headOid;
   const dir = diff.path.includes("/") ? diff.path.slice(0, diff.path.lastIndexOf("/") + 1) : "";
@@ -105,6 +123,27 @@ export function FileViewer({
           </button>
         </div>
         <div className="fv-actions">
+          {onSelectCommit && revIndex >= 0 && revisions && (
+            <span className="fv-revnav" title="Revisions of this file">
+              <button
+                onClick={() => onSelectCommit(revisions[revIndex + 1].oid)}
+                disabled={revIndex + 1 >= revisions.length}
+                aria-label="Older revision"
+              >
+                ‹
+              </button>
+              <span>
+                rev {revIndex + 1} / {revisions.length}
+              </span>
+              <button
+                onClick={() => onSelectCommit(revisions[revIndex - 1].oid)}
+                disabled={revIndex <= 0}
+                aria-label="Newer revision"
+              >
+                ›
+              </button>
+            </span>
+          )}
           <button className={sub === "blame" ? "on" : ""} onClick={() => setSub("blame")}>
             Blame
           </button>
@@ -163,12 +202,22 @@ export function FileViewer({
             <div className="diff-note">No committed version to show.</div>
           ))}
         {sub === "blame" && (
-          <BlameView repoPath={repoPath} oid={isWorkingTree ? null : commitOid} file={diff.path} />
+          <BlameView
+            repoPath={repoPath}
+            oid={isWorkingTree ? null : commitOid}
+            file={diff.path}
+            onLineRange={(start, end) => {
+              setLineRange({ start, end });
+              setSub("history");
+            }}
+          />
         )}
         {sub === "history" && (
           <HistoryView
             repoPath={repoPath}
             file={diff.path}
+            lineRange={lineRange}
+            onClearLineRange={() => setLineRange(null)}
             onSelectCommit={(oid) => onSelectCommit?.(oid)}
           />
         )}

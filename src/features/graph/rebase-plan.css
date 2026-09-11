@@ -138,3 +138,50 @@
   color: var(--red);
   font-style: normal;
 }
+
+/* Squash/fixup rows are visually attached to the row above (STATUS §4): the
+   indent and the ↳ handle say "this folds into that one", which the verb in a
+   dropdown does not. The list is drawn newest-first, so the row a squash folds
+   into is the one *below* it — the connector runs downward. */
+.rebase-row.attached {
+  margin-left: 24px;
+  border-left: 2px solid var(--accent-tint-border);
+}
+.rebase-row.attached .rebase-handle {
+  color: var(--accent-text);
+  cursor: default;
+}
+/* A merge cannot be replayed: it is shown so the plan is honest about what the
+   rebase will flatten, and it is not editable. */
+.rebase-row.merge {
+  opacity: 0.6;
+}
+.rebase-mergetag {
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px dashed var(--border-strong);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+/* Prediction (G26). Warn-toned, never danger-toned: it is an estimate, and a
+   red row would read as a refusal. */
+.rebase-row.will-conflict {
+  background: var(--warn-tint);
+}
+.rebase-clash {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--warn-tint-strong);
+  border: 1px solid var(--warn-tint-border);
+  font-size: 10.5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.rebase-forecast {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+}

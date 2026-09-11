@@ -36,7 +36,8 @@ export type IconName =
   | "layout"
   | "commit"
   | "plus"
-  | "close";
+  | "close"
+  | "person";
 
 /** Path data only; the shared `<svg>` supplies stroke, size and join style. */
 const PATHS: Record<IconName, React.ReactNode> = {
@@ -173,6 +174,12 @@ const PATHS: Record<IconName, React.ReactNode> = {
   ),
   plus: <path d="M8 3.2v9.6M3.2 8h9.6" />,
   close: <path d="m3.6 3.6 8.8 8.8M12.4 3.6l-8.8 8.8" />,
+  person: (
+    <>
+      <circle cx="8" cy="5.4" r="2.6" />
+      <path d="M3.2 13.2a4.8 4.8 0 0 1 9.6 0" />
+    </>
+  ),
 };
 
 export interface IconProps {

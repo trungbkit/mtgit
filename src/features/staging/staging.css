@@ -126,3 +126,32 @@
   align-items: center;
   gap: 5px;
 }
+
+/* Commit extras: the co-author picker and the autolinked preview. */
+.commit-extras {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.commit-coauthor {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.commit-coauthor:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.commit-preview {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: pre-wrap;
+  max-height: 44px;
+  overflow: hidden;
+}

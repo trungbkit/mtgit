@@ -11,8 +11,11 @@ import { StagingView } from "../staging/StagingView";
 import { FileViewer } from "../diff/FileViewer";
 import { FileList } from "./FileList";
 import { Avatar } from "../../components/Avatar";
+import { Autolinked } from "../../components/Autolinked";
 import { ContextMenu, type MenuState } from "../../components/ContextMenu";
 import { seedSearch } from "../../stores/search";
+import { pushDetail, sheetTitle, useDetailStack } from "../../stores/detailStack";
+import { CompareView } from "../graph/CompareView";
 import { copyText } from "../../lib/clipboard";
 import { formatTimestamp } from "../../lib/time";
 import "./detail.css";
@@ -21,21 +24,35 @@ export function DetailPanel() {
   const repo = useSession((s) => s.repo);
   const selectedOid = useSession((s) => s.selectedOid);
   const selectOid = useSession((s) => s.selectOid);
+  const stack = useDetailStack((s) => s.stack);
+  const clearStack = useDetailStack((s) => s.clear);
+  // Selecting a row means "look at this", not "add a layer": the stack is
+  // dropped so the panel shows the selection rather than a sheet about some
+  // other commit.
+  useEffect(() => {
+    clearStack();
+  }, [selectedOid, clearStack]);
+
   const { data: status } = useQuery({
     queryKey: ["status", repo?.path],
     enabled: !!repo,
     queryFn: () => getStatus(repo!.path),
   });
 
-  if (selectedOid === WORKING) {
-    return <StagingView />;
-  }
   if (!repo) {
     return (
       <section className="detail">
         <div className="detail-empty">Select a commit to see its details.</div>
       </section>
     );
+  }
+  if (stack.length > 0) {
+    // A sheet is layered over the selection (G24). The base is still the
+    // selected row underneath — Back reveals it rather than re-fetching it.
+    return <SheetStack repoPath={repo.path} headOid={repo.head.oid} />;
+  }
+  if (selectedOid === WORKING) {
+    return <StagingView />;
   }
   const changed = new Set([
     ...(status?.staged ?? []).map((entry) => entry.path),
@@ -55,6 +72,61 @@ export function DetailPanel() {
         <section className="detail">
           <div className="detail-empty">Select a commit to see its details.</div>
         </section>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The pushed sheets, newest on top, with a crumb trail back to the selection.
+ *
+ * Only the top sheet is rendered. Keeping the ones beneath mounted would mean
+ * a virtualized diff and a Shiki highlighter per layer, and the user cannot
+ * see them; the crumb trail is what makes the depth legible instead.
+ */
+function SheetStack({ repoPath, headOid }: { repoPath: string; headOid: string | null }) {
+  const stack = useDetailStack((s) => s.stack);
+  const pop = useDetailStack((s) => s.pop);
+  const clear = useDetailStack((s) => s.clear);
+  const top = stack[stack.length - 1];
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const el = event.target as HTMLElement | null;
+      if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) return;
+      event.preventDefault();
+      pop();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pop]);
+
+  if (!top) return null;
+  return (
+    <div className="detail-shell">
+      <div className="detail-crumbs">
+        <button onClick={pop} title="Back (Escape)">
+          ‹ Back
+        </button>
+        <button className="detail-crumb-root" onClick={clear}>
+          selection
+        </button>
+        {stack.map((sheet, i) => (
+          <span key={i} className={`detail-crumb${i === stack.length - 1 ? " current" : ""}`}>
+            {sheetTitle(sheet)}
+          </span>
+        ))}
+      </div>
+      {top.kind === "commit" ? (
+        <CommitView repoPath={repoPath} oid={top.oid} headOid={headOid} />
+      ) : (
+        <CompareView
+          repoPath={repoPath}
+          oldOid={top.oldOid}
+          newOid={top.newOid}
+          onSelectCommit={(oid) => pushDetail({ kind: "commit", oid })}
+        />
       )}
     </div>
   );
@@ -158,14 +230,18 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
       ) : (
         <div className="detail-message">
           <div className="detail-summary">
-            {detail.summary}
+            <Autolinked repoPath={repoPath} text={detail.summary} />
             {isHead && (
               <button className="detail-amend-btn" title="Amend message" onClick={() => startAmend(detail)}>
                 <Icon name="pencil" size={12} />
               </button>
             )}
           </div>
-          {detail.body && <pre className="detail-body">{detail.body}</pre>}
+          {detail.body && (
+            <pre className="detail-body">
+              <Autolinked repoPath={repoPath} text={detail.body} />
+            </pre>
+          )}
         </div>
       )}
 
@@ -177,9 +253,28 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
             <span className="detail-when">authored {formatTimestamp(detail.authorTime)}</span>
           </div>
           <span className="detail-parents">
-            {detail.parents.length > 0
-              ? `parent: ${detail.parents.map((p) => p.slice(0, 6)).join(", ")}`
-              : "root commit"}
+            {detail.parents.length > 0 ? (
+              <>
+                parent:{" "}
+                {detail.parents.map((p, i) => (
+                  <span key={p}>
+                    {i > 0 && ", "}
+                    {/* Pushes a sheet rather than moving the graph selection:
+                        following a parent is a detour, and the row you came
+                        from should still be where you left it (G24). */}
+                    <button
+                      className="detail-parent-link"
+                      title={`Open ${p.slice(0, 7)} without losing this one`}
+                      onClick={() => pushDetail({ kind: "commit", oid: p })}
+                    >
+                      {p.slice(0, 6)}
+                    </button>
+                  </span>
+                ))}
+              </>
+            ) : (
+              "root commit"
+            )}
           </span>
         </div>
         {committerDiffers && (

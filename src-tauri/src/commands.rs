@@ -1,6 +1,7 @@
 use crate::core::{
-    advanced, blame, branch, commit as commit_mod, diff, graph, history, identity, ops, refs,
-    remote, repo, search, settings, stash, status, terminal as terminal_tokens, worktree,
+    advanced, autolink, blame, branch, commit as commit_mod, contributors, diff, graph, history,
+    identity, ops, rebase_predict, refs, remote, repo, search, settings, stash, status,
+    terminal as terminal_tokens, worktree,
 };
 use crate::error::{Error, Result};
 use crate::state::{
@@ -280,7 +281,7 @@ fn ensure_cached_rows<'c>(
     if needs_rebuild {
         let layouts = graph::layout(repo)?;
         let badges = refs::badges_by_oid(repo);
-        let rows = graph::build_rows(repo, &layouts, &badges)?;
+        let rows = graph::build_rows(repo, &layouts, &badges, &graph::sync_sets(repo))?;
         cache.insert(path.to_string(), CachedGraph { key, rows });
     }
     Ok(cache.get(path).expect("just inserted"))
@@ -559,6 +560,12 @@ pub fn commit(path: String, message: String, amend: bool, state: State<'_, AppSt
     commit_mod::commit(&open(&path)?, &message, amend)
 }
 
+/// The repository's `commit.template`, or `None` (`01-commit.md` §7).
+#[tauri::command]
+pub fn commit_template(path: String) -> Result<Option<String>> {
+    Ok(identity::commit_template(&open(&path)?))
+}
+
 #[tauri::command]
 pub fn commit_advanced(
     path: String,
@@ -605,6 +612,13 @@ pub fn get_head_message(path: String) -> Result<String> {
 #[tauri::command]
 pub fn set_upstream(path: String, local: String, upstream: String) -> Result<()> {
     advanced::set_upstream(&path, &local, &upstream)
+}
+
+/// Drop a branch's upstream — the recovery for an orphan left by a prune.
+#[tauri::command]
+pub fn unset_upstream(path: String, local: String, state: State<'_, AppState>) -> Result<()> {
+    let _op = state.begin_op();
+    advanced::unset_upstream(&path, &local)
 }
 
 #[tauri::command]
@@ -792,6 +806,21 @@ pub fn rewrite_info(path: String, base: String) -> Result<advanced::RewriteInfo>
     advanced::rewrite_info(&path, &base)
 }
 
+/// Which steps of an interactive-rebase plan will conflict (G26).
+///
+/// Read-only in every sense a user can observe, and therefore **no op guard**
+/// (invariant 2): it moves no ref, writes no index and leaves no `ORIG_HEAD`.
+/// It does write unreferenced tree objects — see the module doc — which the
+/// watcher has no reason to care about.
+#[tauri::command]
+pub fn predict_rebase_conflicts(
+    path: String,
+    onto: String,
+    plan: Vec<advanced::RebasePlanItem>,
+) -> Result<Vec<rebase_predict::PredictedConflict>> {
+    rebase_predict::predict(&open(&path)?, &onto, &plan)
+}
+
 #[tauri::command]
 pub fn rebase_commits(path: String, base: String) -> Result<Vec<advanced::RebaseCommit>> {
     advanced::rebase_commits(&path, &base)
@@ -876,6 +905,45 @@ pub fn operation_abort(path: String, state: State<'_, AppState>) -> Result<()> {
         .map_err(|_| Error::Msg("history lock poisoned".into()))?
         .remove(&path);
     Ok(())
+}
+
+/// Everything the unified conflict panel draws, in one call (G25).
+///
+/// Read-only, so **no op guard** (invariant 2) — and it must stay that way:
+/// the panel refetches after every resolve, and suppressing the watcher on a
+/// read would hide the user's own editor saves.
+///
+/// The lane colours are attached here rather than in the panel because layout
+/// colour is Rust's answer to give (invariant 5), and the graph cache already
+/// holds it. A side whose commit is not in the layout gets `None` and the
+/// panel falls back to a neutral border — an invented colour would collide
+/// with a real lane and say something untrue.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictSetView {
+    #[serde(flatten)]
+    set: advanced::ConflictSet,
+    ours_color: Option<usize>,
+    theirs_color: Option<usize>,
+}
+
+#[tauri::command]
+pub fn conflict_set(path: String, state: State<'_, AppState>) -> Result<Option<ConflictSetView>> {
+    let Some(set) = advanced::conflict_set(&path)? else { return Ok(None) };
+    let repo = open(&path)?;
+    let mut cache = state
+        .graph_cache
+        .lock()
+        .map_err(|_| Error::Msg("graph cache lock poisoned".into()))?;
+    let rows = ensure_cached_rows(&repo, &mut cache, &path)?;
+    let color_of = |oid: &Option<String>| {
+        oid.as_deref()
+            .and_then(|o| rows.rows.iter().find(|row| row.oid == o))
+            .map(|row| row.color)
+    };
+    let ours_color = color_of(&set.ours_oid);
+    let theirs_color = color_of(&set.theirs_oid);
+    Ok(Some(ConflictSetView { set, ours_color, theirs_color }))
 }
 
 #[tauri::command]
@@ -1027,10 +1095,23 @@ pub fn create_worktree(
     name: String,
     worktree_path: String,
     target: Option<String>,
+    detach: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let _op = state.begin_op();
-    worktree::add(&open(&path)?, &name, &worktree_path, target.as_deref())
+    worktree::add(
+        &open(&path)?,
+        &name,
+        &worktree_path,
+        target.as_deref(),
+        detach.unwrap_or(false),
+    )
+}
+
+/// Which worktree already holds `branch`, if any (`02-checkout.md` §7).
+#[tauri::command]
+pub fn worktree_holding(path: String, branch: String) -> Result<Option<worktree::WorktreeInfo>> {
+    worktree::holder_of(&open(&path)?, &branch)
 }
 
 #[tauri::command]
@@ -1039,8 +1120,65 @@ pub fn blame_file(path: String, file: String, oid: Option<String>) -> Result<Vec
 }
 
 #[tauri::command]
-pub fn file_history(path: String, file: String, limit: usize) -> Result<Vec<history::HistoryEntry>> {
-    history::file_log(&open(&path)?, &file, limit)
+pub fn file_history(
+    path: String,
+    file: String,
+    limit: usize,
+    follow: bool,
+) -> Result<Vec<history::HistoryEntry>> {
+    history::file_log(&open(&path)?, &file, limit, follow)
+}
+
+/// `git log -L <start>,<end>:<file>` (G22). Read-only, so no op guard.
+#[tauri::command]
+pub fn line_history(
+    path: String,
+    file: String,
+    start: u32,
+    end: u32,
+    limit: usize,
+) -> Result<Vec<history::HistoryEntry>> {
+    history::line_log(&open(&path)?, &file, start, end, limit)
+}
+
+/// The name `file` had at `oid`, following renames back from HEAD, so the
+/// viewer can open a revision from before the file was moved.
+#[tauri::command]
+pub fn path_at_commit(path: String, file: String, oid: String) -> Result<Option<String>> {
+    history::path_at(&open(&path)?, &file, &oid)
+}
+
+/// Repository contributors (G28). Also feeds the `author:` search picker and
+/// the co-author picker, which is why it is not gated behind a view.
+#[tauri::command]
+pub fn list_contributors(path: String, limit: Option<usize>) -> Result<Vec<contributors::Contributor>> {
+    contributors::contributors(&open(&path)?, limit.unwrap_or(20_000))
+}
+
+/// Where `branch` is heading (G23). `None` when nothing resolves.
+#[tauri::command]
+pub fn merge_target(path: String, branch: String) -> Result<Option<refs::MergeTarget>> {
+    refs::merge_target(&open(&path)?, &branch)
+}
+
+/// Issue-tracker patterns for this repository (G20). Link-out only — the
+/// frontend renders anchors, and nothing here or there calls a network.
+/// How two refs stand to each other, so the drop menu can compute its options
+/// instead of always offering all three (STATUS C6).
+#[tauri::command]
+pub fn merge_relation(path: String, target: String, source: String) -> Result<refs::MergeRelation> {
+    refs::merge_relation(&open(&path)?, &target, &source)
+}
+
+#[tauri::command]
+pub fn autolink_patterns(path: String) -> Result<Vec<autolink::AutolinkPattern>> {
+    autolink::patterns(&open(&path)?)
+}
+
+/// Change counts for the graph's Changes column (G16). Read-only, batched.
+#[tauri::command]
+pub fn commit_stats(path: String, oids: Vec<String>) -> Result<Vec<diff::CommitStats>> {
+    diff::commit_stats(&open(&path)?, &oids)
 }
 
 #[tauri::command]

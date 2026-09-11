@@ -160,12 +160,46 @@ pub fn list_submodules(repo: &Repository) -> Result<Vec<SubmoduleInfo>> {
 /// - anything else (an **oid**) — a new branch named `name` is created there.
 ///
 /// `None` checks out a new branch named `name` at HEAD, git2's own default.
-pub fn add(repo: &Repository, name: &str, path: &str, target: Option<&str>) -> Result<()> {
+pub fn add(
+    repo: &Repository,
+    name: &str,
+    path: &str,
+    target: Option<&str>,
+    detach: bool,
+) -> Result<()> {
     let mut opts = WorktreeAddOptions::new();
     let Some(target) = target else {
         repo.worktree(name, Path::new(path), Some(&opts))?;
         return Ok(());
     };
+
+    // `git worktree add --detach <path> <commit>` (`02-checkout.md` B8).
+    //
+    // git2's `WorktreeAddOptions` has no detach mode and insists on a
+    // reference, which is why this used to leave a branch named after the
+    // worktree folder — a branch the user never asked for, which then blocks
+    // the name and shows up in every branch list. The way out is to create it
+    // *through* a scratch reference and then move the worktree's own HEAD off
+    // it, which is precisely what git does internally.
+    if detach {
+        let commit = repo
+            .revparse_single(target)
+            .map_err(|_| Error::Msg(format!("bad target: {target}")))?
+            .peel_to_commit()?;
+        let scratch_name = format!("mtgit-worktree-{name}");
+        let scratch = repo.branch(&scratch_name, &commit, true)?;
+        let oid = commit.id();
+        opts.reference(Some(scratch.get()));
+        let wt = repo.worktree(name, Path::new(path), Some(&opts))?;
+
+        // Detach first, delete second: deleting the branch while the worktree
+        // still points at it leaves the worktree with a broken HEAD.
+        let wt_repo = Repository::open_from_worktree(&wt)?;
+        wt_repo.set_head_detached(oid)?;
+        drop(wt_repo);
+        repo.find_branch(&scratch_name, git2::BranchType::Local)?.delete()?;
+        return Ok(());
+    }
 
     let reference = if let Ok(branch) = repo.find_branch(target, git2::BranchType::Local) {
         branch.into_reference()
@@ -187,6 +221,18 @@ pub fn add(repo: &Repository, name: &str, path: &str, target: Option<&str>) -> R
     opts.reference(Some(&reference));
     repo.worktree(name, Path::new(path), Some(&opts))?;
     Ok(())
+}
+
+/// The worktree that already has `branch` checked out, if any.
+///
+/// `02-checkout.md` §7: git refuses a checkout of a branch another worktree
+/// holds, with a message naming a path and nothing else. Knowing *which*
+/// worktree it is turns that refusal into a choice — switch to it, or take a
+/// new worktree of your own.
+pub fn holder_of(repo: &Repository, branch: &str) -> Result<Option<WorktreeInfo>> {
+    Ok(list(repo)?
+        .into_iter()
+        .find(|wt| !wt.is_current && wt.branch.as_deref() == Some(branch)))
 }
 
 /// Remove a linked worktree: delete its working directory, then prune the
@@ -256,7 +302,7 @@ mod tests {
     fn list_includes_the_main_worktree_and_marks_the_current_one() {
         let (t, a, scratch) = fixture();
         let wt_dir = scratch.path().join("wt-list-main");
-        add(&t.repo, "wt-list-main", wt_dir.to_str().unwrap(), Some(&a.to_string())).unwrap();
+        add(&t.repo, "wt-list-main", wt_dir.to_str().unwrap(), Some(&a.to_string()), false).unwrap();
 
         let list = list(&t.repo).unwrap();
         assert_eq!(list.len(), 2, "main + one linked: {list:?}");
@@ -275,7 +321,7 @@ mod tests {
     fn current_is_decided_by_working_directory_not_by_the_handle() {
         let (t, a, scratch) = fixture();
         let wt_dir = scratch.path().join("wt-from-inside");
-        add(&t.repo, "wt-from-inside", wt_dir.to_str().unwrap(), Some(&a.to_string())).unwrap();
+        add(&t.repo, "wt-from-inside", wt_dir.to_str().unwrap(), Some(&a.to_string()), false).unwrap();
 
         let from_worktree = Repository::discover(&wt_dir).unwrap();
         let list = list(&from_worktree).unwrap();
@@ -294,7 +340,7 @@ mod tests {
         t.repo.branch("topic", &t.repo.find_commit(a).unwrap(), true).unwrap();
         let wt_dir = scratch.path().join("wt-attach-local");
 
-        add(&t.repo, "wt-attach-local", wt_dir.to_str().unwrap(), Some("topic")).unwrap();
+        add(&t.repo, "wt-attach-local", wt_dir.to_str().unwrap(), Some("topic"), false).unwrap();
 
         let listed = list(&t.repo).unwrap();
         let linked = listed.iter().find(|w| !w.is_main).unwrap();
@@ -314,7 +360,7 @@ mod tests {
         t.repo.reference("refs/remotes/origin/feature", a, true, "").unwrap();
         let wt_dir = scratch.path().join("wt-attach-remote");
 
-        add(&t.repo, "wt-attach-remote", wt_dir.to_str().unwrap(), Some("origin/feature")).unwrap();
+        add(&t.repo, "wt-attach-remote", wt_dir.to_str().unwrap(), Some("origin/feature"), false).unwrap();
 
         let local = t.repo.find_branch("feature", git2::BranchType::Local).unwrap();
         assert_eq!(local.upstream().unwrap().name().unwrap(), Some("origin/feature"));
@@ -329,7 +375,7 @@ mod tests {
     fn remove_deletes_the_directory_and_the_admin_entry() {
         let (t, a, scratch) = fixture();
         let wt_dir = scratch.path().join("wt-remove-ok");
-        add(&t.repo, "wt-remove-ok", wt_dir.to_str().unwrap(), Some(&a.to_string())).unwrap();
+        add(&t.repo, "wt-remove-ok", wt_dir.to_str().unwrap(), Some(&a.to_string()), false).unwrap();
 
         remove(&t.repo, "wt-remove-ok", false).unwrap();
         assert!(!wt_dir.exists(), "the working directory must be gone");
@@ -343,7 +389,7 @@ mod tests {
     fn remove_refuses_a_dirty_worktree_unless_forced() {
         let (t, a, scratch) = fixture();
         let wt_dir = scratch.path().join("wt-remove-dirty");
-        add(&t.repo, "wt-remove-dirty", wt_dir.to_str().unwrap(), Some(&a.to_string())).unwrap();
+        add(&t.repo, "wt-remove-dirty", wt_dir.to_str().unwrap(), Some(&a.to_string()), false).unwrap();
         std::fs::write(wt_dir.join("scratch.txt"), "unsaved\n").unwrap();
 
         let err = remove(&t.repo, "wt-remove-dirty", false).unwrap_err();
@@ -354,11 +400,64 @@ mod tests {
         assert!(!wt_dir.exists());
     }
 
+    /// `02-checkout.md` B8: a worktree made from a bare commit gets a
+    /// detached HEAD, not a branch named after the folder. The stray branch
+    /// was the visible symptom — it occupied the name and showed up in every
+    /// branch list — but the real cost was that "a worktree at this commit"
+    /// silently became "a new branch", which is a different request.
+    #[test]
+    fn a_worktree_from_a_bare_commit_is_detached_and_leaves_no_branch() {
+        let (t, a, scratch) = fixture();
+        let wt_dir = scratch.path().join("wt-detached");
+        add(&t.repo, "wt-detached", wt_dir.to_str().unwrap(), Some(&a.to_string()), true).unwrap();
+
+        let wt = t.repo.find_worktree("wt-detached").unwrap();
+        let wt_repo = Repository::open_from_worktree(&wt).unwrap();
+        assert!(wt_repo.head_detached().unwrap(), "HEAD is detached in the worktree");
+        assert_eq!(wt_repo.head().unwrap().target(), Some(a));
+
+        let names: Vec<String> = t
+            .repo
+            .branches(Some(git2::BranchType::Local))
+            .unwrap()
+            .flatten()
+            .filter_map(|(b, _)| b.name().ok().flatten().map(str::to_string))
+            .collect();
+        assert!(!names.iter().any(|n| n == "wt-detached"), "no branch named after the folder");
+        assert!(
+            !names.iter().any(|n| n.starts_with("mtgit-worktree-")),
+            "the scratch reference is cleaned up: {names:?}",
+        );
+
+        // And it still lists, with no branch to report.
+        let entry = list(&t.repo).unwrap().into_iter().find(|w| w.name == "wt-detached").unwrap();
+        assert_eq!(entry.branch, None);
+        assert_eq!(entry.head_oid.as_deref(), Some(a.to_string().as_str()));
+    }
+
+    /// The refusal git gives is a path and nothing else; naming the worktree
+    /// is what lets the UI offer to switch to it (`02-checkout.md` §7).
+    #[test]
+    fn holder_of_names_the_worktree_that_already_has_the_branch() {
+        let (t, a, scratch) = fixture();
+        t.repo.branch("topic", &t.repo.find_commit(a).unwrap(), true).unwrap();
+        assert!(holder_of(&t.repo, "topic").unwrap().is_none(), "nothing holds it yet");
+
+        let wt_dir = scratch.path().join("wt-holder");
+        add(&t.repo, "wt-holder", wt_dir.to_str().unwrap(), Some("topic"), false).unwrap();
+
+        let holder = holder_of(&t.repo, "topic").unwrap().expect("the worktree holds it");
+        assert_eq!(holder.name, "wt-holder");
+        assert!(!holder.is_current);
+        // The worktree you are *in* is not a blocker for you.
+        assert!(holder_of(&t.repo, "main").unwrap().is_none());
+    }
+
     #[test]
     fn add_and_list_worktree() {
         let (t, a, scratch) = fixture();
         let wt_dir = scratch.path().join("wt1");
-        add(&t.repo, "wt1", wt_dir.to_str().unwrap(), Some(&a.to_string())).unwrap();
+        add(&t.repo, "wt1", wt_dir.to_str().unwrap(), Some(&a.to_string()), false).unwrap();
 
         let list = list(&t.repo).unwrap();
         assert!(list.iter().any(|w| w.name == "wt1"));

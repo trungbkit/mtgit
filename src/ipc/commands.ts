@@ -1,13 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { settings } from "../stores/settings";
 import type {
+  AutolinkPattern,
   BlameLine,
   CommitDetail,
+  CommitStats,
   CommandResult,
+  Contributor,
   CheckoutRecovery,
   CheckoutResult,
   ConflictFile,
   ConflictResult,
+  ConflictSet,
   FileContent,
   FileDiff,
   GitOpResult,
@@ -19,11 +23,14 @@ import type {
   PushTarget,
   MergeMode,
   MergeResult,
+  MergeRelation,
+  MergeTarget,
   RebaseResult,
   RebasePlanItem,
   RebaseCommit,
   RewriteInfo,
   OperationInfo,
+  PredictedConflict,
   RefList,
   RemoteInfo,
   RepoInfo,
@@ -121,6 +128,8 @@ export const commitAdvanced = (
 export const getHeadMessage = (path: string) => invoke<string>("get_head_message", { path });
 export const setUpstream = (path: string, local: string, upstream: string) =>
   invoke<void>("set_upstream", { path, local, upstream });
+export const unsetUpstream = (path: string, local: string) =>
+  invoke<void>("unset_upstream", { path, local });
 export const applyPatch = (path: string, patch: string, cached: boolean, reverse = false) =>
   invoke<void>("apply_patch", { path, patch, cached, reverse });
 export const watchRepo = (path: string) => invoke<void>("watch_repo", { path });
@@ -212,8 +221,17 @@ export const pushTarget = (path: string) => invoke<PushTarget>("push_target", { 
 export const listWorktrees = (path: string) => invoke<WorktreeInfo[]>("list_worktrees", { path });
 export const listSubmodules = (path: string) => invoke<SubmoduleInfo[]>("list_submodules", { path });
 export const updateSubmodules = (path: string) => invoke<void>("update_submodules", { path });
-export const createWorktree = (path: string, name: string, worktreePath: string, target?: string) =>
-  invoke<void>("create_worktree", { path, name, worktreePath, target });
+export const worktreeHolding = (path: string, branch: string) =>
+  invoke<WorktreeInfo | null>("worktree_holding", { path, branch });
+export const createWorktree = (
+  path: string,
+  name: string,
+  worktreePath: string,
+  target?: string,
+  /** Leave the worktree on a detached HEAD instead of attaching a branch. */
+  detach?: boolean,
+) =>
+  invoke<void>("create_worktree", { path, name, worktreePath, target, detach });
 /** Remove a linked worktree. `force` is needed for a dirty or locked one. */
 export const removeWorktree = (path: string, name: string, force = false) =>
   invoke<void>("remove_worktree", { path, name, force });
@@ -227,8 +245,27 @@ export const resolveTerminalTokens = (path: string, tokens: string[]) =>
   invoke<TerminalToken[]>("resolve_terminal_tokens", { path, tokens });
 export const blameFile = (path: string, file: string, oid?: string) =>
   invoke<BlameLine[]>("blame_file", { path, file, oid });
-export const fileHistory = (path: string, file: string, limit: number) =>
-  invoke<HistoryEntry[]>("file_history", { path, file, limit });
+export const fileHistory = (path: string, file: string, limit: number, follow: boolean) =>
+  invoke<HistoryEntry[]>("file_history", { path, file, limit, follow });
+export const lineHistory = (path: string, file: string, start: number, end: number, limit: number) =>
+  invoke<HistoryEntry[]>("line_history", { path, file, start, end, limit });
+export const pathAtCommit = (path: string, file: string, oid: string) =>
+  invoke<string | null>("path_at_commit", { path, file, oid });
+export const listContributors = (path: string, limit?: number) =>
+  invoke<Contributor[]>("list_contributors", { path, limit });
+export const mergeTarget = (path: string, branch: string) =>
+  invoke<MergeTarget | null>("merge_target", { path, branch });
+export const mergeRelation = (path: string, target: string, source: string) =>
+  invoke<MergeRelation>("merge_relation", { path, target, source });
+export const autolinkPatterns = (path: string) =>
+  invoke<AutolinkPattern[]>("autolink_patterns", { path });
+export const commitTemplate = (path: string) =>
+  invoke<string | null>("commit_template", { path });
+export const commitStats = (path: string, oids: string[]) =>
+  invoke<CommitStats[]>("commit_stats", { path, oids });
+export const conflictSet = (path: string) => invoke<ConflictSet | null>("conflict_set", { path });
+export const predictRebaseConflicts = (path: string, onto: string, plan: RebasePlanItem[]) =>
+  invoke<PredictedConflict[]>("predict_rebase_conflicts", { path, onto, plan });
 export const fileAtCommit = (path: string, oid: string, file: string) =>
   invoke<FileContent>("file_at_commit", { path, oid, file });
 export const stashSave = (path: string, message: string | undefined, includeUntracked: boolean) =>

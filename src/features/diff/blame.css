@@ -1,3 +1,27 @@
+.blame-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.blame-selection {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--accent-tint);
+  border-bottom: 1px solid var(--accent-tint-border);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.blame-selection button {
+  font-size: 11.5px;
+  padding: 2px 8px;
+}
+.blame-selection-clear {
+  color: var(--text-dim);
+}
 .blame-code {
   flex: 1;
   overflow: auto;
@@ -28,6 +52,16 @@
 .blame-meta.head {
   color: var(--text-dim);
 }
+.blame-line.selected {
+  background: var(--accent-tint);
+}
+/* The heat strip: full-bleed down the row so the ramp reads vertically. */
+.blame-heat {
+  flex-shrink: 0;
+  width: 3px;
+  align-self: stretch;
+  opacity: 0.75;
+}
 .blame-author {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -45,6 +79,16 @@
   color: var(--text-faint);
   background: var(--bg-panel);
   user-select: none;
+  border: none;
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: inherit;
+  cursor: pointer;
+}
+.blame-no:hover {
+  color: var(--text);
+  background: var(--bg-hover);
 }
 .blame-content {
   padding: 0 16px;

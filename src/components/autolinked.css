@@ -1,0 +1,9 @@
+.autolink {
+  color: var(--accent-text);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--accent-tint-border);
+  cursor: pointer;
+}
+.autolink:hover {
+  border-bottom-style: solid;
+}

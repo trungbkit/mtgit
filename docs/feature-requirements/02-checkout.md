@@ -55,16 +55,16 @@ Checkout is the most frequent operation and must be near-instant and confirmatio
 - [◐] Detached HEAD banner appears with working "Create branch here" and "Return to previous branch" actions. — both actions now `refreshRepo` (STATUS A2 fixed); the previous branch is still not named in the label
 - [x] Remote checkout creates a correctly named local branch with upstream set. — `switch --track -c`, incl. the `name-1` conflict path
 - [x] Undo restores previous HEAD including auto-stashed changes.
-- [ ] Mutating controls are gated while a checkout runs (§3). — only the target pill reflects it
+- [x] Mutating controls are gated while a checkout runs (§3). — the toolbar's Pull / Push / Branch / Stash / Pop / Undo / Redo grey out while `checkoutTarget` is set, and `smartCheckout` refuses re-entry outright. The refusal is the load-bearing half: a greyed button does not stop a context menu or a double-clicked ref pill, and two checkouts racing over one index is the failure the gate exists for.
 - [x] Checkout is refused with a pointer to the banner while an operation is paused (B6). — `requireNoPausedOperation` in `lib/checkout.ts:smartCheckout`, which every checkout entry point goes through
 - [ ] Large checkouts show a progress toast with a file counter (§5).
 
 **New in this revision (GitLens-derived) — none implemented:**
 
 - [ ] `/` opens the branch finder and selects the branch tip in the graph without checking out.
-- [ ] Command palette offers remote branches as checkout targets (STATUS B7).
-- [ ] **Open in worktree…** creates and opens a worktree per §7, from a branch, a commit, or a remote branch. *Branch and remote-branch cases done (a remote branch gets a tracking local branch); from a bare commit the worktree gets a branch named after it rather than a detached HEAD — git2's `WorktreeAddOptions` wants a reference, so B8's detached half is outstanding.*
-- [ ] A branch held by another worktree produces the named-worktree dialog, not git's raw refusal. *Still git's raw refusal.*
+- [x] Command palette offers remote branches as checkout targets (STATUS B7). — the palette is guided now (G27), so Checkout is one step that lists local branches, remote branches and tags instead of one row per branch crowding out every real command.
+- [x] **Open in worktree…** creates and opens a worktree per §7, from a branch, a commit, or a remote branch. *All three. The detached case goes through a scratch reference — git2's `WorktreeAddOptions` insists on one — and then moves the worktree's own HEAD off it and deletes the branch, which is what git does internally. `a_worktree_from_a_bare_commit_is_detached_and_leaves_no_branch` pins both halves, including that no `mtgit-worktree-*` branch is left behind.*
+- [x] A branch held by another worktree produces the named-worktree dialog, not git's raw refusal. *`worktree_holding` names the holder, and the dialog offers to open that worktree as a tab or to check out the commit detached. Opening it is not a checkout **here**, so it bows out with the module's `CANCELLED` sentinel rather than letting the caller announce one.*
 - [x] Worktree list, add and remove are reachable from the sidebar WORKTREES section. *The list includes the main worktree and marks the current one; remove refuses a dirty worktree and offers the force.*
 
 ---

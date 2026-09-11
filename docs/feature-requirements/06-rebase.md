@@ -67,21 +67,30 @@ Opening interactive rebase replaces the right panel (or a modal sheet) with the 
 
 - [x] Drag and context-menu standard rebase both work with pushed-commit pre-warning. — `rewrite_info` drives the warning, and counts flattened merges too
 - [x] Conflict stops show commit position (i of n) with Continue/Skip/Abort all correct; Abort restores pre-rebase state exactly.
-- [◐] Interactive editor supports reorder, pick/reword/squash/fixup/drop with the specified visuals and validation. — all actions, drag reorder, inline reword and the oldest-row validation are in; squash/fixup rows are not visually attached to the row above, and rows carry no avatar
+- [x] Interactive editor supports reorder, pick/reword/squash/fixup/drop with the specified visuals and validation. — all actions, drag reorder, inline reword and the oldest-row validation; squash/fixup rows are now indented with a `↳` handle and a connector, and every row carries its author's avatar
 - [x] Edit-message/drop/move-up context actions work on non-HEAD commits via auto-rebase. — plus squash-into-parent and move-down
 - [◐] Post-rebase ahead/behind + force-push hint correct. — badges update; there is no force-push hint on the Push button (B5)
 - [x] Undo restores the pre-rebase tip.
 - [ ] The graph shows the in-progress state during a rebase — applied commits on the new base, remaining ones ghosted (B4).
-- [ ] Rebasing onto an ancestor toasts "Already up to date" (B7) — currently "Rebased 0 commit(s)".
-- [ ] Excluded merge commits are flagged in the plan editor (§6).
-- [ ] Rebase of a branch other than HEAD, as a composite check-out-then-rebase action (§6).
+- [x] Rebasing onto an ancestor toasts "Already up to date" (B7). — `rewriteInfo.commits == 0` is the test, in both the graph and the sidebar path; "Rebased 0 commit(s)" read as a no-op that failed.
+- [x] Excluded merge commits are flagged in the plan editor (§6). — `rebase_commits` reports them with `isMerge` instead of filtering them out, and the editor lists them greyed and non-editable. They are still kept out of the todo file itself: `git rebase -i` without `--rebase-merges` never had them in its own list, so a line naming one is a todo git rejects. A plan that silently omits three of the seven commits you selected is a plan that does not describe what is about to happen.
+- [x] Rebase of a branch other than HEAD, as a composite check-out-then-rebase action (§6). — both drop menus and the guided palette's "Rebase onto…" check the target out first when it is not already HEAD.
 
-**New in this revision (GitLens-derived) — none implemented:**
+**New in this revision (GitLens-derived):**
 
-- [ ] The plan editor predicts which rows will conflict, recomputes on reorder, labels the
+- [x] The plan editor predicts which rows will conflict, recomputes on reorder, labels the
       prediction as an estimate, and writes nothing to the repo to find out (§4).
-- [ ] A mid-plan conflict opens the unified conflict panel with cross-file region navigation (B13).
-- [ ] Undo is offered from the rebase completion toast, restoring the exact pre-rebase tip (B14).
+      — `core/rebase_predict.rs`. It replays the plan as in-memory three-way merges, carrying a
+      base tree; a conflicted step is reported and then resolved favouring the incoming side so
+      later steps still say something. **Conflicts cascade, and that is correct**: reordering two
+      commits that touch the same line stops git twice too. Debounced, never awaited by Start
+      Rebase, and warn-toned rather than danger-toned — it is a forecast, not a refusal.
+      One honest caveat, recorded rather than hidden: it moves no ref, writes no index and
+      leaves no `ORIG_HEAD`, but it **does** write unreferenced tree objects, because git2's
+      merge takes `Tree` handles and the only way to turn a merged index back into one is to
+      write it. `git gc` prunes them and nothing points at them.
+- [x] A mid-plan conflict opens the unified conflict panel with cross-file region navigation (B13). — the panel is the conflict UI now, whatever paused the tree.
+- [x] Undo is offered from the rebase completion toast, restoring the exact pre-rebase tip (B14). — `lib/undoToast.ts`, which offers Undo only when the journal actually grew: an unchanged label means the operation recorded nothing, and undoing then would reverse the *previous* one.
 
 > Deferred (overview §8.3): **Automatic Rebase** — GitLens's AI conflict resolution with
 > confidence levels and manual-override prompts. Worth naming because it is built directly on

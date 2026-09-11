@@ -73,6 +73,13 @@ pub struct RewriteInfo {
 pub struct RebaseCommit {
     pub oid: String,
     pub summary: String,
+    pub author: String,
+    pub email: String,
+    /// A merge commit, which an interactive rebase flattens rather than
+    /// replays. Reported rather than filtered out (`06-rebase.md` §7): a plan
+    /// that silently omits three of the seven commits you selected is a plan
+    /// that does not describe what is about to happen.
+    pub is_merge: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -185,6 +192,16 @@ pub fn set_upstream(path: &str, local: &str, upstream: &str) -> Result<()> {
         path,
         &["branch", &format!("--set-upstream-to={upstream}"), local],
     )?;
+    Ok(())
+}
+
+/// Drop a branch's upstream configuration (STATUS C8).
+///
+/// `--unset-upstream` rather than deleting the config keys by hand: git also
+/// clears `branch.<name>.rebase` and friends, and reproducing that list here
+/// would rot the first time git adds to it.
+pub fn unset_upstream(path: &str, local: &str) -> Result<()> {
+    git_text(path, &["branch", "--unset-upstream", local])?;
     Ok(())
 }
 
@@ -354,23 +371,25 @@ pub fn rebase_commits(path: &str, base: &str) -> Result<Vec<RebaseCommit>> {
         &[
             "log",
             "--reverse",
-            "--format=%H%x00%P%x00%s",
+            "--format=%H%x00%P%x00%an%x00%ae%x00%s",
             &format!("{base}..HEAD"),
         ],
     )?;
     Ok(raw
         .lines()
         .filter_map(|line| {
-            let mut fields = line.splitn(3, '\0');
+            let mut fields = line.splitn(5, '\0');
             let oid = fields.next()?;
             let parents = fields.next()?;
+            let author = fields.next()?;
+            let email = fields.next()?;
             let summary = fields.next()?;
-            if parents.split_whitespace().count() > 1 {
-                return None;
-            }
             Some(RebaseCommit {
                 oid: oid.to_string(),
                 summary: summary.to_string(),
+                author: author.to_string(),
+                email: email.to_string(),
+                is_merge: parents.split_whitespace().count() > 1,
             })
         })
         .collect())
@@ -598,6 +617,218 @@ pub fn operation_abort(path: &str) -> Result<()> {
     }
     clear_sequence_meta(path);
     Ok(())
+}
+
+/// One `<<<<<<< / ======= / >>>>>>>` region inside a conflicted file.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictRegion {
+    /// 0-based position of this region within its file.
+    pub index: usize,
+    /// 1-based line of the `<<<<<<<` marker in the working-tree file.
+    pub start_line: usize,
+    /// 1-based line of the `>>>>>>>` marker.
+    pub end_line: usize,
+    pub ours: String,
+    pub theirs: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictFileEntry {
+    pub path: String,
+    pub binary: bool,
+    /// Empty for a binary conflict, and also for a text file whose conflict is
+    /// add/add or delete/modify — those have no markers to navigate.
+    pub regions: Vec<ConflictRegion>,
+}
+
+/// Every conflicted file at once, with the two sides named (G25 / STATUS C4).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictSet {
+    pub kind: String,
+    /// What `ours` actually *is*, as a ref name or short sha.
+    pub ours_label: String,
+    pub theirs_label: String,
+    /// The commits behind each side, so the caller can colour them by lane.
+    pub ours_oid: Option<String>,
+    pub theirs_oid: Option<String>,
+    pub files: Vec<ConflictFileEntry>,
+}
+
+/// Name the two sides of the conflict.
+///
+/// This is the whole point of G25's relabelling. "Ours" and "theirs" are not
+/// wrong, they are *unstable*: in a merge, ours is the branch you are on; in a
+/// rebase, ours is the branch you are rebasing **onto** and theirs is your own
+/// work — the exact opposite of what almost everyone assumes. Naming the refs
+/// removes the guess rather than asking the user to remember which operation
+/// inverts the words.
+fn conflict_sides(path: &str, kind: &str) -> (String, Option<String>, String, Option<String>) {
+    let head_name = git_text(path, &["symbolic-ref", "--short", "-q", "HEAD"])
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let head_oid = git_text(path, &["rev-parse", "--verify", "-q", "HEAD"])
+        .ok()
+        .map(|s| s.trim().to_string());
+
+    let describe = |rev: &str| -> Option<String> {
+        git_text(path, &["rev-parse", "--verify", "-q", rev]).ok().map(|s| s.trim().to_string())
+    };
+    let short = |oid: &Option<String>| oid.as_deref().map(|o| o[..o.len().min(7)].to_string());
+
+    match kind {
+        "rebase" => {
+            // `head-name` is the branch being rebased (theirs, the replayed
+            // side); `onto` is the base (ours). Both live in the rebase state
+            // directory rather than in a ref, which is why this reads files.
+            let dir = git_dir(path).ok();
+            let head_name_file = dir
+                .as_ref()
+                .and_then(|d| {
+                    fs::read_to_string(d.join("rebase-merge/head-name"))
+                        .or_else(|_| fs::read_to_string(d.join("rebase-apply/head-name")))
+                        .ok()
+                })
+                .map(|s| s.trim().trim_start_matches("refs/heads/").to_string())
+                .filter(|s| !s.is_empty());
+            let onto = dir
+                .as_ref()
+                .and_then(|d| {
+                    fs::read_to_string(d.join("rebase-merge/onto"))
+                        .or_else(|_| fs::read_to_string(d.join("rebase-apply/onto")))
+                        .ok()
+                })
+                .map(|s| s.trim().to_string());
+            let stopped = dir
+                .as_ref()
+                .and_then(|d| fs::read_to_string(d.join("rebase-merge/stopped-sha")).ok())
+                .map(|s| s.trim().to_string());
+            let ours_label = onto
+                .as_ref()
+                .and_then(|o| name_for(path, o))
+                .or_else(|| short(&onto))
+                .unwrap_or_else(|| "the base".into());
+            let theirs_label = head_name_file
+                .clone()
+                .or_else(|| short(&stopped))
+                .unwrap_or_else(|| "your commit".into());
+            (ours_label, onto, theirs_label, stopped)
+        }
+        "cherryPick" | "revert" => {
+            let rev = if kind == "cherryPick" { "CHERRY_PICK_HEAD" } else { "REVERT_HEAD" };
+            let other = describe(rev);
+            let ours = head_name.clone().or_else(|| short(&head_oid)).unwrap_or_else(|| "HEAD".into());
+            let theirs = other
+                .as_ref()
+                .and_then(|o| name_for(path, o))
+                .or_else(|| short(&other))
+                .unwrap_or_else(|| rev.to_string());
+            (ours, head_oid, theirs, other)
+        }
+        _ => {
+            let other = describe("MERGE_HEAD");
+            let ours = head_name.clone().or_else(|| short(&head_oid)).unwrap_or_else(|| "HEAD".into());
+            let theirs = other
+                .as_ref()
+                .and_then(|o| name_for(path, o))
+                .or_else(|| short(&other))
+                .unwrap_or_else(|| "MERGE_HEAD".into());
+            (ours, head_oid, theirs, other)
+        }
+    }
+}
+
+/// A branch or tag name pointing at `oid`, if one does.
+fn name_for(path: &str, oid: &str) -> Option<String> {
+    let out = git_text(path, &["name-rev", "--name-only", "--refs=refs/heads/*", "--no-undefined", oid]).ok()?;
+    let name = out.trim();
+    // `name-rev` answers `main~3` for a commit that is merely *reachable* from
+    // main. That is a description, not a label for a side, and printing it
+    // beside a diff pane would read as "the branch main" when it is not.
+    (!name.is_empty() && !name.contains('~') && !name.contains('^')).then(|| name.to_string())
+}
+
+/// Parse the conflict markers in `text` into navigable regions.
+pub fn parse_conflict_regions(text: &str) -> Vec<ConflictRegion> {
+    let mut out = Vec::new();
+    let mut ours: Option<(usize, Vec<&str>)> = None;
+    let mut theirs: Option<Vec<&str>> = None;
+
+    for (i, line) in text.lines().enumerate() {
+        let line_no = i + 1;
+        if line.starts_with("<<<<<<<") {
+            ours = Some((line_no, Vec::new()));
+            theirs = None;
+        } else if line.starts_with("=======") && ours.is_some() {
+            theirs = Some(Vec::new());
+        } else if line.starts_with(">>>>>>>") {
+            if let (Some((start, our_lines)), Some(their_lines)) = (ours.take(), theirs.take()) {
+                out.push(ConflictRegion {
+                    index: out.len(),
+                    start_line: start,
+                    end_line: line_no,
+                    ours: join_lines(&our_lines),
+                    theirs: join_lines(&their_lines),
+                });
+            }
+        } else if let Some(their_lines) = theirs.as_mut() {
+            their_lines.push(line);
+        } else if let Some((_, our_lines)) = ours.as_mut() {
+            our_lines.push(line);
+        }
+    }
+    out
+}
+
+fn join_lines(lines: &[&str]) -> String {
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    }
+}
+
+/// Everything the unified conflict panel needs in one call (G25).
+///
+/// One call rather than one per file because the panel's whole reason to exist
+/// is cross-file navigation: `n` at the last region of file 3 has to know that
+/// file 4 exists and where its first region is, and a per-file fetch would
+/// make that a round trip mid-keystroke.
+pub fn conflict_set(path: &str) -> Result<Option<ConflictSet>> {
+    let Some(info) = operation_info(path)? else { return Ok(None) };
+    let repo = Repository::discover(path)?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| Error::Msg("bare repositories have no conflict files".into()))?;
+
+    let (ours_label, ours_oid, theirs_label, theirs_oid) = conflict_sides(path, &info.kind);
+
+    let mut files = Vec::new();
+    for file in &info.conflicts {
+        let bytes = safe_worktree_path(workdir, file)
+            .ok()
+            .and_then(|p| fs::read(p).ok())
+            .unwrap_or_default();
+        let binary = bytes.contains(&0);
+        let regions = if binary {
+            Vec::new()
+        } else {
+            parse_conflict_regions(&String::from_utf8_lossy(&bytes))
+        };
+        files.push(ConflictFileEntry { path: file.clone(), binary, regions });
+    }
+
+    Ok(Some(ConflictSet {
+        kind: info.kind,
+        ours_label,
+        theirs_label,
+        ours_oid,
+        theirs_oid,
+        files,
+    }))
 }
 
 pub fn conflict_file(path: &str, file: &str) -> Result<ConflictFile> {
@@ -941,5 +1172,110 @@ mod tests {
         assert!(result.success, "{}", result.output);
         assert!(git(dir.path(), &["diff", "--cached", "--name-only"]).contains("side.txt"));
         assert_ne!(git(dir.path(), &["show", "-s", "--format=%s", "HEAD"]), "side change");
+    }
+
+    #[test]
+    fn conflict_regions_are_parsed_with_their_line_numbers() {
+        let text = "a\n<<<<<<< HEAD\nmine\n=======\nyours\n>>>>>>> other\nb\n";
+        let regions = parse_conflict_regions(text);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].index, 0);
+        assert_eq!(regions[0].start_line, 2);
+        assert_eq!(regions[0].end_line, 6);
+        assert_eq!(regions[0].ours, "mine\n");
+        assert_eq!(regions[0].theirs, "yours\n");
+    }
+
+    /// A side with no lines is a delete-vs-modify, and it has to survive as an
+    /// empty string: dropping the region would hide a conflict the user must
+    /// still decide.
+    #[test]
+    fn an_empty_side_still_produces_a_region() {
+        let regions = parse_conflict_regions("<<<<<<< HEAD\n=======\nyours\n>>>>>>> other\n");
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].ours, "");
+        assert_eq!(regions[0].theirs, "yours\n");
+    }
+
+    #[test]
+    fn a_file_with_no_markers_has_no_regions() {
+        assert!(parse_conflict_regions("just text\n").is_empty());
+        // An unterminated region is not a region: git never writes one, and
+        // treating a stray marker as a conflict would offer to "resolve"
+        // ordinary prose.
+        assert!(parse_conflict_regions("<<<<<<< HEAD\nmine\n").is_empty());
+    }
+
+    /// The C4 fix, and the reason G25 exists: during a **merge** the sides are
+    /// named for the branches, not "ours" and "theirs".
+    #[test]
+    fn a_merge_conflict_names_both_branches() {
+        let dir = repo_with_commits();
+        let path = dir.path().to_str().unwrap();
+        git(dir.path(), &["checkout", "-q", "-b", "side", "HEAD~1"]);
+        fs::write(dir.path().join("file.txt"), "side\n").unwrap();
+        git(dir.path(), &["add", "file.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "side change"]);
+        git(dir.path(), &["checkout", "-q", "main"]);
+        let _ = Command::new("git").arg("-C").arg(dir.path()).args(["merge", "side"]).output();
+
+        let set = conflict_set(path).unwrap().expect("a conflict is in progress");
+        assert_eq!(set.kind, "merge");
+        assert_eq!(set.ours_label, "main");
+        assert_eq!(set.theirs_label, "side");
+        assert_eq!(set.files.len(), 1);
+        assert_eq!(set.files[0].path, "file.txt");
+        assert_eq!(set.files[0].regions.len(), 1, "one marker block in file.txt");
+        assert!(!set.files[0].binary);
+    }
+
+    /// A rebase inverts the two words, which is precisely what made "Ours" and
+    /// "Theirs" worse than useless. `ours` is the branch being rebased *onto*.
+    #[test]
+    fn a_rebase_conflict_names_the_base_as_ours_and_the_replayed_branch_as_theirs() {
+        let dir = repo_with_commits();
+        let path = dir.path().to_str().unwrap();
+        git(dir.path(), &["checkout", "-q", "-b", "feature", "HEAD~1"]);
+        fs::write(dir.path().join("file.txt"), "feature\n").unwrap();
+        git(dir.path(), &["add", "file.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "feature change"]);
+        let _ = Command::new("git").arg("-C").arg(dir.path()).args(["rebase", "main"]).output();
+
+        let set = conflict_set(path).unwrap().expect("a rebase is in progress");
+        assert_eq!(set.kind, "rebase");
+        assert_eq!(set.ours_label, "main", "ours is the base you are rebasing onto");
+        assert_eq!(set.theirs_label, "feature", "theirs is your own work");
+    }
+
+    /// `06-rebase.md` §7: a merge commit in the range is *flagged*, not
+    /// dropped. Filtering it out made the plan claim the rebase would replay
+    /// commits it was actually going to flatten.
+    #[test]
+    fn rebase_commits_reports_a_merge_rather_than_hiding_it() {
+        let dir = repo_with_commits();
+        let path = dir.path().to_str().unwrap();
+        let base = git(dir.path(), &["rev-parse", "HEAD"]);
+
+        git(dir.path(), &["checkout", "-q", "-b", "side"]);
+        fs::write(dir.path().join("side.txt"), "s\n").unwrap();
+        git(dir.path(), &["add", "side.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "side"]);
+        git(dir.path(), &["checkout", "-q", "main"]);
+        fs::write(dir.path().join("main.txt"), "m\n").unwrap();
+        git(dir.path(), &["add", "main.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "main change"]);
+        git(dir.path(), &["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+
+        let commits = rebase_commits(path, &base).unwrap();
+        let merge = commits.iter().find(|c| c.is_merge).expect("the merge is listed");
+        assert_eq!(merge.summary, "merge side");
+        assert!(commits.iter().any(|c| !c.is_merge), "ordinary commits are still listed");
+        assert!(!merge.email.is_empty(), "rows carry an identity for the avatar");
+    }
+
+    #[test]
+    fn a_clean_repository_has_no_conflict_set() {
+        let dir = repo_with_commits();
+        assert!(conflict_set(dir.path().to_str().unwrap()).unwrap().is_none());
     }
 }

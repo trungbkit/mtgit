@@ -157,3 +157,40 @@
   padding: 2px 8px;
   white-space: nowrap;
 }
+
+/* Jump-to and merge target (G23). Both sit with the branch selector rather
+   than in the action groups: they answer "where am I", not "what do I do". */
+.tb-jump {
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+}
+.tb-jump:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+.tb-mergetarget {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.tb-mergetarget:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.tb-mt-behind {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--warn-tint-strong);
+  color: var(--text);
+  font-size: 10.5px;
+}

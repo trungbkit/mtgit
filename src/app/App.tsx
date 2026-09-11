@@ -18,7 +18,7 @@ import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { ShortcutsOverlay } from "../features/settings/ShortcutsOverlay";
 import { useRepoEvents } from "../ipc/events";
 import { isTypingTarget, matches } from "../lib/keys";
-import { hydrateRecentRepos, useSession } from "../stores/session";
+import { hydrateRecentRepos, useSession, WORKING } from "../stores/session";
 import { OPEN_SETTINGS_EVENT, useSettings } from "../stores/settings";
 import "./app.css";
 
@@ -36,6 +36,7 @@ export function App() {
   const setRepo = useSession((s) => s.setRepo);
   const setPaletteOpen = useSession((s) => s.setPaletteOpen);
   const toggleTerminal = useSession((s) => s.toggleTerminal);
+  const selectOid = useSession((s) => s.selectOid);
 
   useRepoEvents();
 
@@ -67,6 +68,14 @@ export function App() {
       } else if (matches(e, "settings.open")) {
         e.preventDefault();
         setSettingsOpen(true);
+      } else if (matches(e, "commit.focus")) {
+        // STATUS B5: the listener used to live in `StagingView`, which mounts
+        // only once the WIP row is selected — so the shortcut that is supposed
+        // to *get you to* the commit message only worked once you were already
+        // there. Selecting WIP here mounts the view, which then focuses its
+        // own field on mount.
+        e.preventDefault();
+        if (repo) selectOid(WORKING);
       } else if (matches(e, "help.shortcuts") && !isTypingTarget(e)) {
         // The only unmodified chord in the map, so it is also the only one
         // that has to check where the keystroke was going.
@@ -76,7 +85,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [repo, setPaletteOpen, toggleTerminal]);
+  }, [repo, selectOid, setPaletteOpen, toggleTerminal]);
 
   // Opening settings from anywhere (the toolbar gear, the cheat sheet).
   useEffect(() => {

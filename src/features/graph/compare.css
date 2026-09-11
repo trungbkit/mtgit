@@ -1,38 +1,18 @@
-.compare-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
+/* Compare, as a sheet in the detail stack (G24) — not an overlay. The frame
+   is the panel's; all this owns is the file list beside the viewer. */
+.compare-sheet {
   display: grid;
-  place-items: center;
-  background: #0008;
+  grid-template-columns: 220px 1fr;
+  flex: 1;
+  min-height: 0;
 }
 
-.compare-dialog {
-  display: grid;
-  grid-template: auto 1fr / 230px 1fr;
-  width: min(1050px, 92vw);
-  height: min(760px, 88vh);
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--bg-panel);
-  box-shadow: 0 20px 70px #000b;
-}
-
-.compare-dialog > header {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: space-between;
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.compare-dialog > aside {
+.compare-sheet > aside {
   overflow-y: auto;
   border-right: 1px solid var(--border);
 }
 
-.compare-dialog > aside button {
+.compare-sheet > aside button {
   display: flex;
   gap: 7px;
   width: 100%;
@@ -44,11 +24,19 @@
   overflow-wrap: anywhere;
 }
 
-.compare-dialog > aside button.selected {
+.compare-sheet > aside button.selected {
   background: var(--bg-selected);
 }
 
-.compare-dialog > main {
+.compare-sheet > main {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+.compare-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-faint);
 }
