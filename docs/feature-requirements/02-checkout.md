@@ -57,7 +57,7 @@ Checkout is the most frequent operation and must be near-instant and confirmatio
 - [x] Undo restores previous HEAD including auto-stashed changes.
 - [x] Mutating controls are gated while a checkout runs (§3). — the toolbar's Pull / Push / Branch / Stash / Pop / Undo / Redo grey out while `checkoutTarget` is set, and `smartCheckout` refuses re-entry outright. The refusal is the load-bearing half: a greyed button does not stop a context menu or a double-clicked ref pill, and two checkouts racing over one index is the failure the gate exists for.
 - [x] Checkout is refused with a pointer to the banner while an operation is paused (B6). — `requireNoPausedOperation` in `lib/checkout.ts:smartCheckout`, which every checkout entry point goes through
-- [ ] Large checkouts show a progress toast with a file counter (§5).
+- [ ] Large checkouts show a progress toast with a file counter (§5). *Open — and a decision, not a gap: git2's checkout callback can feed it, but a progress surface that appears for a fraction of a second on most repositories may be a flicker rather than an improvement. `STATUS.md` §1.*
 
 **New in this revision (GitLens-derived):**
 

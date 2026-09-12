@@ -24,6 +24,7 @@ pub fn run() {
             commands::clone_repo,
             commands::list_refs,
             commands::get_graph,
+            commands::graph_key,
             commands::search_commits,
             commands::cancel_search,
             commands::get_commit,

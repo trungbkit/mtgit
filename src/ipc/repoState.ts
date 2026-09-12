@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { operationInfo } from "./commands";
+import { graphKey, operationInfo } from "./commands";
 import {
   conflictLabel,
   revealConflictBanner,
@@ -96,6 +96,53 @@ export async function requireNoPausedOperation(path: string, action: string): Pr
  */
 export function refreshRepo(qc: QueryClient, path: string): Promise<void> {
   // queryKey[1] is the repo path by convention (`CLAUDE.md` invariant 3).
-  qc.invalidateQueries({ predicate: (q) => q.queryKey[1] === path });
-  return syncOperation(path);
+  // The graph is handled separately, below.
+  qc.invalidateQueries({
+    predicate: (q) => q.queryKey[1] === path && q.queryKey[0] !== "graph",
+  });
+  return Promise.all([refreshGraph(qc, path), syncOperation(path)]).then(() => undefined);
+}
+
+/**
+ * The last ref digest the graph query was invalidated at, per repository.
+ *
+ * Module-level rather than per-caller because `refreshRepo` is called from
+ * everywhere and the question it answers — "is the graph we are holding still
+ * the current one" — is a property of the repository, not of the caller.
+ */
+const lastGraphKey = new Map<string, string>();
+
+/**
+ * Invalidate the graph, but only when the graph would actually come back
+ * different.
+ *
+ * The graph is an *infinite* query, so invalidating it refetches every page
+ * that has been loaded (`CLAUDE.md`'s gotcha list says so): scroll 20k commits
+ * into a large repository and one `repo-changed` event re-serialises ten pages
+ * of 2000 rows across IPC. That happens after every stage, every commit, and
+ * every editor save the watcher notices — most of which move no ref at all.
+ *
+ * Skipping is safe rather than merely cheap, and that is the whole argument
+ * for it: `get_graph` serves from a layout cache keyed on `refs_digest`
+ * (invariant 4), and the digest covers every `refs/**` target *and* HEAD. An
+ * unchanged digest therefore means a refetch would return the same rows, the
+ * same total and the same head, byte for byte.
+ *
+ * Two cases still invalidate unconditionally, both deliberate: the digest read
+ * failed (a gate that has lost its footing must not become a wall — the same
+ * rule `requireNoPausedOperation` follows), and the query is not currently
+ * holding successful data, which covers a failed refetch and a query that has
+ * been garbage-collected since the last check.
+ */
+async function refreshGraph(qc: QueryClient, path: string): Promise<void> {
+  const queryKey = ["graph", path];
+  try {
+    const holding = qc.getQueryState(queryKey)?.status === "success";
+    const key = await graphKey(path);
+    if (holding && lastGraphKey.get(path) === key) return;
+    lastGraphKey.set(path, key);
+  } catch {
+    lastGraphKey.delete(path);
+  }
+  await qc.invalidateQueries({ queryKey });
 }

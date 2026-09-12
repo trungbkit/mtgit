@@ -76,6 +76,13 @@ export const cloneRepo = (
 export const listRefs = (path: string) => invoke<RefList>("list_refs", { path });
 export const getGraph = (path: string, skip: number, limit: number) =>
   invoke<GraphPage>("get_graph", { path, skip, limit });
+/**
+ * The digest of the ref set the graph would lay out (`CLAUDE.md` invariant 4).
+ *
+ * Unchanged digest means `getGraph` would return byte-identical rows, so a
+ * refetch can be skipped — see `ipc/repoState.ts`.
+ */
+export const graphKey = (path: string) => invoke<string>("graph_key", { path });
 /** Search history. The grammar is parsed in Rust; `limit` of 0 is unbounded. */
 export const searchCommits = (path: string, query: string, opts: SearchOptions, limit: number) =>
   invoke<SearchResults>("search_commits", { path, query, opts, limit });

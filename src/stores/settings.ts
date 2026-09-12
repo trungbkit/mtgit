@@ -39,6 +39,8 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalFontSize: 12,
   terminalShell: null,
   keybindings: {},
+  sidebarWidth: 240,
+  detailWidth: 420,
   recentRepos: [],
 };
 

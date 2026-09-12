@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { resetStores } from "../../test/stores";
 import { useSession } from "../../stores/session";
@@ -43,15 +43,18 @@ vi.mock("../../ipc/commands", () => {
 });
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
 
-// jsdom lays nothing out, so the real virtualizer measures a zero-height
-// scroller and returns no rows — which would let the assertion below pass
-// against a component that rendered nothing at all.
+// jsdom lays nothing out, so the real virtualizer reports zero rows and every
+// assertion below would pass against a component that rendered nothing. The
+// stub has to carry every method `GraphView` calls — `measure` is the one the
+// density change asks for, and a missing method throws at mount, not at the
+// assertion.
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getTotalSize: () => count * 28,
     getVirtualItems: () =>
       Array.from({ length: count }, (_, index) => ({ index, key: index, start: index * 28, size: 28 })),
     scrollToIndex: vi.fn(),
+    measure: vi.fn(),
   }),
 }));
 
@@ -139,5 +142,40 @@ describe("opening a repository", () => {
     mockGetGraph.mockResolvedValue(page());
     await mount();
     expect(await screen.findByText("main")).toBeInTheDocument();
+  });
+});
+
+/**
+ * One menu per row, raised from anywhere on it.
+ *
+ * The graph used to answer a right-click with two different menus depending on
+ * which part of the row the pointer was over: the ref pill gave branch actions,
+ * everything else gave commit actions, and the author cell gave neither — it
+ * ran an author search instead. Whichever one you wanted, half the row was the
+ * wrong place to click.
+ */
+describe("the row context menu", () => {
+  beforeEach(() => mockGetGraph.mockResolvedValue(page()));
+
+  it("opens on the commit message and offers the commit's own actions", async () => {
+    await mount();
+    fireEvent.contextMenu(await screen.findByText("initial commit"));
+    expect(await screen.findByText("Checkout this commit")).toBeInTheDocument();
+    expect(screen.getByText("Create branch here…")).toBeInTheDocument();
+  });
+
+  it("opens on a ref pill too, with that ref's actions rather than only the commit's", async () => {
+    await mount();
+    fireEvent.contextMenu(await screen.findByText("main"));
+    // The ref is a submenu of the row's menu, not a menu of its own: both
+    // halves have to be reachable from the one gesture.
+    expect(await screen.findByText("Branch main (checked out)")).toBeInTheDocument();
+    expect(screen.getByText("Checkout this commit")).toBeInTheDocument();
+  });
+
+  it("opens on the author column, which used to swallow the gesture", async () => {
+    await mount();
+    fireEvent.contextMenu(await screen.findByText("Ada L"));
+    expect(await screen.findByText("Checkout this commit")).toBeInTheDocument();
   });
 });

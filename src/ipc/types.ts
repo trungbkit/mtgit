@@ -540,6 +540,11 @@ export interface Settings {
 
   /** Action id -> chord, for the actions the user has rebound. */
   keybindings: Record<string, string>;
+
+  /** Width of the sidebar and the detail panel, in CSS pixels. */
+  sidebarWidth: number;
+  detailWidth: number;
+
   recentRepos: PersistedRecentRepo[];
 }
 

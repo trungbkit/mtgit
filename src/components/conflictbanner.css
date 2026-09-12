@@ -3,15 +3,15 @@
   align-items: center;
   gap: 10px;
   padding: 7px 12px;
-  background: color-mix(in srgb, var(--danger, #e5534b) 18%, var(--bg-elevated, #2b3038));
-  border-bottom: 1px solid var(--danger, #e5534b);
-  color: var(--fg, #e6edf3);
+  background: color-mix(in srgb, var(--danger) 18%, var(--bg-elevated));
+  border-bottom: 1px solid var(--danger);
+  color: var(--fg);
   font-size: 12.5px;
   flex-shrink: 0;
 }
 
 .cb-icon {
-  color: var(--danger, #e5534b);
+  color: var(--danger);
   font-size: 15px;
 }
 
@@ -24,7 +24,7 @@
   background: transparent;
   text-align: left;
   cursor: pointer;
-  color: var(--fg-muted, #adbac7);
+  color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -50,24 +50,24 @@
 .cb-btn {
   padding: 4px 12px;
   border-radius: 5px;
-  border: 1px solid var(--border, #444c56);
-  background: var(--bg-input, #22272e);
-  color: var(--fg, #e6edf3);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg);
   font-size: 12px;
   cursor: pointer;
 }
 .cb-btn:hover {
-  background: var(--bg-hover, #333b45);
+  background: var(--bg-hover);
 }
 .cb-btn.primary {
-  background: var(--accent, #539bf5);
-  border-color: var(--accent, #539bf5);
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 .cb-btn.danger {
-  background: var(--danger, #e5534b);
-  border-color: var(--danger, #e5534b);
-  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-accent);
 }
 .cb-btn.primary:hover,
 .cb-btn.danger:hover {
@@ -81,6 +81,6 @@
 
 @keyframes cb-flash {
   50% {
-    background: color-mix(in srgb, var(--danger, #e5534b) 45%, var(--bg-elevated, #2b3038));
+    background: color-mix(in srgb, var(--danger) 45%, var(--bg-elevated));
   }
 }

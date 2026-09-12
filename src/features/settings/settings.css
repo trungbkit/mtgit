@@ -193,7 +193,7 @@
 }
 .settings-seg.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .settings-note {

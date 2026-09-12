@@ -73,7 +73,7 @@
 .fv-tabs button.on,
 .fv-actions button.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .fv-stats {
   display: flex;

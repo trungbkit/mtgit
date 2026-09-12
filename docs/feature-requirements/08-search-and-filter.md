@@ -5,7 +5,7 @@
 ## 1. Summary
 
 Finding a commit is the precondition for six of the seven operations in this set, and it is the
-one MTGit cannot do at all today (`GITKRAKEN_PARITY_PLAN.md` G10). GitKraken Desktop and GitLens
+one MTGit could not do at all when this was written. GitKraken Desktop and GitLens
 both put a search bar in the Commit Graph header; GitLens's version is specified in code, so
 **GitLens's grammar is the spec** here, down to the operator tokens. Everything in §3 was read
 out of `packages/git/src/models/search.ts` and `packages/git/src/utils/search.utils.ts` in
@@ -105,7 +105,7 @@ Modifiers, as toggles beside the field: **match case**, **match whole word**, **
 | B4 | `limit` defaults to unbounded, with a configurable cap; when the cap truncates, the footer says so and offers to keep going. Silent truncation is how a search convinces a user their commit is gone. |
 | B5 | Filter mode does not change HEAD, selection, or scroll position on entry, and restores all three on exit. |
 | B6 | Search is read-only and therefore takes **no op guard** (`CLAUDE.md` invariant 2). |
-| B7 | Query state is per repo tab and survives tab switches, per `GITKRAKEN_PARITY_PLAN.md` G12. |
+| B7 | Query state is per repo tab and survives tab switches. |
 
 ## 6. Edge Cases
 

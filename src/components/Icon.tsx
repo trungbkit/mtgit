@@ -1,5 +1,5 @@
 /**
- * The app's icon set (GITKRAKEN_PARITY_PLAN §3.3).
+ * The app's icon set.
  *
  * These replace the emoji that used to stand in for icons. Emoji were the
  * loudest tell that this is not a native app: they render at a different

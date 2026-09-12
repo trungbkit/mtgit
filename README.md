@@ -19,9 +19,13 @@ pnpm install
 pnpm tauri:dev
 ```
 
-Verification:
+Verification — the whole gate, which is what "it works" means here:
 
 ```sh
-pnpm build
-cd src-tauri && cargo test
+cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
+cd .. && pnpm exec tsc --noEmit && pnpm check:ipc && pnpm test && pnpm build
 ```
+
+`scripts/make-fixture.sh` builds a throwaway repo with a clean merge, a deliberately
+conflicting branch and an origin that is both ahead and behind — the fastest way to
+exercise a change by hand.

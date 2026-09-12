@@ -61,6 +61,12 @@ fn lenient_true<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<bool, D:
 fn lenient_ref_inline_count<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u8, D::Error> {
     lenient_or(d, default_ref_inline_count())
 }
+fn lenient_sidebar_width<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u16, D::Error> {
+    lenient_or(d, default_sidebar_width())
+}
+fn lenient_detail_width<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u16, D::Error> {
+    lenient_or(d, default_detail_width())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -127,6 +133,12 @@ fn default_ref_inline_count() -> u8 {
 }
 fn default_true() -> bool {
     true
+}
+fn default_sidebar_width() -> u16 {
+    240
+}
+fn default_detail_width() -> u16 {
+    420
 }
 
 /// The columns GitKraken shows by default. `changes` is off because it costs a
@@ -224,6 +236,18 @@ pub struct Settings {
     #[serde(default, deserialize_with = "lenient")]
     pub keybindings: BTreeMap<String, String>,
 
+    /// Width of the left and right panes, in CSS pixels.
+    ///
+    /// A preference, not session state: a user who widens the detail panel to
+    /// read a commit message has said something about how they want the app to
+    /// look, and re-saying it at every launch is the app forgetting. Clamped on
+    /// the same bounds the drag handles enforce, so a hand-edited file cannot
+    /// produce a pane the window has no room for.
+    #[serde(default = "default_sidebar_width", deserialize_with = "lenient_sidebar_width")]
+    pub sidebar_width: u16,
+    #[serde(default = "default_detail_width", deserialize_with = "lenient_detail_width")]
+    pub detail_width: u16,
+
     #[serde(default, deserialize_with = "lenient")]
     pub recent_repos: Vec<RecentRepo>,
 }
@@ -249,6 +273,8 @@ impl Default for Settings {
             terminal_font_size: default_terminal_font_size(),
             terminal_shell: None,
             keybindings: BTreeMap::new(),
+            sidebar_width: default_sidebar_width(),
+            detail_width: default_detail_width(),
             recent_repos: Vec::new(),
         }
     }
@@ -264,6 +290,9 @@ impl Settings {
         // Zero inline pills would collapse a lone branch name into "+1",
         // which is a chip where the answer would have fit.
         self.graph_ref_inline_count = self.graph_ref_inline_count.clamp(1, 20);
+        // The same bounds `App.tsx`'s drag handles enforce.
+        self.sidebar_width = self.sidebar_width.clamp(160, 480);
+        self.detail_width = self.detail_width.clamp(280, 680);
         // A fetch every few seconds is a request storm, not a preference.
         if self.auto_fetch_minutes != 0 {
             self.auto_fetch_minutes = self.auto_fetch_minutes.clamp(1, 1440);
@@ -406,6 +435,8 @@ mod tests {
             diff_tab_width: 0,
             graph_ref_inline_count: 0,
             auto_fetch_minutes: 99_999,
+            sidebar_width: 5,
+            detail_width: 9_000,
             ..Settings::default()
         };
         let saved = save(dir.path(), &settings).unwrap();
@@ -415,6 +446,10 @@ mod tests {
         assert_eq!(saved.diff_tab_width, 1);
         assert_eq!(saved.graph_ref_inline_count, 1, "zero pills is all chip, no answer");
         assert_eq!(saved.auto_fetch_minutes, 1440);
+        // A pane the window has no room for is not a layout the user can undo
+        // from inside the app: the divider that would fix it is off-screen.
+        assert_eq!(saved.sidebar_width, 160);
+        assert_eq!(saved.detail_width, 680);
         assert_eq!(load(dir.path()), saved);
     }
 

@@ -44,7 +44,7 @@
 }
 .diff-mode-toggle button.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .diff-code {
@@ -134,7 +134,7 @@
   background: var(--diff-del-bg-strong);
 }
 .dline.empty {
-  background: #0000001a;
+  background: var(--diff-empty-bg);
 }
 
 /* Split view */

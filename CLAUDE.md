@@ -193,9 +193,21 @@ Frontend reports them with `toastError(e)`. Note that `gitNetwork` *resolves* wi
   themselves, which is what keeps the cheat sheet and the rebinding UI honest.
 - **Colours come from `theme.css`, including the translucent ones.** A tint is a per-theme
   token (`--accent-tint`, `--diff-add-bg`), not one alpha value used over both grounds: what
-  reads as a highlight on near-black is invisible on white. And never write
-  `var(--token, #hex)` with a dark fallback for a token that does not exist — that rule then
-  ignores the theme, silently, which is how six stylesheets stayed dark until P6.
+  reads as a highlight on near-black is invisible on white. The same goes for scrims and
+  shadows — `--scrim`, `--shadow-pop`, `--shadow-panel`, `--shadow-modal` — because half-opaque
+  black reads as depth over near-black and as a smear over white. Never write
+  `var(--token, #hex)` with a dark fallback: that rule then ignores the theme, silently, which
+  is how six stylesheets stayed dark until P6.
+
+  **Each theme block must be complete, not a delta.** `:root[data-theme="dark"]` is a separate
+  block from the `prefers-color-scheme` one, and a token defined in only one of them leaves the
+  explicit choice half-themed. `--ok-tint` was missing from the explicit block, so choosing Dark
+  under a light OS painted every remote-branch pill in the light theme's green.
+- **A token nothing reads is a setting that does nothing.** `--row-height` and `--lane-width`
+  existed for three densities while `GraphView` drew 28px rows from a module constant, so the
+  Appearance → Density control was inert. Where the canvas needs a token as a number, read it
+  back out of the computed style (`useDensityMetrics`, `palette.ts`) rather than keeping a
+  second copy in TypeScript.
 - **A bug fix lands with a test that fails without it.** Where a regression is a hang rather
   than a wrong value, guard the test with a channel timeout so it fails instead of hanging —
   see `drain_does_not_deadlock_when_stdout_fills_the_pipe`.
@@ -211,8 +223,17 @@ Frontend reports them with `toastError(e)`. Note that `gitNetwork` *resolves* wi
 
 - **`React.StrictMode` is on**, so effects double-invoke in dev. Effects that fetch or spawn
   must be idempotent (`watch_repo` is idempotent server-side for exactly this reason).
-- **The graph query is an infinite query.** Invalidating it refetches *every* loaded page, so
-  a deep scroll makes refreshes progressively more expensive.
+- **The graph query is an infinite query.** Invalidating it refetches *every* loaded page, so a
+  deep scroll makes refreshes progressively more expensive. `refreshRepo` therefore excludes it
+  from the blanket invalidation and asks `graph_key` (the `refs_digest`) first, skipping the
+  refetch when no ref has moved — which is exact, not approximate, because the Rust layout cache
+  is keyed on the same digest (invariant 4). If you add state the *rows* depend on, it has to
+  fold into that digest or the graph will not refresh.
+- **Nothing in `GraphView`'s render may walk the whole row list.** `rows` is every loaded commit
+  — 50k on a large repository — and the component re-renders on hover, on selection and on every
+  page that arrives. Sweeps (lane width, marker indices) are memoized; `GraphRowView` is
+  memoized and every callback prop it takes is stable, so one inline arrow throws that away for
+  all forty visible rows.
 - **The watcher stays quiet for 600ms after one of our own operations.** An external edit
   landing inside that window is dropped. If a change seems not to refresh, check whether it
   ran under an op guard.
@@ -225,21 +246,23 @@ Frontend reports them with `toastError(e)`. Note that `gitNetwork` *resolves* wi
 
 ## Roadmap
 
-`GITKRAKEN_PARITY_PLAN.md` is the live plan: gap analysis vs GitKraken, phases P0–P8, and a
-status marker per phase. **P0–P6 and P8 are done, and so is the spec backlog** — every unticked
-acceptance criterion across the eight feature docs closed on 2026-09-12. **P7 is partly done**:
-CI, the Vitest suite and `check:ipc` are in; e2e and code signing are not, and both need
-something this repo does not have (a `tauri-driver` on the runner, certificates). Its §8 item 12
-lists the three things deliberately *not* built — rebase ghosting, per-commit cherry-pick
-progress, and what the sidebar's eye toggle should mean — each blocked on a judgement rather
-than on effort. Read that list before proposing any of them as an oversight.
+**The feature backlog is closed.** `GITKRAKEN_PARITY_PLAN.md` holds only what is still open —
+P7's e2e and code signing (both blocked on things this repo does not have: a `tauri-driver` on
+the runner, certificates), the absence of eslint, and the fact that Windows has never been
+built. Its §3 lists what is deliberately *not* built — rebase ghosting, per-commit cherry-pick
+progress, what the sidebar's eye toggle should mean, checkout progress — each blocked on a
+judgement rather than on effort. Read that list before proposing any of them as an oversight.
+Its §7 is the frontend performance contract, which has no automated gate.
+
+The plan is deliberately short. The phase-by-phase record of how P0–P8 landed used to live there
+and has been deleted: it was 900 lines of "done" around 40 lines of "not done", and the history
+is in git.
 
 `docs/feature-requirements/` is the spec for the seven core features (commit, checkout, push,
-pull, merge, rebase, cherry-pick) plus `08-search-and-filter.md` (commit search — built; its
-§7.1 is down to two open rows, neither of them missing code), and
-`docs/feature-requirements/STATUS.md` audits the code against it — per-criterion verdicts plus
-the outstanding defects. Start there before picking up feature work; it is more current than the
-phase plan.
+pull, merge, rebase, cherry-pick) plus `08-search-and-filter.md` (commit search), and
+`docs/feature-requirements/STATUS.md` is the audit: the open rows, the recorded deviations where
+the code deliberately differs from the spec, and the test-coverage gaps. Start there before
+picking up feature work.
 
 Both the specs and the plan treat **two** references as "GitKraken", because two GitKraken
 products ship the same commit graph: GitKraken Desktop and **GitLens**
@@ -249,7 +272,9 @@ source for exact behaviour — the search grammar in `08-search-and-filter.md` c
 grammar and detail) and §8 records which GitLens features are in scope, adapted, or out; the
 `plus/` tree is not MIT and stays deferred. Don't re-open those verdicts per PR.
 
-`PLAN.md` and `VERIFY_HARDEN_PLAN.md` are historical — delivered, kept for context.
+`PLAN.md` and `VERIFY_HARDEN_PLAN.md` are gone: both described work delivered long ago, and
+`PLAN.md` had drifted far enough to describe a React 18 app with an architecture `Layout` above
+already supersedes. `git log` has them.
 
-When you finish a phase or a numbered item, update its status in the plan rather than leaving
-the record to the commit log.
+When something in the plan closes, delete the row rather than striking it through. A plan is
+what is left.

@@ -73,7 +73,7 @@ Vertical layout, top to bottom:
 
 **New in this revision (GitLens-derived):**
 
-- [ ] A dirty second worktree produces its **own** WIP row, and committing from it touches only that worktree (§3.1). *The row is there, on that worktree's own lane. Clicking it opens that worktree as a tab rather than re-pointing this tab's commit panel: a different worktree has a different index, and staging into it from this handle would be acting on a repository the UI is not showing.*
+- [x] A dirty second worktree produces its **own** WIP row, and committing from it touches only that worktree (§3.1). *The row is there, on that worktree's own lane. Clicking it opens that worktree as a tab rather than re-pointing this tab's commit panel: a different worktree has a different index, and staging into it from this handle would be acting on a repository the UI is not showing.*
 - [x] Co-author picker appends well-formed `Co-authored-by:` trailers from the contributor list. — `lib/coauthors.ts`, fed by `list_contributors` (G28). Already-credited addresses are filtered out, and the trailer joins an existing trailer block rather than starting a paragraph, because git reads trailers only in the last one.
 - [x] `commit.template` pre-fills the Description when the fields are empty. — `core/identity.rs::commit_template`, comment lines stripped (`commit_cli` passes `-m`, which git cleans with `--cleanup=whitespace` and would commit them verbatim). Seeds once, and never over a draft.
 - [x] Issue references render as autolinks in the message preview and the graph message column. — `components/Autolinked` over `lib/autolinks.ts`; patterns come from repo config plus a built-in for origin's host, and nothing calls a network.

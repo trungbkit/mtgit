@@ -74,7 +74,7 @@ Everything in GitKraken revolves around a single virtualized commit graph. All s
 ### 1.2 Ref labels (branch/tag pills)
 - Local branches, remote branches, and tags render as rounded pills in the refs column, colored to match their lane.
 - The checked-out branch pill shows a checkmark and a computer icon; a cloud icon indicates the branch exists on a remote. Local and remote pointers to the same branch collapse into one pill when they point at the same commit; they split into separate rows when diverged.
-- Pills are interactive: double-click = checkout, drag = merge/rebase initiation (see feature docs), right-click = ref context menu.
+- Pills are interactive: double-click = checkout, drag = merge/rebase initiation (see feature docs). **Right-click raises the row's context menu**, with this pill's actions as its first submenu — not a menu of the pill's own. See §1.4.
 - **Overflow collapses.** A commit carrying many refs shows a small number of pills inline and
   the rest as a `+N` chip that expands on hover or click. GitLens inlines *one* by default,
   which is aggressive but correct in spirit: the refs column has a fixed width, and a tag-heavy
@@ -90,9 +90,28 @@ Everything in GitKraken revolves around a single virtualized commit graph. All s
 - **The detail panel is a stack, not a single slot.** GitLens presents commit, branch, stash and comparison details as stacked sheets in one panel, so opening a branch's details does not destroy the commit you were reading. Ours should behave the same way: pushing a new detail (select another commit, open a comparison) stacks it with a back affordance rather than replacing state the user still needs. This is also what makes "compare two commits" usable — the comparison is a sheet, not a mode you have to leave.
 
 ### 1.4 Commit context menu
-Right-click on any commit row opens a context menu. Baseline entries (feature docs define behavior):
+
+**One menu per row, raised from anywhere on it** — the message, a column cell, or a ref pill.
+The target of a right-click is a *row*; a menu whose contents changed depending on which 60px of
+the row the pointer happened to be over is a menu the user has to aim for, and whichever of the
+two they wanted, half the row was the wrong place to click. The refs a row carries appear as the
+menu's first entries, each a submenu of that ref's own actions (checkout, scope the graph,
+merge, rebase, push, rename, delete for a branch; copy, push, delete for a tag), and the pill
+actually pointed at is listed first — it changes the order, never the contents. Those ref
+entries mirror the sidebar's deliberately: two menus for one object that disagree about what you
+can do to it is worse than either.
+
+No cell may swallow the gesture for something else. "Search this author's commits" is a menu
+entry, not a right-click on the author column.
+
+**The menu must fit on screen.** It is measured after its first paint and then flipped or nudged
+back inside the window, submenus included; one taller than the window scrolls rather than losing
+its last entries. A menu whose tail is unreachable near the bottom of the screen is a menu that
+works only in the middle of it.
+
+Baseline commit entries (feature docs define behavior):
 Checkout this commit · Create branch here · Cherry-pick commit · Rebase \<current branch\> onto this commit · Reset \<current branch\> to this commit (submenu: Soft/Mixed/Hard) · Revert commit · Edit commit message · Drop commit · Copy commit SHA · Create patch from commit · Compare against working directory · Create tag here · **Compare with common base** (merge-base of this commit and HEAD, not this commit itself — the question "what did this branch actually add" has the wrong answer without it) · **Open all changes with common base** · **Create worktree here** (see `02-checkout.md` §7).
-Menu entries that don't apply (e.g., "Edit commit message" on a pushed non-HEAD commit without rewrite) are shown but perform history rewrite via rebase — with a warning when the commits are already pushed.
+Menu entries that don't apply (e.g., "Edit commit message" on a pushed non-HEAD commit without rewrite) are shown but perform history rewrite via rebase — with a warning when the commits are already pushed. The five that are one operation wearing five labels — edit message, squash into parent, move up, move down, drop, each an interactive rebase with a verb pre-applied — group under a single **Rewrite history** submenu, so the menu names the cost before it names the verb.
 
 ## 2. Left Panel (repo sidebar)
 
@@ -108,7 +127,7 @@ Fixed toolbar with large icon buttons: **Undo, Redo, Fetch, Pull (with dropdown:
 
   Fetch and Pull are *separate* buttons rather than one Fetch button with a pull dropdown, because their badges mean different things: Fetch has no count (it is continuous and silent), Pull carries the behind count, Push the ahead count. A single button cannot show both.
 - Buttons reflect state: disabled when inapplicable, with a tooltip that says why — Pop with no stash, Push with nothing ahead, Undo after a remote op. "Disabled" means the button is actually `disabled`; do not let a click through to a thrown error as the explanation.
-- **Undo/Redo** is a first-class requirement: after any local-only destructive operation (commit, merge, rebase, cherry-pick, reset, drop, checkout), Undo restores the previous state via reflog. Redo reapplies. Operations that touched a remote are not undoable — the button tooltip explains why. GitLens markets exactly this as the safety net that makes its rebase tooling approachable ("restore the branch to its exact pre-rebase state in one click"); the feature is only worth that claim if it is *one* click from the place the operation was started, which is why every mutation toast carries an inline Undo as well (`GITKRAKEN_PARITY_PLAN.md` §3.3).
+- **Undo/Redo** is a first-class requirement: after any local-only destructive operation (commit, merge, rebase, cherry-pick, reset, drop, checkout), Undo restores the previous state via reflog. Redo reapplies. Operations that touched a remote are not undoable — the button tooltip explains why. GitLens markets exactly this as the safety net that makes its rebase tooling approachable ("restore the branch to its exact pre-rebase state in one click"); the feature is only worth that claim if it is *one* click from the place the operation was started, which is why every mutation toast carries an inline Undo as well.
 - **Jump-to navigation.** Three buttons (or a single split control) scroll the graph to and select: **HEAD**, the current branch's **upstream** tip, and its **merge target** — the branch it is destined to merge into, resolved as upstream's base branch → the repo's default branch. Merge target is the one users cannot compute in their heads, and it is what makes "am I behind the branch I will have to merge with?" answerable at a glance rather than after a comparison.
 
 ## 4. Shared Interaction Rules
@@ -225,10 +244,12 @@ only if we say so. Deciding this once, here, is what keeps it out of every futur
   caret** presuppose an editing surface with a cursor and a symbol tree. MTGit's file viewer is
   read-only; the heatmap and blame gutter above cover the same need.
 - **View detachment / default view / reset layout**, **`views.scm.grouped.*`** — these solve
-  VS Code panel management. MTGit's layout is fixed by `GITKRAKEN_PARITY_PLAN.md` §3.2.
+  VS Code panel management. MTGit's layout is fixed: tab strip, toolbar, sidebar / graph /
+  detail, terminal, status bar. The two dividers resize and remember where they were put, and
+  double-clicking one resets it; that is the whole of the layout model, on purpose.
 - **Files / Commits / Agent-activity treemaps** and **Visual File History** (the activity
   timeline) are genuinely good, but they are *visualisations*, not git operations, and each is
-  a project the size of one of the seven features. Revisit after P7 ships.
+  a project the size of one of the seven features. Deferred, not refused.
 
 ### 8.3 Deferred — the `plus/` half
 
@@ -238,7 +259,7 @@ Everything GitLens gates behind an account, which is also everything under its n
 Changes, Compose / Recompose Commits, Explain Changes, Generate Commit / Stash / PR message,
 Generate Changelog, **Automatic Rebase** with AI conflict resolution, natural-language search).
 
-These stay out for the same reason `GITKRAKEN_PARITY_PLAN.md` §2.5 keeps provider integration
+These stay out for the same reason `GITKRAKEN_PARITY_PLAN.md` §4 keeps provider integration
 out: they are GitKraken-family features but not *core git client* features, and each one drags
 in an account system, a network boundary, or a model provider. The boundary is recorded so it
 is a decision rather than an accident. Two of them are worth naming as the first candidates if

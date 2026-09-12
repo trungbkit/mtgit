@@ -89,7 +89,7 @@
   background: var(--bg-panel-2);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
-  box-shadow: 0 8px 24px #0008;
+  box-shadow: var(--shadow-pop);
   text-transform: none;
   letter-spacing: normal;
   font-weight: 500;
@@ -163,7 +163,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 30px;
+  height: calc(var(--row-height) + 2px);
   padding: 0 14px;
   flex-shrink: 0;
   cursor: pointer;
@@ -228,6 +228,14 @@
   background: var(--bg-selected);
   box-shadow: inset 2px 0 0 var(--bg-selected-solid);
 }
+/* Keyboard navigation moves the selection, so the selected row is the one the
+   focus ring belongs on — the scroll container itself holds DOM focus. */
+.graph-scroll:focus-visible {
+  outline: none;
+}
+.graph-scroll:focus-visible .graph-row.selected {
+  box-shadow: inset 2px 0 0 var(--bg-selected-solid), inset 0 0 0 1px var(--accent-tint-border);
+}
 
 .row-refs {
   display: flex;
@@ -240,12 +248,13 @@
 .row-graph {
   flex-shrink: 0;
 }
+/* Width and height are set inline: the node is the avatar, and it has to
+   follow `--row-height` or a compact graph is a column of overlapping
+   circles. See `useDensityMetrics` in `GraphView.tsx`. */
 .node-avatar {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
   border-radius: 50%;
   border: 1.5px solid transparent;
   box-sizing: content-box;
@@ -290,7 +299,7 @@
 }
 .badge-localBranch.head {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 .badge-remoteBranch {
@@ -305,7 +314,7 @@
 }
 .badge-head {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .row-summary {
@@ -333,19 +342,90 @@
 
 .graph-empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   height: 100%;
   color: var(--text-faint);
   font-size: 13px;
   padding: 20px;
   text-align: center;
 }
-.graph-empty.error {
+.graph-empty b {
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 600;
+}
+.graph-empty.error b {
   color: var(--red);
+}
+.graph-empty.error span {
+  max-width: 60ch;
+  color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
+  text-align: left;
+}
+
+/* Loading placeholder. A shape, not a sentence: the pane is about to fill with
+   rows, so it waits looking like rows. */
+.graph-skeleton {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 4px;
+}
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px 0 200px;
+  opacity: 0.55;
+}
+.skeleton-node,
+.skeleton-bar {
+  background: var(--bg-hover);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+.skeleton-node {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+.skeleton-bar {
+  height: 8px;
+  border-radius: 4px;
+}
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-node,
+  .skeleton-bar {
+    animation: none;
+  }
+}
+
+/* Visually hidden, still read aloud and still findable by the test suite. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Tail marker for the paginated graph: shows how much history is loaded and
@@ -421,11 +501,11 @@
 }
 .row-sync.unpushed {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .row-sync.unpulled {
   background: var(--yellow);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* Search minimap (G17). Sits beside the marker gutter, inside `.graph-body`

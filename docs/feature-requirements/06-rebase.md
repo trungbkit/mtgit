@@ -71,7 +71,7 @@ Opening interactive rebase replaces the right panel (or a modal sheet) with the 
 - [x] Edit-message/drop/move-up context actions work on non-HEAD commits via auto-rebase. — plus squash-into-parent and move-down
 - [◐] Post-rebase ahead/behind + force-push hint correct. — badges update; there is no force-push hint on the Push button (B5)
 - [x] Undo restores the pre-rebase tip.
-- [ ] The graph shows the in-progress state during a rebase — applied commits on the new base, remaining ones ghosted (B4).
+- [ ] The graph shows the in-progress state during a rebase — applied commits on the new base, remaining ones ghosted (B4). *Open, and blocked on the graph's contract rather than on effort: there is no representation of "a commit that will exist", and inventing rows collides with `search_commits` returning row indices. `STATUS.md` §1.*
 - [x] Rebasing onto an ancestor toasts "Already up to date" (B7). — `rewriteInfo.commits == 0` is the test, in both the graph and the sidebar path; "Rebased 0 commit(s)" read as a no-op that failed.
 - [x] Excluded merge commits are flagged in the plan editor (§6). — `rebase_commits` reports them with `isMerge` instead of filtering them out, and the editor lists them greyed and non-editable. They are still kept out of the todo file itself: `git rebase -i` without `--rebase-merges` never had them in its own list, so a line naming one is a todo git rejects. A plan that silently omits three of the seven commits you selected is a plan that does not describe what is about to happen.
 - [x] Rebase of a branch other than HEAD, as a composite check-out-then-rebase action (§6). — both drop menus and the guided palette's "Rebase onto…" check the target out first when it is not already HEAD.

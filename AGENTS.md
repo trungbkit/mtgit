@@ -8,12 +8,13 @@ exists so tools that look for `AGENTS.md` find their way there rather than worki
 
 Kept deliberately short so the two files cannot drift. The four things worth repeating:
 
-1. **The gate.** No CI and no frontend test runner exist yet, so nothing is verified until you
-   run all four by hand:
+1. **The gate.** Six commands, and nothing is verified until all six pass:
    ```
    cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
-   cd .. && pnpm exec tsc --noEmit && pnpm build
+   cd .. && pnpm exec tsc --noEmit && pnpm check:ipc && pnpm test && pnpm build
    ```
+   CI runs the same set on macOS, Windows and Linux, but has never gone green — expect
+   Windows fallout the first time.
 2. **Don't run `cargo fmt` across the tree.** The repo has never been rustfmt-clean; a blanket
    format buries the real diff. Match surrounding style by hand.
 3. **Adding a Tauri command touches four files**, and mutating commands need an op guard.
@@ -24,4 +25,5 @@ Kept deliberately short so the two files cannot drift. The four things worth rep
    one left undecided in `pnpm-workspace.yaml` fails the whole install, and takes `pnpm dev`
    — and so the app — down with it. `CLAUDE.md` explains both.
 
-Roadmap and phase status: `GITKRAKEN_PARITY_PLAN.md`.
+What is still open: `GITKRAKEN_PARITY_PLAN.md`. The spec, and the audit of the code
+against it: `docs/feature-requirements/` and its `STATUS.md`.

@@ -9,7 +9,7 @@
 }
 
 .avatar-fallback {
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
   line-height: 1;
   user-select: none;

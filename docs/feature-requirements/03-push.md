@@ -62,5 +62,5 @@ One-click push of the current branch from the toolbar, with smart upstream handl
 - [x] Push from a secondary worktree targets that worktree's branch (§5). *A worktree opened as a tab is the repo handle, so `push_target` reads its HEAD; the toolbar names the worktree (`02-checkout.md` B9), which is what §5 says this depends on.*
 
 > Deferred (overview §8.3): creating a pull request from the branch after a push, and the
-> Launchpad-style PR list. `GITKRAKEN_PARITY_PLAN.md` §2.5 already holds the line here; the
+> Launchpad-style PR list. `GITKRAKEN_PARITY_PLAN.md` §4 already holds the line here; the
 > drop menu's "Create pull request" entry (`05-merge.md` §2) stays absent until it does not.

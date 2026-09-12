@@ -1,6 +1,6 @@
 /* MTGit design tokens.
  *
- * Structure (GITKRAKEN_PARITY_PLAN §3.1), and the reason for it:
+ * Structure, and the reason for it:
  *
  *   :root                                        -> the complete LIGHT set
  *   @media (prefers-color-scheme: dark)
@@ -58,6 +58,21 @@
   --heat-hot: #f66a0a;
   --heat-cold: #0a60f6;
 
+  /* Text that sits on an accent or danger fill. A token rather than a literal
+     `#fff` in twenty stylesheets, so a theme that ever wants a lighter accent
+     has one place to change. */
+  --on-accent: #ffffff;
+
+  /* Elevation and scrims. These were per-file literals (`#0008`, `#000a`,
+     `0 20px 70px #000b`) — one alpha over both grounds, which is the mistake
+     the tint note above describes in its other direction: half-opaque black
+     reads as depth over near-black and as a smear over white. Light gets a
+     tinted, tighter shadow and a lighter scrim. */
+  --scrim: #1f232859;
+  --shadow-pop: 0 6px 20px #1f232826, 0 1px 3px #1f232814;
+  --shadow-panel: 0 12px 32px #1f23282e, 0 2px 6px #1f232814;
+  --shadow-modal: 0 24px 64px #1f232833, 0 4px 12px #1f23281f;
+
   /* Translucent tints. Each theme gets its own rather than one alpha value
      over both grounds: the same 20%-alpha blue that reads as a highlight on
      near-black is almost invisible on white. */
@@ -75,6 +90,8 @@
   --diff-del-bg: #cf222e1c;
   --diff-del-bg-strong: #cf222e33;
   --diff-del-word: #cf222e52;
+  /* The filler half of a split-view row: a ground, not a diff colour. */
+  --diff-empty-bg: #1f23280f;
 
   /* The terminal is a surface of its own: xterm paints it, so it cannot
      inherit, and `TerminalPanel` reads these three back out of the tokens. */
@@ -136,6 +153,13 @@
     --heat-hot: #f0883e;
     --heat-cold: #6cb6ff;
 
+    --on-accent: #ffffff;
+
+    --scrim: #0d1117a6;
+    --shadow-pop: 0 8px 24px #00000073, 0 1px 3px #0000004d;
+    --shadow-panel: 0 14px 36px #00000080, 0 2px 6px #0000004d;
+    --shadow-modal: 0 24px 64px #0000008c, 0 4px 12px #00000059;
+
     --accent-tint: #316dca1a;
     --accent-tint-strong: #316dca33;
     --accent-tint-border: #316dca66;
@@ -150,6 +174,8 @@
     --diff-del-bg: #f8514926;
     --diff-del-bg-strong: #f8514940;
     --diff-del-word: #f8514966;
+  --diff-empty-bg: #00000033;
+    --diff-empty-bg: #00000033;
 
     --term-bg: #1b1f24;
     --term-fg: #cdd9e5;
@@ -194,12 +220,25 @@
   --heat-hot: #f0883e;
   --heat-cold: #6cb6ff;
 
+  --on-accent: #ffffff;
+
+  --scrim: #0d1117a6;
+  --shadow-pop: 0 8px 24px #00000073, 0 1px 3px #0000004d;
+  --shadow-panel: 0 14px 36px #00000080, 0 2px 6px #0000004d;
+  --shadow-modal: 0 24px 64px #0000008c, 0 4px 12px #00000059;
+
   --accent-tint: #316dca1a;
   --accent-tint-strong: #316dca33;
   --accent-tint-border: #316dca66;
   --warn-tint: #daaa3f1f;
   --warn-tint-strong: #daaa3f33;
   --warn-tint-border: #daaa3f55;
+  /* These two were defined in the media block and *not* here, so choosing Dark
+     explicitly under a light OS painted every remote-branch pill with the light
+     theme's green tint over a near-black ground. The block has to be complete,
+     not a delta against the media one. */
+  --ok-tint: #57ab5a22;
+  --ok-tint-border: #57ab5a55;
   --diff-add-bg: #2ea04326;
   --diff-add-bg-strong: #2ea04340;
   --diff-add-word: #2ea04366;
@@ -269,7 +308,7 @@ button:hover {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 button.primary:hover {
   filter: brightness(1.1);

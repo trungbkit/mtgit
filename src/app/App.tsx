@@ -23,8 +23,45 @@ import { OPEN_SETTINGS_EVENT, useSettings } from "../stores/settings";
 import "./app.css";
 
 export function App() {
-  const [sidebarW, setSidebarW] = useState(240);
-  const [detailW, setDetailW] = useState(420);
+  /**
+   * Pane widths are a persisted preference, not session state.
+   *
+   * They used to reset to 240/420 on every launch, which made dragging a
+   * divider something you redid at the start of every session. They live in
+   * `core/settings.rs` for the reason the conventions give: one home per
+   * preference.
+   *
+   * The local copy is the *gesture in flight*, not a second source of truth —
+   * settings is still where the answer comes from, and the drag writes there
+   * when it ends. Writing on every mousemove would put a settings write (which
+   * re-applies the theme and drops the lane-colour cache) on each frame of a
+   * drag, for a value that is not final until the button comes up.
+   */
+  // Selected one at a time: a selector returning a fresh array or object every
+  // call never compares equal, and zustand would re-render on every store touch.
+  const storedSidebarW = useSettings((s) => s.settings.sidebarWidth);
+  const storedDetailW = useSettings((s) => s.settings.detailWidth);
+  const [sidebarW, setSidebarW] = useState(storedSidebarW);
+  const [detailW, setDetailW] = useState(storedDetailW);
+  useEffect(() => setSidebarW(storedSidebarW), [storedSidebarW]);
+  useEffect(() => setDetailW(storedDetailW), [storedDetailW]);
+
+  const dragSidebar = useCallback((dx: number) => setSidebarW((w) => clamp(w + dx, 160, 480)), []);
+  const dragDetail = useCallback((dx: number) => setDetailW((w) => clamp(w - dx, 280, 680)), []);
+  // Read through refs at mouseup, so what is persisted is where the pointer
+  // landed rather than the width the drag started from.
+  const panesRef = useRef({ sidebarW, detailW });
+  panesRef.current = { sidebarW, detailW };
+  const commitPanes = useCallback(() => {
+    useSettings
+      .getState()
+      .set({ sidebarWidth: panesRef.current.sidebarW, detailWidth: panesRef.current.detailW });
+  }, []);
+  const resetPanes = useCallback(
+    () => useSettings.getState().set({ sidebarWidth: 240, detailWidth: 420 }),
+    [],
+  );
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const terminalOpen = useSession((s) => s.terminalOpen);
@@ -107,12 +144,12 @@ export function App() {
           <div style={{ width: sidebarCollapsed ? 44 : sidebarW, flexShrink: 0 }}>
             <Sidebar />
           </div>
-          {!sidebarCollapsed && <Divider onDrag={(dx) => setSidebarW((w) => clamp(w + dx, 160, 480))} />}
+          {!sidebarCollapsed && <Divider onDrag={dragSidebar} onCommit={commitPanes} onReset={resetPanes} />}
           <div className="app-main">
             <GraphView />
             {terminalOpen && repo && <TerminalPanel />}
           </div>
-          <Divider onDrag={(dx) => setDetailW((w) => clamp(w - dx, 280, 680))} />
+          <Divider onDrag={dragDetail} onCommit={commitPanes} onReset={resetPanes} />
           <div style={{ width: detailW, flexShrink: 0 }}>
             <DetailPanel />
           </div>
@@ -138,32 +175,61 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
-function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
+/**
+ * A draggable pane edge.
+ *
+ * The callbacks are read through a ref rather than captured when the drag
+ * starts. The listeners are added once per gesture, so a handler closed over
+ * the render that began it goes on reporting that render's widths for the rest
+ * of the drag — the pane then snaps back to where it started on every mouse
+ * move. `onDrag` reports the delta live; `onCommit` fires once, on release,
+ * and is where the value is persisted.
+ *
+ * Double-click resets the pane to its default, which is the usual escape hatch
+ * for a divider dragged somewhere unhelpful.
+ */
+function Divider({
+  onDrag,
+  onCommit,
+  onReset,
+}: {
+  onDrag: (dx: number) => void;
+  onCommit: () => void;
+  onReset?: () => void;
+}) {
   const lastX = useRef(0);
   const [active, setActive] = useState(false);
-
-  const onMove = useCallback(
-    (e: MouseEvent) => {
-      onDrag(e.clientX - lastX.current);
-      lastX.current = e.clientX;
-    },
-    [onDrag],
-  );
-
-  const stop = useCallback(() => {
-    setActive(false);
-    window.removeEventListener("mousemove", onMove);
-    window.removeEventListener("mouseup", stop);
-    document.body.style.cursor = "";
-  }, [onMove]);
+  const handlers = useRef({ onDrag, onCommit });
+  handlers.current = { onDrag, onCommit };
 
   const start = (e: React.MouseEvent) => {
+    e.preventDefault();
     lastX.current = e.clientX;
     setActive(true);
+    const onMove = (event: MouseEvent) => {
+      handlers.current.onDrag(event.clientX - lastX.current);
+      lastX.current = event.clientX;
+    };
+    const stop = () => {
+      setActive(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", stop);
+      document.body.style.cursor = "";
+      handlers.current.onCommit();
+    };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", stop);
     document.body.style.cursor = "col-resize";
   };
 
-  return <div className={`divider${active ? " active" : ""}`} onMouseDown={start} />;
+  return (
+    <div
+      className={`divider${active ? " active" : ""}`}
+      role="separator"
+      aria-orientation="vertical"
+      title="Drag to resize · double-click to reset"
+      onMouseDown={start}
+      onDoubleClick={onReset}
+    />
+  );
 }

@@ -246,6 +246,22 @@ pub fn get_graph(
     graph_page(&repo, &mut cache, &path, skip, limit)
 }
 
+/// The identity of the graph the repository would lay out right now.
+///
+/// The same FNV digest of `refs/**` plus HEAD that keys the layout cache
+/// (invariant 4), exposed so the frontend can answer one question cheaply:
+/// *would refetching the graph produce anything different?* A repository event
+/// — a stage, a commit hook, an editor save — invalidates every query for the
+/// repo, and the graph is an infinite query, so a deeply scrolled 50k-commit
+/// history re-serialises every loaded page across IPC for rows that are
+/// byte-identical. This walks the ref list once and returns 16 characters.
+///
+/// Read-only, so no op guard (invariant 2).
+#[tauri::command]
+pub fn graph_key(path: String) -> Result<String> {
+    Ok(graph::refs_digest(&open(&path)?))
+}
+
 /// Serve one page of the graph, rebuilding the cached layout when the
 /// repository's ref set has changed.
 ///

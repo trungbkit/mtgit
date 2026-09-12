@@ -4,11 +4,12 @@ import { resetStores } from "../test/stores";
 import { REVEAL_BANNER_EVENT, useConflict } from "../stores/conflict";
 import type { OperationInfo } from "./types";
 import { refreshRepo, requireNoPausedOperation, syncOperation } from "./repoState";
-import { operationInfo } from "./commands";
+import { graphKey, operationInfo } from "./commands";
 
-vi.mock("./commands", () => ({ operationInfo: vi.fn() }));
+vi.mock("./commands", () => ({ operationInfo: vi.fn(), graphKey: vi.fn() }));
 
 const mockOperationInfo = vi.mocked(operationInfo);
+const mockGraphKey = vi.mocked(graphKey);
 const REPO = "/repo";
 const OTHER = "/other";
 
@@ -29,6 +30,10 @@ beforeEach(() => {
   resetStores();
   mockOperationInfo.mockReset();
   mockOperationInfo.mockResolvedValue(null);
+  mockGraphKey.mockReset();
+  // A fresh digest per test, so no test inherits another's "unchanged" answer
+  // from the module-level map `refreshGraph` keeps.
+  mockGraphKey.mockResolvedValue(`key-${Math.random()}`);
 });
 
 /**
@@ -147,9 +152,83 @@ describe("refreshRepo", () => {
     expect(predicate).toBeTypeOf("function");
     const matches = (queryKey: unknown[]) => predicate!({ queryKey } as never);
     expect(matches(["status", REPO])).toBe(true);
-    expect(matches(["graph", REPO, { skip: 0 }])).toBe(true);
     expect(matches(["status", OTHER])).toBe(false);
     expect(matches(["status", { path: REPO }])).toBe(false);
+    // The graph is excluded from the sweep and invalidated by key instead —
+    // see the digest tests below.
+    expect(matches(["graph", REPO, { skip: 0 }])).toBe(false);
+    expect(spy.mock.calls.some((call) => call[0]?.queryKey?.[0] === "graph")).toBe(true);
+  });
+
+  it("still invalidates the graph the first time it hears about a repository", async () => {
+    const qc = new QueryClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    await refreshRepo(qc, REPO);
+    expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toContainEqual(["graph", REPO]);
+  });
+
+  it("skips the graph refetch when no ref has moved", async () => {
+    // The expensive one: the graph is an infinite query, so invalidating it
+    // refetches *every* loaded page. An unchanged `refs_digest` means those
+    // pages would come back byte-identical (invariant 4), so the refetch is
+    // work with no result — which is what a stage or an editor save produces.
+    const qc = new QueryClient();
+    qc.setQueryData(["graph", REPO], { pages: [], pageParams: [] });
+    mockGraphKey.mockResolvedValue("same");
+    await refreshRepo(qc, REPO);
+
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    await refreshRepo(qc, REPO);
+    expect(spy.mock.calls.map((call) => call[0]?.queryKey)).not.toContainEqual(["graph", REPO]);
+  });
+
+  it("refetches the graph as soon as the ref set moves", async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(["graph", REPO], { pages: [], pageParams: [] });
+    mockGraphKey.mockResolvedValue("before");
+    await refreshRepo(qc, REPO);
+
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    mockGraphKey.mockResolvedValue("after");
+    await refreshRepo(qc, REPO);
+    expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toContainEqual(["graph", REPO]);
+  });
+
+  it("refetches the graph when the digest cannot be read", async () => {
+    // Same rule as the paused-operation gate: a check that has lost its
+    // footing must not become a wall. Here the failure mode it would cause is
+    // a permanently stale graph.
+    const qc = new QueryClient();
+    qc.setQueryData(["graph", REPO], { pages: [], pageParams: [] });
+    mockGraphKey.mockResolvedValue("same");
+    await refreshRepo(qc, REPO);
+
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    mockGraphKey.mockRejectedValue(new Error("repository is locked"));
+    await refreshRepo(qc, REPO);
+    expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toContainEqual(["graph", REPO]);
+
+    // And the failure must not be remembered as an answer: the next refresh
+    // reporting the same digest still refetches, because nothing established
+    // that the query is holding rows for it.
+    spy.mockClear();
+    mockGraphKey.mockResolvedValue("same");
+    await refreshRepo(qc, REPO);
+    expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toContainEqual(["graph", REPO]);
+  });
+
+  it("refetches the graph when the query is not holding data, whatever the digest says", async () => {
+    // Covers a failed refetch and a garbage-collected query: the digest is
+    // unchanged, but there are no rows to keep.
+    const qc = new QueryClient();
+    qc.setQueryData(["graph", REPO], { pages: [], pageParams: [] });
+    mockGraphKey.mockResolvedValue("same");
+    await refreshRepo(qc, REPO);
+
+    qc.removeQueries({ queryKey: ["graph", REPO] });
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    await refreshRepo(qc, REPO);
+    expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toContainEqual(["graph", REPO]);
   });
 
   it("re-reads the operation as well, welded to the invalidation", async () => {

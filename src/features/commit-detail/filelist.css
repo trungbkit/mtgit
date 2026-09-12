@@ -28,7 +28,7 @@
 }
 .pathtree-toggle button.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .filelist-items {

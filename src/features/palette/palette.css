@@ -2,7 +2,7 @@
   position: fixed;
   inset: 0;
   z-index: 900;
-  background: #0006;
+  background: var(--scrim);
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -14,7 +14,7 @@
   background: var(--bg-panel-2);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
-  box-shadow: 0 20px 60px #000b;
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 .palette-input {
@@ -43,7 +43,7 @@
 }
 .palette-item.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .palette-empty {
   padding: 14px;

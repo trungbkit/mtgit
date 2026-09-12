@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   commitStats,
   containingRefs,
@@ -66,13 +66,53 @@ import { RebasePlanDialog } from "./RebasePlanDialog";
 import { SearchBar } from "./SearchBar";
 import "./graph.css";
 
-const ROW_HEIGHT = 28;
-const LANE_WIDTH = 18;
+/**
+ * Fallbacks for the density tokens, used only where no document has been laid
+ * out yet (jsdom in the test suite). The live values come from `theme.css` via
+ * `useDensityMetrics` — see the note there for why they cannot be constants.
+ */
+const DEFAULT_ROW_HEIGHT = 28;
+const DEFAULT_LANE_WIDTH = 18;
 const DOT_RADIUS = 4.5;
 const GUTTER_PAD = 12;
 const BRANCH_COL_WIDTH = 200;
-const AVATAR_SIZE = 18;
+
+/**
+ * Row height and lane width for the current density setting.
+ *
+ * These used to be two module constants, which meant Appearance → Density
+ * wrote `data-density` onto the document, `theme.css` redefined `--row-height`
+ * and `--lane-width` under it, and the graph — the one surface the setting
+ * exists for — went on drawing 28px rows. Nothing in `src/` read either token.
+ *
+ * They are read back out of the tokens rather than duplicated here for the
+ * same reason `palette.ts` reads the lane ring: the values are a property of
+ * the theme, and a second copy in TypeScript is a second thing to keep in step.
+ * The canvas needs them as numbers, so the read cannot be left to CSS.
+ */
+function useDensityMetrics(): { rowHeight: number; laneWidth: number; avatarSize: number } {
+  const density = useSettings((s) => s.settings.density);
+  return useMemo(() => {
+    const style = getComputedStyle(document.documentElement);
+    const px = (token: string, fallback: number) =>
+      parseFloat(style.getPropertyValue(token)) || fallback;
+    const rowHeight = px("--row-height", DEFAULT_ROW_HEIGHT);
+    return {
+      rowHeight,
+      laneWidth: px("--lane-width", DEFAULT_LANE_WIDTH),
+      // The avatar is the node, so it has to shrink with the row it sits in or
+      // a compact graph is a column of overlapping circles. Capped at 18 so a
+      // comfortable row does not turn the lane into a portrait gallery.
+      avatarSize: Math.min(18, Math.round(rowHeight * 0.64)),
+    };
+    // `applyAppearance` writes `data-density` synchronously before React
+    // re-renders, so the attribute is already in place when this runs.
+  }, [density]);
+}
 const EMPTY_HIDDEN_REFS: string[] = [];
+/** Stable identity for "no ghosts", so a memoized row is not re-rendered by a
+ *  fresh empty array on every parent render. */
+const EMPTY_GHOSTS: GhostRef[] = [];
 /** Cap on gutter markers — past this they merge into a solid bar anyway. */
 const MAX_MARKERS = 400;
 
@@ -95,6 +135,18 @@ function useGraphData(path: string | undefined) {
       return loaded < pages[pages.length - 1].total ? loaded : undefined;
     },
   });
+}
+
+/**
+ * How a ref is named at the top of a row's context menu.
+ *
+ * The kind comes first because the name alone is ambiguous next to the commit
+ * actions below it — "main" reads as a verb-less entry, "Branch main" does not.
+ */
+function refMenuLabel(ref: RefBadge): string {
+  if (ref.kind === "tag") return `Tag ${ref.name}`;
+  if (ref.kind === "remoteBranch") return `Remote branch ${ref.name}`;
+  return ref.isHead ? `Branch ${ref.name} (checked out)` : `Branch ${ref.name}`;
 }
 
 /** Build a web URL for a commit from a remote's git URL. */
@@ -122,6 +174,7 @@ export function GraphView() {
   // second source of truth, and it is gone.
   const columns = useSettings((s) => s.settings.graphColumns);
   const refInlineCount = useSettings((s) => s.settings.graphRefInlineCount);
+  const { rowHeight, laneWidth, avatarSize } = useDensityMetrics();
   const hiddenRefs = useSession((s) =>
     repo ? s.hiddenRefs[repo.path] ?? EMPTY_HIDDEN_REFS : EMPTY_HIDDEN_REFS,
   );
@@ -219,9 +272,171 @@ export function GraphView() {
     staleTime: 60_000,
   });
 
+  /**
+   * The actions that apply to one ref, as a list of menu items.
+   *
+   * A *builder*, not a menu of its own. Every ref a row carries is offered as
+   * a submenu of that row's menu, so right-clicking anywhere on the row — pill
+   * included — raises one menu that can act on the commit *and* on its refs.
+   * Two menus for one row that disagree about what is reachable is worse than
+   * either, and a pill is a 60px target for half of what the user wants.
+   *
+   * The entries still mirror the sidebar's deliberately.
+   */
+  const refMenuItems = useCallback(
+    (ref: RefBadge): MenuItem[] => {
+      if (!repo) return [];
+      const path = repo.path;
+      const head = repo.head.branch ?? "HEAD";
+      const run = async (fn: () => Promise<unknown>, ok?: string) => {
+        try {
+          await fn();
+          if (ok) pushToast("success", ok);
+          await refreshRepo(qc, path);
+        } catch (err) {
+          toastError(err);
+        }
+      };
+
+      const items: MenuItem[] = [];
+      if (ref.kind === "tag") {
+        items.push(
+          { label: "Copy tag name", onClick: () => copyText(ref.name) },
+          {
+            label: "Push tag to origin",
+            onClick: () =>
+              run(async () => {
+                const result = await gitNetwork(path, "push", "origin", [`refs/tags/${ref.name}`]);
+                if (!result.success) throw new Error(result.output);
+              }, `Pushed tag ${ref.name}`),
+          },
+          { separator: true },
+          {
+            label: "Delete tag",
+            danger: true,
+            onClick: async () => {
+              if (
+                await confirmDialog({
+                  title: "Delete tag",
+                  message: `Delete tag "${ref.name}"?`,
+                  confirmLabel: "Delete",
+                  danger: true,
+                })
+              ) {
+                void run(() => deleteTag(path, ref.name), "Tag deleted");
+              }
+            },
+          },
+        );
+        return items;
+      }
+
+      const isLocal = ref.kind === "localBranch";
+      items.push(
+        {
+          label: `Checkout ${ref.name}`,
+          disabled: ref.isHead,
+          onClick: () => run(() => smartCheckout(path, ref.name), `Checked out ${ref.name}`),
+        },
+        {
+          label: "Show only this in the graph",
+          onClick: () => {
+            seedSearch(path, `ref:${ref.name}`, true);
+            useSearch.getState().setMode(path, "filter");
+          },
+        },
+        { separator: true },
+        {
+          label: `Merge ${ref.name} into ${head}`,
+          disabled: ref.isHead,
+          onClick: () =>
+            run(async () => {
+              await requireNoPausedOperation(path, `merge ${ref.name}`);
+              const result = await mergeAdvanced(path, ref.name, "noFf");
+              if (result.kind === "conflicts") {
+                pushToast("error", `Merge paused — ${result.conflicts.length} conflicted file(s).`);
+              } else {
+                pushToast("success", `Merged ${ref.name}.`);
+              }
+            }),
+        },
+        {
+          label: `Rebase ${head} onto ${ref.name}`,
+          disabled: ref.isHead,
+          onClick: () =>
+            run(async () => {
+              await requireNoPausedOperation(path, `rebase onto ${ref.name}`);
+              const result = await rebaseStandard(path, ref.name);
+              if (result.success) pushToast("success", `Rebased onto ${ref.name}.`);
+              else pushToast("error", `Rebase paused — ${result.conflicts.length} conflicted file(s).`);
+            }),
+        },
+      );
+
+      if (isLocal) {
+        items.push(
+          { separator: true },
+          {
+            label: `Push ${ref.name}`,
+            onClick: () =>
+              run(async () => {
+                const result = await gitNetwork(path, "push", "origin", [ref.name]);
+                if (!result.success) throw new Error(result.output);
+                announcePush(ref.name);
+              }, `Pushed ${ref.name}`),
+          },
+          {
+            label: "Rename…",
+            onClick: async () => {
+              const next = await promptDialog({
+                title: "Rename branch",
+                label: "New branch name",
+                defaultValue: ref.name,
+                confirmLabel: "Rename",
+                validate: validateRefName,
+              });
+              if (next && next !== ref.name) void run(() => renameBranch(path, ref.name, next), "Renamed");
+            },
+          },
+          {
+            label: "Delete branch",
+            danger: true,
+            disabled: ref.isHead,
+            onClick: async () => {
+              if (
+                await confirmDialog({
+                  title: "Delete branch",
+                  message: `Delete the local branch "${ref.name}"?`,
+                  confirmLabel: "Delete",
+                  danger: true,
+                })
+              ) {
+                void run(() => deleteBranch(path, ref.name, false), `Deleted ${ref.name}`);
+              }
+            },
+          },
+        );
+      }
+      items.push({ separator: true }, { label: "Copy ref name", onClick: () => copyText(ref.name) });
+      return items;
+    },
+    [repo, qc, pushToast],
+  );
+
+  /**
+   * The one menu a right-click on a graph row raises.
+   *
+   * Anywhere on the row: the message, a column cell, or a ref pill. `clickedRef`
+   * only *reorders* — the pill that was pointed at comes first — because the
+   * target of a right-click is a row, and a menu that changed its whole
+   * contents depending on which 60px of the row the pointer happened to be over
+   * is a menu the user has to aim for. Ref actions are submenus of this one
+   * rather than a second menu (`00-overview.md` §1.4).
+   */
   const rowContextMenu = useCallback(
-    (e: React.MouseEvent, row: GraphRow) => {
+    (e: React.MouseEvent, row: GraphRow, clickedRef?: RefBadge) => {
       e.preventDefault();
+      e.stopPropagation();
       if (!repo) return;
       const path = repo.path;
       const head = repo.head.branch ?? "HEAD";
@@ -251,6 +466,7 @@ export function GraphView() {
 
       const localBadge = row.refs.find((r) => r.kind === "localBranch");
       const short = row.oid.slice(0, 7);
+      const webUrl = originUrl ? commitWebUrl(originUrl, row.oid) : null;
       const chosenRows =
         selectedOids.has(row.oid) && selectedOids.size > 1
           ? rows.filter((candidate) => selectedOids.has(candidate.oid))
@@ -346,26 +562,27 @@ export function GraphView() {
         }, `Reset (${mode})`);
 
       const items: MenuItem[] = [];
-      if (localBadge) {
-        items.push(
-          {
-            label: `Checkout ${localBadge.name}`,
-            onClick: () => run(() => smartCheckout(path, localBadge.name), `Checked out ${localBadge.name}`),
-          },
-          // Offered right beside Checkout, because a worktree is the answer to
-          // the same question that does not disturb the tree you are in (G18).
-          {
-            label: `Open ${localBadge.name} in worktree…`,
-            onClick: () => createWorktreeFlow(localBadge.name, localBadge.name),
-          },
-        );
+
+      // Every ref this row carries, as a submenu — the pointed-at pill first.
+      const rowRefs = clickedRef
+        ? [clickedRef, ...row.refs.filter((r) => r.kind !== clickedRef.kind || r.name !== clickedRef.name)]
+        : row.refs;
+      if (rowRefs.length > 0) {
+        items.push({ header: rowRefs.length === 1 ? "Ref on this row" : "Refs on this row" });
+        for (const ref of rowRefs) {
+          items.push({ label: refMenuLabel(ref), submenu: refMenuItems(ref) });
+        }
+        items.push({ separator: true });
       }
+
       items.push(
-        { label: "Checkout this commit", onClick: () => run(() => smartCheckout(path, row.oid), "Checked out commit") },
-        { label: "Create worktree from this commit", onClick: () => createWorktreeFlow(row.oid, short) },
-        { separator: true },
+        { header: `Commit ${short}` },
         {
-          label: "Create branch here",
+          label: "Checkout this commit",
+          onClick: () => run(() => smartCheckout(path, row.oid), "Checked out commit"),
+        },
+        {
+          label: "Create branch here…",
           onClick: async () => {
             const name = await promptDialog({
               title: "Create branch",
@@ -378,7 +595,57 @@ export function GraphView() {
           },
         },
         {
-          label: chosenOldestFirst.length > 1 ? `Cherry-pick ${chosenOldestFirst.length} commits` : "Cherry-pick commit",
+          label: "Create tag here",
+          submenu: [
+            {
+              label: "Lightweight tag…",
+              onClick: async () => {
+                const name = await promptDialog({
+                  title: "Create tag",
+                  label: "Tag name",
+                  confirmLabel: "Create",
+                  validate: validateRefName,
+                });
+                if (name) run(() => createTag(path, name, row.oid), `Tagged ${name}`);
+              },
+            },
+            {
+              label: "Annotated tag…",
+              onClick: async () => {
+                const name = await promptDialog({
+                  title: "Create annotated tag",
+                  label: "Tag name",
+                  confirmLabel: "Next",
+                  validate: validateRefName,
+                });
+                if (!name) return;
+                const msg =
+                  (await promptDialog({ title: `Tag ${name}`, label: "Tag message", confirmLabel: "Create" })) ?? "";
+                run(() => createTag(path, name, row.oid, msg), `Tagged ${name}`);
+              },
+            },
+          ],
+        },
+        // Offered right beside Checkout, because a worktree is the answer to the
+        // same question that does not disturb the tree you are in (G18). With a
+        // branch on the row both answers exist and they differ: one attaches the
+        // branch, the other detaches at the commit (`02-checkout.md` B8).
+        localBadge
+          ? {
+              label: "Open in worktree",
+              submenu: [
+                {
+                  label: `From ${localBadge.name} (attached)…`,
+                  onClick: () => createWorktreeFlow(localBadge.name, localBadge.name),
+                },
+                { label: "At this commit (detached)…", onClick: () => createWorktreeFlow(row.oid, short) },
+              ],
+            }
+          : { label: "Open in worktree…", onClick: () => createWorktreeFlow(row.oid, short) },
+        { separator: true },
+        {
+          label:
+            chosenOldestFirst.length > 1 ? `Cherry-pick ${chosenOldestFirst.length} commits` : "Cherry-pick commit",
           onClick: () =>
             setPick({
               oids: chosenOldestFirst,
@@ -386,9 +653,14 @@ export function GraphView() {
             }),
         },
         {
-          label: `Rebase ${head} onto this commit`,
-          onClick: standardRebase,
+          label: "Revert commit",
+          onClick: () =>
+            run(async () => {
+              await requireNoPausedOperation(path, `revert ${short}`);
+              reportConflicts("revert", await revertCommit(path, row.oid), "Reverted");
+            }),
         },
+        { label: `Rebase ${head} onto this commit`, onClick: standardRebase },
         {
           // STATUS B8: with a multi-select, the plan is the selection's own
           // range — `<oldest selected>^..HEAD` — not `<clicked>..HEAD`. The
@@ -396,17 +668,14 @@ export function GraphView() {
           // is why the bug was easy to miss.
           label:
             chosenRows.length > 1
-              ? `Interactive rebase ${chosenRows.length} selected commits`
-              : `Interactive rebase ${head} onto this commit`,
+              ? `Interactive rebase ${chosenRows.length} selected commits…`
+              : `Interactive rebase ${head} onto this commit…`,
           // The oldest selected commit's parent is the base: rebasing *onto*
           // the oldest selection itself would leave it out of the plan.
           disabled: chosenRows.length > 1 && !oldestSelected?.parents[0],
           onClick: () =>
             setRebasePlan({
-              base:
-                chosenRows.length > 1
-                  ? (oldestSelected?.parents[0] ?? row.oid)
-                  : row.oid,
+              base: chosenRows.length > 1 ? (oldestSelected?.parents[0] ?? row.oid) : row.oid,
             }),
         },
         {
@@ -433,59 +702,62 @@ export function GraphView() {
           ],
         },
         {
-          label: "Revert commit",
-          onClick: () =>
-            run(async () => {
-              await requireNoPausedOperation(path, `revert ${short}`);
-              reportConflicts("revert", await revertCommit(path, row.oid), "Reverted");
-            }),
-        },
-        {
-          label: "Edit commit message",
-          disabled: row.parents.length === 0,
-          onClick: () =>
-            row.parents[0] && setRebasePlan({ base: row.parents[0], targetOid: row.oid, action: "reword" }),
-        },
-        {
-          label: "Drop commit",
-          danger: true,
-          disabled: row.parents.length === 0,
-          onClick: async () => {
-            if (
-              row.parents[0] &&
-              (await confirmDialog({
-                title: "Drop commit",
-                message: `Drop ${short} and rewrite all of its children?`,
-                confirmLabel: "Review rebase plan",
-                danger: true,
-              }))
-            ) {
-              setRebasePlan({ base: row.parents[0], targetOid: row.oid, action: "drop" });
-            }
-          },
-        },
-        {
-          label: "Squash into parent",
-          disabled: !parentRow?.parents[0],
-          onClick: () =>
-            parentRow?.parents[0] &&
-            setRebasePlan({ base: parentRow.parents[0], targetOid: row.oid, action: "squash" }),
-        },
-        {
-          label: "Move commit up",
-          disabled: row.parents.length === 0,
-          onClick: () =>
-            row.parents[0] && setRebasePlan({ base: row.parents[0], targetOid: row.oid, move: "up" }),
-        },
-        {
-          label: "Move commit down",
-          disabled: !parentRow?.parents[0],
-          onClick: () =>
-            parentRow?.parents[0] &&
-            setRebasePlan({ base: parentRow.parents[0], targetOid: row.oid, move: "down" }),
+          // Five entries that are one operation wearing five labels: each opens
+          // the interactive-rebase plan with a verb pre-applied. Flat, they were
+          // a third of the menu and sat between actions that rewrite nothing;
+          // grouped, the menu names the cost before it names the verb.
+          label: "Rewrite history",
+          disabled: row.parents.length === 0 && !parentRow?.parents[0],
+          submenu: [
+            {
+              label: "Edit commit message…",
+              disabled: row.parents.length === 0,
+              onClick: () =>
+                row.parents[0] && setRebasePlan({ base: row.parents[0], targetOid: row.oid, action: "reword" }),
+            },
+            {
+              label: "Squash into parent",
+              disabled: !parentRow?.parents[0],
+              onClick: () =>
+                parentRow?.parents[0] &&
+                setRebasePlan({ base: parentRow.parents[0], targetOid: row.oid, action: "squash" }),
+            },
+            {
+              label: "Move commit up",
+              disabled: row.parents.length === 0,
+              onClick: () =>
+                row.parents[0] && setRebasePlan({ base: row.parents[0], targetOid: row.oid, move: "up" }),
+            },
+            {
+              label: "Move commit down",
+              disabled: !parentRow?.parents[0],
+              onClick: () =>
+                parentRow?.parents[0] &&
+                setRebasePlan({ base: parentRow.parents[0], targetOid: row.oid, move: "down" }),
+            },
+            { separator: true },
+            {
+              label: "Drop commit",
+              danger: true,
+              disabled: row.parents.length === 0,
+              onClick: async () => {
+                if (
+                  row.parents[0] &&
+                  (await confirmDialog({
+                    title: "Drop commit",
+                    message: `Drop ${short} and rewrite all of its children?`,
+                    confirmLabel: "Review rebase plan",
+                    danger: true,
+                  }))
+                ) {
+                  setRebasePlan({ base: row.parents[0], targetOid: row.oid, action: "drop" });
+                }
+              },
+            },
+          ],
         },
         { separator: true },
-        { label: "Copy commit sha", onClick: () => copyText(row.oid) },
+        { label: "Compare against working directory", onClick: () => selectOid(WORKING) },
         {
           label: "Compare two commits",
           disabled: chosenRows.length !== 2,
@@ -499,48 +771,25 @@ export function GraphView() {
               newOid: chosenRows[0].oid,
             }),
         },
-        { label: "Compare against working directory", onClick: () => selectOid(WORKING) },
-      );
-      if (originUrl) {
-        const web = commitWebUrl(originUrl, row.oid);
-        if (web) {
-          items.push({ label: "Copy link to this commit on remote: origin", onClick: () => copyText(web) });
-        }
-      }
-      items.push(
-        { label: "Create patch from commit", onClick: createPatchFlow },
         { separator: true },
+        { label: "Copy commit sha", onClick: () => copyText(row.oid) },
         {
-          label: "Create tag here",
-          onClick: async () => {
-            const name = await promptDialog({
-              title: "Create tag",
-              label: "Tag name",
-              confirmLabel: "Create",
-              validate: validateRefName,
-            });
-            if (name) run(() => createTag(path, name, row.oid), `Tagged ${name}`);
-          },
-        },
-        {
-          label: "Create annotated tag here",
-          onClick: async () => {
-            const name = await promptDialog({
-              title: "Create annotated tag",
-              label: "Tag name",
-              confirmLabel: "Next",
-              validate: validateRefName,
-            });
-            if (!name) return;
-            const msg =
-              (await promptDialog({ title: `Tag ${name}`, label: "Tag message", confirmLabel: "Create" })) ?? "";
-            run(() => createTag(path, name, row.oid, msg), `Tagged ${name}`);
-          },
+          label: "More",
+          submenu: [
+            { label: "Copy commit message", onClick: () => copyText(row.summary) },
+            ...(webUrl ? [{ label: "Copy link to this commit on origin", onClick: () => copyText(webUrl) }] : []),
+            { label: "Create patch from commit…", onClick: createPatchFlow },
+            { separator: true },
+            {
+              label: `Search this author's commits (${row.author})`,
+              onClick: () => seedSearch(path, `author:${row.email || row.author}`),
+            },
+          ],
         },
       );
       setMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [repo, qc, pushToast, originUrl, rows, selectedOids, selectOid],
+    [repo, qc, pushToast, originUrl, rows, selectedOids, selectOid, refMenuItems],
   );
 
   const parentRef = useRef<HTMLDivElement>(null);
@@ -549,9 +798,20 @@ export function GraphView() {
   const virtualizer = useVirtualizer({
     count: visibleRows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: 24,
   });
+
+  // The virtualizer caches measurements, so a density change has to tell it to
+  // forget them — otherwise the rows resize and the offsets do not.
+  const firstMeasure = useRef(true);
+  useLayoutEffect(() => {
+    if (firstMeasure.current) {
+      firstMeasure.current = false;
+      return;
+    }
+    virtualizer.measure();
+  }, [rowHeight, virtualizer]);
 
   // Pull the next page in as the viewport approaches the loaded tail.
   const virtualItems = virtualizer.getVirtualItems();
@@ -598,14 +858,31 @@ export function GraphView() {
     if (filtering && hasNextPage && !isFetchingNextPage) void fetchNextPage();
   }, [filtering, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const maxLane = visibleRows.reduce((m, r) => {
-    let local = r.lane;
-    for (const e of r.edges) local = Math.max(local, e.fromLane, e.toLane);
-    return Math.max(m, local);
-  }, 0);
-  const gutterWidth = (maxLane + 1) * LANE_WIDTH + GUTTER_PAD;
+  /**
+   * Width of the lane gutter, from the widest lane anywhere in the history.
+   *
+   * Memoized because it is a sweep of every loaded row *and every edge on it* —
+   * 50k rows on a large repository — and it used to run on each render. Hovering
+   * a row, flashing HEAD or moving the selection each re-rendered the graph, so
+   * this walked the whole history on every mouse move down the list. It only
+   * changes when the rows do.
+   */
+  const gutterWidth = useMemo(() => {
+    let maxLane = 0;
+    for (const r of visibleRows) {
+      if (r.lane > maxLane) maxLane = r.lane;
+      for (const e of r.edges) {
+        if (e.fromLane > maxLane) maxLane = e.fromLane;
+        if (e.toLane > maxLane) maxLane = e.toLane;
+      }
+    }
+    return (maxLane + 1) * laneWidth + GUTTER_PAD;
+  }, [visibleRows, laneWidth]);
 
-  const laneX = useCallback((lane: number) => GUTTER_PAD + lane * LANE_WIDTH + LANE_WIDTH / 2, []);
+  const laneX = useCallback(
+    (lane: number) => GUTTER_PAD + lane * laneWidth + laneWidth / 2,
+    [laneWidth],
+  );
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -630,8 +907,8 @@ export function GraphView() {
     ctx.lineCap = "round";
 
     const scrollTop = parent.scrollTop;
-    const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1);
-    const last = Math.min(visibleRows.length - 1, Math.ceil((scrollTop + ch) / ROW_HEIGHT) + 1);
+    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - 1);
+    const last = Math.min(visibleRows.length - 1, Math.ceil((scrollTop + ch) / rowHeight) + 1);
 
     // Filter mode hides rows, so consecutive rows are no longer parent and
     // child: drawing the edge band between them would assert a parentage that
@@ -639,8 +916,8 @@ export function GraphView() {
     if (!filtering) {
       for (let i = first; i <= last; i++) {
         const row = visibleRows[i];
-        const yTop = i * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
-        const yBot = yTop + ROW_HEIGHT;
+        const yTop = i * rowHeight - scrollTop + rowHeight / 2;
+        const yBot = yTop + rowHeight;
         for (const e of row.edges) {
           const x1 = laneX(e.fromLane);
           const x2 = laneX(e.toLane);
@@ -660,7 +937,7 @@ export function GraphView() {
 
     for (let i = first; i <= last; i++) {
       const row = visibleRows[i];
-      const y = i * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
+      const y = i * rowHeight - scrollTop + rowHeight / 2;
       const x = laneX(row.lane);
       const selected = row.oid === selectedOid;
       ctx.beginPath();
@@ -674,7 +951,7 @@ export function GraphView() {
         ctx.lineWidth = 1.8;
       }
     }
-  }, [visibleRows, gutterWidth, laneX, selectedOid, filtering]);
+  }, [visibleRows, gutterWidth, laneX, selectedOid, filtering, rowHeight]);
 
   useEffect(() => {
     const parent = parentRef.current;
@@ -911,158 +1188,6 @@ export function GraphView() {
   }, [headOid]);
 
   /**
-   * Right-clicking a ref pill acts on the *ref* (STATUS B1).
-   *
-   * It used to fall through to the commit menu, which made push, rename,
-   * delete and merge-from-here sidebar-only — and the graph is where most
-   * people point at a branch. The entries mirror the sidebar's deliberately:
-   * two menus for one object that disagree about what you can do to it is
-   * worse than either.
-   */
-  const refContextMenu = useCallback(
-    (event: React.MouseEvent, ref: RefBadge) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (!repo) return;
-      const path = repo.path;
-      const head = repo.head.branch ?? "HEAD";
-      const run = async (fn: () => Promise<unknown>, ok?: string) => {
-        try {
-          await fn();
-          if (ok) pushToast("success", ok);
-          await refreshRepo(qc, path);
-        } catch (err) {
-          toastError(err);
-        }
-      };
-
-      const items: MenuItem[] = [];
-      if (ref.kind === "tag") {
-        items.push(
-          { label: "Copy tag name", onClick: () => copyText(ref.name) },
-          {
-            label: "Push tag to origin",
-            onClick: () =>
-              run(async () => {
-                const result = await gitNetwork(path, "push", "origin", [`refs/tags/${ref.name}`]);
-                if (!result.success) throw new Error(result.output);
-              }, `Pushed tag ${ref.name}`),
-          },
-          { separator: true },
-          {
-            label: "Delete tag",
-            danger: true,
-            onClick: async () => {
-              if (
-                await confirmDialog({
-                  title: "Delete tag",
-                  message: `Delete tag "${ref.name}"?`,
-                  confirmLabel: "Delete",
-                  danger: true,
-                })
-              ) {
-                void run(() => deleteTag(path, ref.name), "Tag deleted");
-              }
-            },
-          },
-        );
-        setMenu({ x: event.clientX, y: event.clientY, items });
-        return;
-      }
-
-      const isLocal = ref.kind === "localBranch";
-      items.push(
-        {
-          label: `Checkout ${ref.name}`,
-          disabled: ref.isHead,
-          onClick: () => run(() => smartCheckout(path, ref.name), `Checked out ${ref.name}`),
-        },
-        {
-          label: "Show only this in the graph",
-          onClick: () => {
-            seedSearch(path, `ref:${ref.name}`, true);
-            useSearch.getState().setMode(path, "filter");
-          },
-        },
-        { separator: true },
-        {
-          label: `Merge ${ref.name} into ${head}`,
-          disabled: ref.isHead,
-          onClick: () =>
-            run(async () => {
-              await requireNoPausedOperation(path, `merge ${ref.name}`);
-              const result = await mergeAdvanced(path, ref.name, "noFf");
-              if (result.kind === "conflicts") {
-                pushToast("error", `Merge paused — ${result.conflicts.length} conflicted file(s).`);
-              } else {
-                pushToast("success", `Merged ${ref.name}.`);
-              }
-            }),
-        },
-        {
-          label: `Rebase ${head} onto ${ref.name}`,
-          disabled: ref.isHead,
-          onClick: () =>
-            run(async () => {
-              await requireNoPausedOperation(path, `rebase onto ${ref.name}`);
-              const result = await rebaseStandard(path, ref.name);
-              if (result.success) pushToast("success", `Rebased onto ${ref.name}.`);
-              else pushToast("error", `Rebase paused — ${result.conflicts.length} conflicted file(s).`);
-            }),
-        },
-      );
-
-      if (isLocal) {
-        items.push(
-          { separator: true },
-          {
-            label: `Push ${ref.name}`,
-            onClick: () =>
-              run(async () => {
-                const result = await gitNetwork(path, "push", "origin", [ref.name]);
-                if (!result.success) throw new Error(result.output);
-                announcePush(ref.name);
-              }, `Pushed ${ref.name}`),
-          },
-          {
-            label: "Rename…",
-            onClick: async () => {
-              const next = await promptDialog({
-                title: "Rename branch",
-                label: "New branch name",
-                defaultValue: ref.name,
-                confirmLabel: "Rename",
-                validate: validateRefName,
-              });
-              if (next && next !== ref.name) void run(() => renameBranch(path, ref.name, next), "Renamed");
-            },
-          },
-          {
-            label: "Delete branch",
-            danger: true,
-            disabled: ref.isHead,
-            onClick: async () => {
-              if (
-                await confirmDialog({
-                  title: "Delete branch",
-                  message: `Delete the local branch "${ref.name}"?`,
-                  confirmLabel: "Delete",
-                  danger: true,
-                })
-              ) {
-                void run(() => deleteBranch(path, ref.name, false), `Deleted ${ref.name}`);
-              }
-            },
-          },
-        );
-      }
-      items.push({ separator: true }, { label: "Copy ref name", onClick: () => copyText(ref.name) });
-      setMenu({ x: event.clientX, y: event.clientY, items });
-    },
-    [repo, qc, pushToast],
-  );
-
-  /**
    * Open the worktree that holds the target branch, then pick into it.
    *
    * Run directly rather than through the confirm popover, because the popover
@@ -1091,38 +1216,7 @@ export function GraphView() {
     [qc, setRepo, pushToast],
   );
 
-  // ---- No hooks below this line. ----
-  //
-  // These early returns mean a hook declared after them is one React sees on
-  // some renders and not others. `refContextMenu` and `pickInWorktree` used to
-  // sit further down beside `dropOnRef`, the plain helper that calls them, and
-  // the first render that got past `isPending` — which is to say opening any
-  // repository — crashed the renderer with "rendered more hooks than during
-  // the previous render". Nothing here is linted for it: there is no eslint
-  // config in this repo, so this comment is the guard.
-  if (!repo) {
-    return <div className="graph-empty">Open a repository to view its history.</div>;
-  }
-  if (isPending) {
-    return <div className="graph-empty">Loading history…</div>;
-  }
-  if (error) {
-    return <div className="graph-empty error">{String(error)}</div>;
-  }
-  if (rows.length === 0 && !status?.isDirty) {
-    return <div className="graph-empty">No commits yet.</div>;
-  }
-
-  const dirtyCount = new Set([
-    ...(status?.staged ?? []).map((entry) => entry.path),
-    ...(status?.unstaged ?? []).map((entry) => entry.path),
-    ...(status?.conflicted ?? []).map((entry) => entry.path),
-  ]).size;
-
-  const currentWip = (wips ?? []).find((wip) => wip.isCurrent);
-  const otherWips = (wips ?? []).filter((wip) => !wip.isCurrent);
-
-  const selectRow = (event: React.MouseEvent, row: GraphRow) => {
+  const selectRow = useCallback((event: React.MouseEvent, row: GraphRow) => {
     if ((event.metaKey || event.ctrlKey)) {
       setSelectedOids((current) => {
         const next = new Set(current);
@@ -1144,9 +1238,106 @@ export function GraphView() {
     selectOid(row.oid);
     // Gives the pane focus, which is what decides who owns ⌘F.
     parentRef.current?.focus({ preventScroll: true });
-  };
+  }, [rows, selectionAnchor, selectOid]);
 
+  /**
+   * Row indices for the two fixed scrollbar marks.
+   *
+   * Two linear scans of the whole loaded history, and they were inline in the
+   * render, so they ran again for every hover, flash and selection change.
+   */
+  const markerIndices = useMemo(
+    () => ({
+      head: rows.findIndex((row) => row.oid === headOid),
+      selected: rows.findIndex((row) => row.oid === selectedOid),
+    }),
+    [rows, headOid, selectedOid],
+  );
 
+  /**
+   * Checking out a ref from a pill's double-click.
+   *
+   * A `useCallback` rather than an inline arrow because it is a prop of every
+   * visible row, and `GraphRowView` is memoized — one unstable prop re-renders
+   * all forty rows on every parent render and throws the memo away.
+   */
+  const checkoutRef = useCallback(
+    (name: string) => {
+      const path = repo?.path;
+      if (!path) return;
+      smartCheckout(path, name)
+        .then(() => {
+          pushToast("success", `Checked out ${name}.`);
+          return refreshRepo(qc, path);
+        })
+        .catch(toastError);
+    },
+    [repo?.path, qc, pushToast],
+  );
+
+  const rowOpts = useMemo(() => ({ relativeDates: dateStyle === "relative" }), [dateStyle]);
+
+  // ---- No hooks below this line. ----
+  //
+  // These early returns mean a hook declared after them is one React sees on
+  // some renders and not others. `refMenuItems` (then `refContextMenu`) and `pickInWorktree` used to
+  // sit further down beside `dropOnRef`, the plain helper that calls them, and
+  // the first render that got past `isPending` — which is to say opening any
+  // repository — crashed the renderer with "rendered more hooks than during
+  // the previous render". Nothing here is linted for it: there is no eslint
+  // config in this repo, so this comment is the guard.
+  if (!repo) {
+    return (
+      <div className="graph-empty">
+        <b>No repository open</b>
+        <span>Open, clone or initialise one from the Start tab.</span>
+      </div>
+    );
+  }
+  if (isPending) {
+    // Skeleton rows rather than a centred word: the graph's shape is the thing
+    // being waited for, and showing it empty says "this is where the history
+    // goes" while a line of text in the middle of the pane says only "wait".
+    // The visible text stays for the test suite and for a screen reader.
+    return (
+      <div className="graph-container">
+        <div className="graph-skeleton" aria-busy="true">
+          <span className="sr-only">Loading history…</span>
+          {Array.from({ length: 14 }, (_, i) => (
+            <div className="skeleton-row" key={i} style={{ height: rowHeight }}>
+              <span className="skeleton-node" />
+              <span className="skeleton-bar" style={{ width: `${28 + ((i * 37) % 46)}%` }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="graph-empty error">
+        <b>This repository could not be read.</b>
+        <span>{String(error)}</span>
+      </div>
+    );
+  }
+  if (rows.length === 0 && !status?.isDirty) {
+    return (
+      <div className="graph-empty">
+        <b>No commits yet.</b>
+        <span>Stage some files and make the first commit — it will appear here.</span>
+      </div>
+    );
+  }
+
+  const dirtyCount = new Set([
+    ...(status?.staged ?? []).map((entry) => entry.path),
+    ...(status?.unstaged ?? []).map((entry) => entry.path),
+    ...(status?.conflicted ?? []).map((entry) => entry.path),
+  ]).size;
+
+  const currentWip = (wips ?? []).find((wip) => wip.isCurrent);
+  const otherWips = (wips ?? []).filter((wip) => !wip.isCurrent);
 
   const dropOnRef = (event: React.DragEvent, target: string, isHead: boolean) => {
     event.preventDefault();
@@ -1390,34 +1581,24 @@ export function GraphView() {
                 top={vi.start}
                 gutter={gutterWidth}
                 nodeLeft={BRANCH_COL_WIDTH + laneX(row.lane)}
+                rowHeight={rowHeight}
+                avatarSize={avatarSize}
                 selected={row.oid === selectedOid || selectedOids.has(row.oid)}
                 hit={hitOids.has(row.oid)}
                 flash={row.oid === flashOid}
                 picked={pickedOids.has(row.oid)}
                 currentHit={row.oid === currentHitOid}
-                onSearchAuthor={() =>
-                  repo && seedSearch(repo.path, `author:${row.email || row.author}`)
-                }
                 columns={columns}
                 stats={statsByOid.get(row.oid)}
-                opts={{ relativeDates: dateStyle === "relative" }}
-                onSelect={(event) => selectRow(event, row)}
-                onContextMenu={(e) => rowContextMenu(e, row)}
-                onCheckoutRef={(name) =>
-                  repo &&
-                  smartCheckout(repo.path, name)
-                    .then(() => {
-                      pushToast("success", `Checked out ${name}.`);
-                      return refreshRepo(qc, repo.path);
-                    })
-                    .catch(toastError)
-                }
+                opts={rowOpts}
+                onSelect={selectRow}
+                onContextMenu={rowContextMenu}
+                onCheckoutRef={checkoutRef}
                 onRefDrop={dropOnRef}
-                onRefContextMenu={refContextMenu}
-                onHover={() => setHoverOid(row.oid)}
+                onHover={setHoverOid}
                 hiddenRefs={hiddenRefs}
                 refInlineCount={refInlineCount}
-                ghosts={hoverOid === row.oid ? (ghostRefs ?? []) : []}
+                ghosts={hoverOid === row.oid ? (ghostRefs ?? EMPTY_GHOSTS) : EMPTY_GHOSTS}
                 pushedBranch={pushedBranch}
                 checkoutTarget={checkoutTarget}
               />
@@ -1450,8 +1631,8 @@ export function GraphView() {
         total={total}
         hits={search.hits}
         cursor={search.cursor}
-        headIndex={rows.findIndex((row) => row.oid === headOid)}
-        selectedIndex={rows.findIndex((row) => row.oid === selectedOid)}
+        headIndex={markerIndices.head}
+        selectedIndex={markerIndices.selected}
       />
       </div>
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
@@ -1556,18 +1737,27 @@ function WipRowView({
   );
 }
 
-function GraphRowView({
+/**
+ * One commit row.
+ *
+ * Memoized, and every callback prop it takes is stable, because the parent
+ * re-renders on hover, on selection, on a flash and on every page that arrives
+ * — and without this each of those re-rendered all forty visible rows, avatars
+ * and pills included.
+ */
+const GraphRowView = memo(function GraphRowView({
   row,
   repoPath,
   top,
   gutter,
   nodeLeft,
+  rowHeight,
+  avatarSize,
   selected,
   hit,
   currentHit,
   flash,
   picked,
-  onSearchAuthor,
   columns,
   stats,
   opts,
@@ -1575,7 +1765,6 @@ function GraphRowView({
   onContextMenu,
   onCheckoutRef,
   onRefDrop,
-  onRefContextMenu,
   onHover,
   hiddenRefs,
   refInlineCount,
@@ -1588,21 +1777,21 @@ function GraphRowView({
   top: number;
   gutter: number;
   nodeLeft: number;
+  rowHeight: number;
+  avatarSize: number;
   selected: boolean;
   hit: boolean;
   currentHit: boolean;
   flash: boolean;
   picked: boolean;
-  onSearchAuthor: () => void;
   columns: GraphColumnId[];
   stats: CommitStats | undefined;
   opts: { relativeDates: boolean };
-  onSelect: (event: React.MouseEvent) => void;
-  onContextMenu: (e: React.MouseEvent) => void;
+  onSelect: (event: React.MouseEvent, row: GraphRow) => void;
+  onContextMenu: (event: React.MouseEvent, row: GraphRow, ref?: RefBadge) => void;
   onCheckoutRef: (name: string) => void;
   onRefDrop: (event: React.DragEvent, target: string, isHead: boolean) => void;
-  onRefContextMenu: (event: React.MouseEvent, ref: RefBadge) => void;
-  onHover: () => void;
+  onHover: (oid: string) => void;
   hiddenRefs: string[];
   refInlineCount: number;
   ghosts: GhostRef[];
@@ -1621,13 +1810,13 @@ function GraphRowView({
       className={`graph-row${selected ? " selected" : ""}${hit ? " hit" : ""}${
         currentHit ? " current-hit" : ""
       }${flash ? " flash" : ""}${picked ? " picked" : ""}`}
-      style={{ top, height: ROW_HEIGHT }}
-      onClick={onSelect}
+      style={{ top, height: rowHeight }}
+      onClick={(event) => onSelect(event, row)}
       // Only rows with nothing to show ask: a ghost never renders beside a
       // real pill, so asking there would be a merge-base sweep per hovered
       // row for an answer that is thrown away.
-      onMouseEnter={() => displayRefs.length === 0 && onHover()}
-      onContextMenu={onContextMenu}
+      onMouseEnter={() => displayRefs.length === 0 && onHover(row.oid)}
+      onContextMenu={(event) => onContextMenu(event, row)}
       draggable
       onDragStart={(event) => {
         event.dataTransfer.setData("application/x-mtgit-commit", row.oid);
@@ -1677,7 +1866,9 @@ function GraphRowView({
               if (r.kind !== "tag") event.preventDefault();
             }}
             onDrop={(event) => r.kind !== "tag" && onRefDrop(event, r.name, r.isHead)}
-            onContextMenu={(event) => onRefContextMenu(event, r)}
+            // Not a menu of its own any more: the row's menu carries this
+            // pill's actions as its first submenu (`00-overview.md` §1.4).
+            onContextMenu={(event) => onContextMenu(event, row, r)}
           >
             {r.kind === "tag" && <Icon name="tag" size={11} />}
             {r.isHead && <Icon name="check" size={11} />}
@@ -1706,9 +1897,14 @@ function GraphRowView({
       <div className="row-graph" style={{ width: gutter }} />
       <span
         className={`node-avatar${row.parents.length > 1 ? " merge-node" : ""}`}
-        style={{ left: nodeLeft - AVATAR_SIZE / 2, borderColor: laneColor(row.color) }}
+        style={{
+          left: nodeLeft - avatarSize / 2,
+          width: avatarSize,
+          height: avatarSize,
+          borderColor: laneColor(row.color),
+        }}
       >
-        <Avatar email={row.email} name={row.author} size={AVATAR_SIZE} />
+        <Avatar email={row.email} name={row.author} size={avatarSize} />
       </span>
       {/* Sync markers (G23, `03-push.md` §7). A dot beside the node rather
           than a column: the question is "is this one of mine", which is asked
@@ -1716,7 +1912,7 @@ function GraphRowView({
       {(row.unpushed || row.unpulled) && (
         <span
           className={`row-sync ${row.unpushed ? "unpushed" : "unpulled"}`}
-          style={{ left: nodeLeft + AVATAR_SIZE / 2 + 2 }}
+          style={{ left: nodeLeft + avatarSize / 2 + 2 }}
           title={row.unpushed ? "Not yet pushed to the upstream" : "On the upstream, not yet pulled"}
         >
           <Icon name={row.unpushed ? "push" : "pull"} size={9} />
@@ -1731,15 +1927,11 @@ function GraphRowView({
       {columns.map((id) => (
         <span key={id} className={`row-col col-${id}`}>
           {id === "author" && (
-            <span
-              className="row-author"
-              title={`${row.author} — right-click to search this author's commits`}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onSearchAuthor();
-              }}
-            >
+            /* No context menu of its own: right-clicking anywhere on a row
+               raises the row's menu, and "search this author" lives in it.
+               A cell that swallowed the gesture made a third of the row's
+               width the one place the menu did not open. */
+            <span className="row-author" title={row.email ? `${row.author} <${row.email}>` : row.author}>
               {row.author}
             </span>
           )}
@@ -1765,7 +1957,7 @@ function GraphRowView({
       ))}
     </div>
   );
-}
+});
 
 const COLUMN_LABELS: Record<GraphColumnId, string> = {
   author: "AUTHOR",
@@ -1835,6 +2027,11 @@ function swap<T>(list: T[], a: number, b: number): T[] {
   return next;
 }
 
+/* Both of these are memoized: their props are the search hits and two row
+   indices, none of which change when the pointer moves — and `ScrollMarkers`
+   renders up to four hundred spans, which is not a thing to reconcile on every
+   hovered row. */
+
 /**
  * Scroll-gutter markers (G17): hits, HEAD and the selection at their
  * proportional positions in the whole history.
@@ -1857,7 +2054,7 @@ function swap<T>(list: T[], a: number, b: number): T[] {
  * offset: the user is looking for a match, and landing near one but not on it
  * would leave them hunting.
  */
-function SearchMinimap({
+const SearchMinimap = memo(function SearchMinimap({
   total,
   hits,
   cursor,
@@ -1900,9 +2097,9 @@ function SearchMinimap({
       ))}
     </div>
   );
-}
+});
 
-function ScrollMarkers({
+const ScrollMarkers = memo(function ScrollMarkers({
   total,
   hits,
   cursor,
@@ -1937,4 +2134,4 @@ function ScrollMarkers({
       )}
     </div>
   );
-}
+});

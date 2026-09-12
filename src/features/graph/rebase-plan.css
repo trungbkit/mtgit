@@ -4,7 +4,7 @@
   z-index: 1200;
   display: flex;
   justify-content: flex-end;
-  background: #0008;
+  background: var(--scrim);
 }
 
 .rebase-sheet {
@@ -14,7 +14,7 @@
   height: 100%;
   background: var(--bg-panel);
   border-left: 1px solid var(--border-strong);
-  box-shadow: -20px 0 50px #0008;
+  box-shadow: var(--shadow-modal);
 }
 
 .rebase-sheet > header {
