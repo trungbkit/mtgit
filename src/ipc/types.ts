@@ -25,6 +25,17 @@ export interface RefBadge {
   isHead: boolean;
 }
 
+/**
+ * A ref that contains a commit without pointing at it — what the row *would*
+ * be labelled (overview §1.2). Mirrors `core::refs::GhostRef`.
+ */
+export interface GhostRef {
+  name: string;
+  kind: RefKind;
+  /** Commits between the ref's tip and this commit; 1 for its parent. */
+  distance: number;
+}
+
 export interface BranchInfo {
   name: string;
   oid: string;
@@ -100,6 +111,16 @@ export interface GraphRow {
   unpushed: boolean;
   /** On the upstream but not this branch — a pull would bring it in. */
   unpulled: boolean;
+}
+
+/**
+ * One `file:` autocomplete candidate. Mirrors `core::paths::PathCompletion`.
+ * Completion is per path segment, so a directory arrives with its trailing
+ * slash and is meant to be descended into rather than searched for.
+ */
+export interface PathCompletion {
+  path: string;
+  isDir: boolean;
 }
 
 /** Modifiers beside the search field. Mirrors `core::search::SearchOptions`. */
@@ -253,6 +274,10 @@ export interface CommandResult extends GitOpResult {
   oid: string | null;
   conflicts: string[];
   skipped: number;
+  /** The operation stashed the working tree to get started (`07-cherry-pick.md` B4). */
+  autoStashed: boolean;
+  /** The stash was kept rather than popped — a pause, or a conflicting pop. */
+  stashKept: boolean;
 }
 
 export type CheckoutRecovery = "normal" | "stash" | "discard";
@@ -336,6 +361,15 @@ export interface WorktreeInfo {
   isCurrent: boolean;
   /** Changed files, or null when the worktree could not be opened. */
   changed: number | null;
+}
+
+/** What `copyChangesToWorktree` did. Mirrors `core::worktree::CopyResult`. */
+export interface CopyResult {
+  files: number;
+  /** Changed files the patch could not carry, and so did not copy. */
+  skipped: number;
+  worktree: string;
+  path: string;
 }
 
 /**
@@ -498,6 +532,8 @@ export interface Settings {
   blameHeatmap: boolean;
   /** Optional graph columns, in display order (G16). */
   graphColumns: GraphColumnId[];
+  /** Ref pills shown inline before the rest collapse into `+N` (overview §1.2). */
+  graphRefInlineCount: number;
 
   terminalFontSize: number;
   terminalShell: string | null;

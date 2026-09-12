@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   historyFollowRenames: true,
   blameHeatmap: true,
   graphColumns: ["author", "date", "sha"],
+  graphRefInlineCount: 2,
   terminalFontSize: 12,
   terminalShell: null,
   keybindings: {},

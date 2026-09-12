@@ -1,9 +1,6 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { cherryPickMany } from "../../ipc/commands";
-import { settings } from "../../stores/settings";
-import { refreshRepo, requireNoPausedOperation } from "../../ipc/repoState";
-import { toastError, useToasts } from "../../stores/toasts";
+import { runCherryPick } from "../../lib/cherryPick";
 import "./cherry-pick.css";
 
 export function CherryPickPopover({
@@ -11,51 +8,32 @@ export function CherryPickPopover({
   branch,
   oids,
   parents,
+  onPicked,
   onClose,
 }: {
   repoPath: string;
   branch: string;
   oids: string[];
   parents: string[];
+  /** The commits that were picked, so the graph can flash their source rows. */
+  onPicked: (oids: string[]) => void;
   onClose: () => void;
 }) {
   const [commitImmediately, setCommitImmediately] = useState(true);
   const [mainline, setMainline] = useState(parents.length > 1 ? 1 : undefined);
-  const pushToast = useToasts((state) => state.push);
   const qc = useQueryClient();
 
   async function run() {
-    try {
-      await requireNoPausedOperation(repoPath, "cherry-pick");
-      // `07-cherry-pick.md` B1: the `-x` trailer was plumbed all the way
-      // through and then hardcoded `false` at this one call site.
-      const result = await cherryPickMany(
-        repoPath,
-        oids,
-        commitImmediately,
-        mainline,
-        settings().cherryPickAppendOrigin,
-      );
-      if (result.success) {
-        pushToast(
-          "success",
-          commitImmediately
-            ? `Cherry-picked ${oids.length} commit${oids.length === 1 ? "" : "s"} onto ${branch}.`
-            : `Applied ${oids.length} commit${oids.length === 1 ? "" : "s"} to the index.`,
-        );
-      } else if (result.conflicts.length) {
-        pushToast("error", `Cherry-pick paused — ${result.conflicts.length} conflicted file(s).`);
-      } else {
-        pushToast("error", result.output || "Cherry-pick failed.");
-        return;
-      }
-      // Await before unmounting: the banner has to be up before this popover
-      // closes, or the paused sequence has no visible Continue/Abort at all.
-      await refreshRepo(qc, repoPath);
-      onClose();
-    } catch (error) {
-      toastError(error);
-    }
+    const done = await runCherryPick({
+      repoPath,
+      oids,
+      branch,
+      commitImmediately,
+      mainline,
+      qc,
+      onPicked,
+    });
+    if (done) onClose();
   }
 
   return (

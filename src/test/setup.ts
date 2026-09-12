@@ -10,6 +10,18 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+// jsdom implements no layout, so it ships no `ResizeObserver` — and a
+// component that observes its own scroll container (the graph does, to resize
+// the lane canvas) throws on mount rather than failing an assertion. A stub
+// that never fires is correct here: nothing in jsdom would ever resize.
+if (!("ResizeObserver" in globalThis)) {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+
 afterEach(() => {
   cleanup();
   localStorage.clear();

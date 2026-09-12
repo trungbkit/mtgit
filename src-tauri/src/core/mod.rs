@@ -9,6 +9,7 @@ pub mod graph;
 pub mod history;
 pub mod identity;
 pub mod ops;
+pub mod paths;
 pub mod rebase_predict;
 pub mod refs;
 pub mod remote;

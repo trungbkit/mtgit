@@ -21,6 +21,14 @@ pub struct CommandResult {
     pub oid: Option<String>,
     pub conflicts: Vec<String>,
     pub skipped: usize,
+    /// The operation stashed the working tree to get started
+    /// (`07-cherry-pick.md` B4). Always false for operations that pass
+    /// `--autostash` to git, which restores it itself.
+    pub auto_stashed: bool,
+    /// The stash was kept rather than popped — either popping conflicted, or
+    /// the operation paused and popping into a conflicted index would bury
+    /// the user's own work under the sequencer's.
+    pub stash_kept: bool,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy)]
@@ -149,6 +157,8 @@ fn command_result(path: &str, output: Output) -> Result<CommandResult> {
         oid,
         conflicts,
         skipped: 0,
+        auto_stashed: false,
+        stash_kept: false,
     })
 }
 
@@ -302,15 +312,40 @@ pub fn checkout(
     })
 }
 
+/// Cherry-pick one or more commits.
+///
+/// `stash_fallback` is `07-cherry-pick.md` B4. `git cherry-pick` has no
+/// `--autostash`, so a dirty tree it refuses has to be stashed and restored
+/// around the pick by hand — and the interesting half is *when not to
+/// restore*. Three outcomes, three answers:
+///
+/// * the pick **succeeds** — pop, and report it if the pop conflicts;
+/// * the pick **fails outright** — pop, so a refusal leaves the tree exactly
+///   as it was found;
+/// * the pick **pauses on a conflict** — keep the stash. Popping into a
+///   conflicted index mixes the user's uncommitted work into the sequencer's
+///   conflict markers, and no later `--abort` would separate them again.
 pub fn cherry_pick_many(
     path: &str,
     oids: &[String],
     commit_immediately: bool,
     mainline: Option<usize>,
     append_origin: bool,
+    stash_fallback: bool,
 ) -> Result<CommandResult> {
     if oids.is_empty() {
         return Err(Error::Msg("select at least one commit".into()));
+    }
+    let mut auto_stashed = false;
+    if stash_fallback && !git_text(path, &["status", "--porcelain"])?.is_empty() {
+        let out = git_output(
+            path,
+            &["stash", "push", "--include-untracked", "-m", "MTGit automatic cherry-pick stash"],
+        )?;
+        if !out.status.success() {
+            return Err(Error::Msg(output_text(&out)));
+        }
+        auto_stashed = true;
     }
     let mut owned = vec!["cherry-pick".to_string()];
     if !commit_immediately {
@@ -342,6 +377,15 @@ pub fn cherry_pick_many(
     }
     if !result.success && !result.conflicts.is_empty() {
         write_sequence_meta(path, "cherryPick", oids.len(), 1, oids.first().cloned())?;
+    }
+    if auto_stashed {
+        result.auto_stashed = true;
+        if !result.success && !result.conflicts.is_empty() {
+            result.stash_kept = true;
+        } else {
+            let pop = git_output(path, &["stash", "pop"])?;
+            result.stash_kept = !pop.status.success();
+        }
     }
     Ok(result)
 }
@@ -1167,11 +1211,69 @@ mod tests {
             false,
             None,
             false,
+            false,
         )
         .unwrap();
         assert!(result.success, "{}", result.output);
         assert!(git(dir.path(), &["diff", "--cached", "--name-only"]).contains("side.txt"));
         assert_ne!(git(dir.path(), &["show", "-s", "--format=%s", "HEAD"]), "side change");
+    }
+
+    /// `07-cherry-pick.md` B4. Without the fallback git refuses the pick
+    /// outright ("your local changes would be overwritten"), and the user is
+    /// told to stash by a tool that could have stashed.
+    #[test]
+    fn a_dirty_tree_is_stashed_around_the_pick_and_restored_after_it() {
+        let dir = repo_with_commits();
+        let path = dir.path().to_str().unwrap();
+        git(dir.path(), &["checkout", "-q", "-b", "side", "HEAD~1"]);
+        fs::write(dir.path().join("file.txt"), "side\n").unwrap();
+        git(dir.path(), &["commit", "-q", "-am", "side change"]);
+        let pick = git(dir.path(), &["rev-parse", "HEAD"]);
+        git(dir.path(), &["checkout", "-q", "main"]);
+
+        // The uncommitted edit git will refuse to overwrite.
+        fs::write(dir.path().join("file.txt"), "work in progress\n").unwrap();
+        let refused =
+            cherry_pick_many(path, std::slice::from_ref(&pick), true, None, false, false).unwrap();
+        assert!(!refused.success, "git should refuse a colliding dirty tree");
+        assert!(!refused.auto_stashed);
+
+        let result = cherry_pick_many(path, &[pick], true, None, false, true).unwrap();
+        assert!(result.auto_stashed);
+        assert!(!result.success, "the pick still conflicts with the stashed edit");
+        assert!(!result.conflicts.is_empty(), "{}", result.output);
+        assert!(
+            result.stash_kept,
+            "a paused sequence must keep the stash: popping would mix the user's \
+             work into the conflict markers"
+        );
+        assert_eq!(git(dir.path(), &["stash", "list"]).lines().count(), 1);
+    }
+
+    /// The other half of B4: when the pick goes through, the work that was
+    /// stashed to let it start has to come back.
+    #[test]
+    fn a_clean_pick_pops_the_stash_it_took() {
+        let dir = repo_with_commits();
+        let path = dir.path().to_str().unwrap();
+        git(dir.path(), &["checkout", "-q", "-b", "side", "HEAD~1"]);
+        fs::write(dir.path().join("other.txt"), "side\n").unwrap();
+        git(dir.path(), &["add", "other.txt"]);
+        git(dir.path(), &["commit", "-q", "-m", "side change"]);
+        let pick = git(dir.path(), &["rev-parse", "HEAD"]);
+        git(dir.path(), &["checkout", "-q", "main"]);
+        fs::write(dir.path().join("file.txt"), "work in progress\n").unwrap();
+
+        let result = cherry_pick_many(path, &[pick], true, None, false, true).unwrap();
+        assert!(result.success, "{}", result.output);
+        assert!(result.auto_stashed && !result.stash_kept);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+            "work in progress\n",
+            "the uncommitted edit is back"
+        );
+        assert_eq!(git(dir.path(), &["stash", "list"]), "");
     }
 
     #[test]

@@ -263,14 +263,25 @@
   display: inline-flex;
   align-items: center;
   max-width: 180px;
+  /* `min-width: 0` is what lets a pill *shrink* rather than be clipped away.
+     The column is right-aligned against the graph gutter, so without it the
+     leftmost pill silently disappears when two long branch names do not fit —
+     and the leftmost is now the HEAD pill, which is the one that must survive
+     (`lib/refPills.ts` puts it first). Ellipsis lives on `.badge-name`
+     because `text-overflow` does not reach the children of a flex container. */
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   padding: 1px 7px;
   border-radius: 10px;
   font-size: 10.5px;
   font-weight: 600;
   line-height: 15px;
   border: 1px solid transparent;
+}
+.badge-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .badge-localBranch {
   background: var(--accent-tint-strong);
@@ -469,4 +480,93 @@
     animation: none;
     background: var(--accent-tint);
   }
+}
+
+/* The "this commit was just cherry-picked from here" flash
+   (`07-cherry-pick.md` §3). A different colour from the HEAD flash on
+   purpose: both fire at the same moment, and two rows pulsing identically
+   would say "these are the same thing" rather than "this one came from
+   that one". */
+@keyframes graph-row-picked {
+  0% {
+    background: var(--warn-tint-strong);
+  }
+  100% {
+    background: transparent;
+  }
+}
+.graph-row.picked {
+  animation: graph-row-picked 1.2s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .graph-row.picked {
+    animation: none;
+    background: var(--warn-tint);
+  }
+}
+
+/* Ghost refs (overview §1.2): the label this row *would* carry. Dimmed and
+   outline-only, because a ghost that reads as solidly as a real pill is a
+   lie about where the branch tip is. */
+.badge.ghost {
+  background: transparent;
+  opacity: 0.55;
+  border-style: dashed;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+/* The `+N` overflow chip. It has to be the one pill that never shrinks:
+   collapsing the chip itself is how a tag-heavy row loses the count that
+   says how much is hidden. */
+.badge-overflow {
+  flex: 0 0 auto;
+  background: var(--bg-panel-2);
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.badge-overflow:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+/* A pill whose remote just moved under a push (`03-push.md` §7). One pulse
+   on the pill, not the row: the row did not change, the ref did. */
+@keyframes graph-ref-pushed {
+  0% {
+    box-shadow: 0 0 0 0 var(--ok-tint-border);
+  }
+  60% {
+    box-shadow: 0 0 0 4px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.badge.pushed {
+  animation: graph-ref-pushed 900ms ease-out 2;
+}
+@media (prefers-reduced-motion: reduce) {
+  .badge.pushed {
+    animation: none;
+  }
+}
+
+/* The overflow-count field in the gear popover. A number input rather than a
+   slider: the useful range is 1-4 and the exact value is the point. */
+.gh-gear-number {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.gh-gear-number input {
+  width: 52px;
+  padding: 1px 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
 }

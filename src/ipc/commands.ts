@@ -12,14 +12,17 @@ import type {
   ConflictFile,
   ConflictResult,
   ConflictSet,
+  CopyResult,
   FileContent,
   FileDiff,
+  GhostRef,
   GitOpResult,
   GraphPage,
   HistoryEntry,
   IdentityInfo,
   IdentityScope,
   HistoryStatus,
+  PathCompletion,
   PushTarget,
   MergeMode,
   MergeResult,
@@ -160,6 +163,8 @@ export const cherryPickMany = (
   commitImmediately: boolean,
   mainline?: number,
   appendOrigin = false,
+  /** Stash the working tree around the pick (`07-cherry-pick.md` B4). */
+  stashFallback = false,
 ) =>
   invoke<CommandResult>("cherry_pick_many", {
     path,
@@ -167,6 +172,7 @@ export const cherryPickMany = (
     commitImmediately,
     mainline,
     appendOrigin,
+    stashFallback,
   });
 export const resetTo = (path: string, oid: string, mode: ResetMode) =>
   invoke<void>("reset_to", { path, oid, mode });
@@ -223,6 +229,9 @@ export const listSubmodules = (path: string) => invoke<SubmoduleInfo[]>("list_su
 export const updateSubmodules = (path: string) => invoke<void>("update_submodules", { path });
 export const worktreeHolding = (path: string, branch: string) =>
   invoke<WorktreeInfo | null>("worktree_holding", { path, branch });
+/** Copy uncommitted changes into another worktree (`01-commit.md` §3.2). */
+export const copyChangesToWorktree = (path: string, worktreeName: string, stagedOnly: boolean) =>
+  invoke<CopyResult>("copy_changes_to_worktree", { path, worktreeName, stagedOnly });
 export const createWorktree = (
   path: string,
   name: string,
@@ -257,6 +266,12 @@ export const mergeTarget = (path: string, branch: string) =>
   invoke<MergeTarget | null>("merge_target", { path, branch });
 export const mergeRelation = (path: string, target: string, source: string) =>
   invoke<MergeRelation>("merge_relation", { path, target, source });
+/** Refs that contain `oid` without pointing at it — ghost refs (overview §1.2). */
+export const containingRefs = (path: string, oid: string, limit?: number) =>
+  invoke<GhostRef[]>("containing_refs", { path, oid, limit });
+/** Path completion for `file:` values, from `oid`'s tree (or HEAD's). */
+export const completePaths = (path: string, oid: string | null, prefix: string, limit?: number) =>
+  invoke<PathCompletion[]>("complete_paths", { path, oid, prefix, limit });
 export const autolinkPatterns = (path: string) =>
   invoke<AutolinkPattern[]>("autolink_patterns", { path });
 export const commitTemplate = (path: string) =>
@@ -270,6 +285,9 @@ export const fileAtCommit = (path: string, oid: string, file: string) =>
   invoke<FileContent>("file_at_commit", { path, oid, file });
 export const stashSave = (path: string, message: string | undefined, includeUntracked: boolean) =>
   invoke<string>("stash_save", { path, message, includeUntracked });
+/** Stash only what is staged (`01-commit.md` §3.2). Needs git 2.35. */
+export const stashSaveStaged = (path: string, message?: string) =>
+  invoke<void>("stash_save_staged", { path, message });
 export const stashList = (path: string) => invoke<StashEntry[]>("stash_list", { path });
 export const stashApply = (path: string, index: number) => invoke<void>("stash_apply", { path, index });
 export const stashPop = (path: string, index: number) => invoke<void>("stash_pop", { path, index });

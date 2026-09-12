@@ -226,17 +226,17 @@ Frontend reports them with `toastError(e)`. Note that `gitNetwork` *resolves* wi
 ## Roadmap
 
 `GITKRAKEN_PARITY_PLAN.md` is the live plan: gap analysis vs GitKraken, phases P0–P8, and a
-status marker per phase. **P0–P6 are done. P7 is partly done** — CI, the Vitest suite and
-`check:ipc` are in; e2e and code signing are not, and both need something this repo does not
-have (a driver on the runner, certificates). **P8 has started**: item 1 (worktrees, G18) and
-terminal links (G19) landed. Its §8 says what to pick up next; the answer is now **the rest of
-P8**, starting with the unified conflict panel (item 2), except that `--follow` in file history
-(G22) should jump the queue — without it, blame across a refactor is quietly wrong, which makes
-it a correctness fix rather than a feature.
+status marker per phase. **P0–P6 and P8 are done, and so is the spec backlog** — every unticked
+acceptance criterion across the eight feature docs closed on 2026-09-12. **P7 is partly done**:
+CI, the Vitest suite and `check:ipc` are in; e2e and code signing are not, and both need
+something this repo does not have (a `tauri-driver` on the runner, certificates). Its §8 item 12
+lists the three things deliberately *not* built — rebase ghosting, per-commit cherry-pick
+progress, and what the sidebar's eye toggle should mean — each blocked on a judgement rather
+than on effort. Read that list before proposing any of them as an oversight.
 
 `docs/feature-requirements/` is the spec for the seven core features (commit, checkout, push,
 pull, merge, rebase, cherry-pick) plus `08-search-and-filter.md` (commit search — built; its
-§7.1 lists the four items still outstanding), and
+§7.1 is down to two open rows, neither of them missing code), and
 `docs/feature-requirements/STATUS.md` audits the code against it — per-criterion verdicts plus
 the outstanding defects. Start there before picking up feature work; it is more current than the
 phase plan.

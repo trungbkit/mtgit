@@ -163,11 +163,14 @@ Modifiers, as toggles beside the field: **match case**, **match whole word**, **
       part of the cache key (`every_search_modifier_changes_the_cache_key`).
 - [x] Truncation at the result cap is stated, never silent — the footer says where it stopped
       and offers **Keep going**, which re-runs the same query uncapped.
-- [◐] Autocomplete offers operators, contributors, paths and refs as described.
-      **Operators, refs and contributors.** `author:` completes from `list_contributors` (G28) to
-      the *email* rather than the display name — an email is unique and needs no quoting, where
-      "Ada Lovelace" as a bare value would parse as two terms. Paths still wait on a path source
-      for the current selection.
+- [x] Autocomplete offers operators, contributors, paths and refs as described.
+      `author:` completes from `list_contributors` (G28) to the *email* rather than the display
+      name — an email is unique and needs no quoting, where "Ada Lovelace" as a bare value would
+      parse as two terms. `file:` completes **per path segment** from the selected commit's tree
+      (`core/paths.rs`), not as a substring match over every tracked file: at 50k paths the eight
+      that happen to contain "co" answer a question nobody asked, where the useful reply to
+      `file:src/fe` is `src/features/`. Accepting a directory keeps the list open so the next
+      segment can be typed, which is also now true of accepting an operator.
 - [x] Recent queries listed; pinned queries persist per repo (`localStorage`, per repo path,
       migrating into the settings file when P6 lands one).
 - [x] Search is reachable from the graph header, `⌘F`/`⌘⇧F`, the command palette, an author
@@ -181,6 +184,6 @@ Modifiers, as toggles beside the field: **match case**, **match whole word**, **
 | Item | State | Waits on |
 |---|---|---|
 | ~~**Minimap**~~ | ✅ **Built** (`SearchMinimap` in `GraphView`), beside the scroll markers and only while a search is submitted — "where are my matches clustered" has no answer when nothing is searched for. It is a *density* strip, not a scaled graph: at 12,000 commits in 600px each pixel row is twenty commits, so one mark per hit loses every cluster to overlap. Clicking a bucket jumps to its first hit rather than to the offset, because the user is looking for a match and landing near one is not landing on one. | — |
-| **Path autocomplete** | Operators, refs and contributors complete; `file:` values do not. | A path source for the current selection. |
+| ~~**Path autocomplete**~~ | ✅ **Built.** `core/paths.rs` is the path source this row waited on, and it reads the *selection's* tree rather than the working directory — a path the commit under the cursor never had produces a `file:` search with no hits and no explanation. An unborn HEAD falls back to the index, which is the only place a brand-new repo's paths exist. | — |
 | **Sidebar eye toggle unified with `ref:`** | The context menu's **Show only this in the graph** and **Search commits on this branch** write a `ref:` term, as §2 requires. The hover **eye** toggle still drives `hiddenRefs`, which hides *badges* rather than rows. | A decision about what the eye should mean. Because it hides no rows, §6's "navigating to a hit hidden by a ref toggle clears the toggle" cannot arise today — there is no hit the toggle can hide. |
 | **A search field in the middle of a full-width diff** | `⇧⌘F` focuses the field from anywhere, but nothing "takes over the centre pane" in the current shell, so there is nothing to scroll back into view. | The focus view / detail stack (P8 item 4). |

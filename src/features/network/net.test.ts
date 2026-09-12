@@ -6,7 +6,7 @@ import { gitNetwork, listRemotes, pushTarget } from "../../ipc/commands";
 import { requireNoPausedOperation } from "../../ipc/repoState";
 import { confirmDialog, publishDialog } from "../../stores/dialog";
 import { useSession } from "../../stores/session";
-import { classifyFailure, push, runNet } from "./net";
+import { classifyFailure, push, PUSH_FLASH_EVENT, runNet } from "./net";
 
 vi.mock("../../ipc/commands", () => ({
   gitNetwork: vi.fn(),
@@ -29,7 +29,15 @@ const mockRequire = vi.mocked(requireNoPausedOperation);
 const mockConfirm = vi.mocked(confirmDialog);
 const mockPublish = vi.mocked(publishDialog);
 
-const repo = { path: "/repo", name: "repo" } as RepoInfo;
+// `head` is not optional on `RepoInfo`, and leaving it off made the fixture
+// lie: `runNet` reads `repo.head.branch` to name the ref a push just moved.
+const repo = {
+  path: "/repo",
+  name: "repo",
+  head: { branch: "feature", oid: "a".repeat(40), detached: false, unborn: false },
+  isBare: false,
+  worktree: null,
+} as RepoInfo;
 
 function result(over: Partial<GitOpResult> = {}): GitOpResult {
   return { success: true, code: 0, output: "", ...over };
@@ -136,6 +144,28 @@ describe("push", () => {
       "origin",
       "feature",
     ]);
+  });
+
+  /**
+   * STATUS §4's remote-pill animation. The graph cannot watch for this itself:
+   * a push moves a ref the graph query only learns about on the next refresh,
+   * by which time the pill has already redrawn in its new place.
+   */
+  it("announces the branch a successful push moved, and only then", async () => {
+    const seen: string[] = [];
+    const listener = (event: Event) => seen.push((event as CustomEvent<string>).detail);
+    window.addEventListener(PUSH_FLASH_EVENT, listener);
+
+    mockPushTarget.mockResolvedValue(target());
+    mockGitNetwork.mockResolvedValue(result({ success: false, output: "boom" }));
+    await push(repo);
+    expect(seen).toEqual([]);
+
+    mockGitNetwork.mockResolvedValue(result());
+    await push(repo);
+    expect(seen).toEqual(["feature"]);
+
+    window.removeEventListener(PUSH_FLASH_EVENT, listener);
   });
 
   it("does nothing when the publish form is cancelled", async () => {

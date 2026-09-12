@@ -1,6 +1,6 @@
 use crate::core::{
     advanced, autolink, blame, branch, commit as commit_mod, contributors, diff, graph, history,
-    identity, ops, rebase_predict, refs, remote, repo, search, settings, stash, status,
+    identity, ops, paths, rebase_predict, refs, remote, repo, search, settings, stash, status,
     terminal as terminal_tokens, worktree,
 };
 use crate::error::{Error, Result};
@@ -729,6 +729,7 @@ pub fn cherry_pick_many(
     commit_immediately: bool,
     mainline: Option<usize>,
     append_origin: bool,
+    stash_fallback: bool,
     state: State<'_, AppState>,
 ) -> Result<advanced::CommandResult> {
     let before = snapshot(&path)?;
@@ -738,6 +739,7 @@ pub fn cherry_pick_many(
         commit_immediately,
         mainline,
         append_origin,
+        stash_fallback,
     )?;
     if result.success && commit_immediately {
         record_history(&state, &path, "Cherry-pick", before, RestoreMode::Merge)?;
@@ -1108,6 +1110,21 @@ pub fn create_worktree(
     )
 }
 
+/// Copy this worktree's uncommitted changes into another one
+/// (`01-commit.md` §3.2).
+///
+/// No op guard (invariant 2). Nothing changes in *this* repository — the
+/// writes land in another worktree's working directory, and if the user has
+/// that one open in a second tab, its watcher is exactly what should notice.
+#[tauri::command]
+pub fn copy_changes_to_worktree(
+    path: String,
+    worktree_name: String,
+    staged_only: bool,
+) -> Result<worktree::CopyResult> {
+    worktree::copy_changes(&open(&path)?, &worktree_name, staged_only)
+}
+
 /// Which worktree already holds `branch`, if any (`02-checkout.md` §7).
 #[tauri::command]
 pub fn worktree_holding(path: String, branch: String) -> Result<Option<worktree::WorktreeInfo>> {
@@ -1170,6 +1187,24 @@ pub fn merge_relation(path: String, target: String, source: String) -> Result<re
     refs::merge_relation(&open(&path)?, &target, &source)
 }
 
+/// The refs that would label `oid` if it were a tip — the "ghost refs" a row
+/// shows on hover (overview §1.2).
+#[tauri::command]
+pub fn containing_refs(path: String, oid: String, limit: Option<usize>) -> Result<Vec<refs::GhostRef>> {
+    refs::containing_refs(&open(&path)?, &oid, limit.unwrap_or(3))
+}
+
+/// Path completion for `file:` search values (`08-search-and-filter.md` §4).
+#[tauri::command]
+pub fn complete_paths(
+    path: String,
+    oid: Option<String>,
+    prefix: String,
+    limit: Option<usize>,
+) -> Result<Vec<paths::PathCompletion>> {
+    paths::complete(&open(&path)?, oid.as_deref(), &prefix, limit.unwrap_or(8))
+}
+
 #[tauri::command]
 pub fn autolink_patterns(path: String) -> Result<Vec<autolink::AutolinkPattern>> {
     autolink::patterns(&open(&path)?)
@@ -1195,6 +1230,17 @@ pub fn stash_save(
 ) -> Result<String> {
     let _op = state.begin_op();
     stash::save(&mut open(&path)?, message.as_deref(), include_untracked)
+}
+
+/// Stash only the staged changes (`01-commit.md` §3.2).
+#[tauri::command]
+pub fn stash_save_staged(
+    path: String,
+    message: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let _op = state.begin_op();
+    stash::save_staged(&path, message.as_deref())
 }
 
 #[tauri::command]

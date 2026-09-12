@@ -4,6 +4,7 @@ import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialo
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   commitStats,
+  containingRefs,
   createBranch,
   deleteBranch,
   deleteTag,
@@ -17,6 +18,7 @@ import {
   getStatus,
   openRepo,
   wipRows,
+  worktreeHolding,
   mergeAdvanced,
   mergeRelation,
   rebaseStandard,
@@ -24,9 +26,17 @@ import {
   resetTo,
   revertCommit,
 } from "../../ipc/commands";
-import type { CommitStats, GraphColumnId, GraphRow, RefBadge, SearchHit } from "../../ipc/types";
+import type {
+  CommitStats,
+  GhostRef,
+  GraphColumnId,
+  GraphRow,
+  RefBadge,
+  SearchHit,
+  WorktreeInfo,
+} from "../../ipc/types";
 import type { RebaseAction, ResetMode } from "../../ipc/types";
-import { REVEAL_COMMIT_EVENT } from "../../stores/reveal";
+import { REVEAL_COMMIT_EVENT, revealCommit } from "../../stores/reveal";
 import { pushDetail } from "../../stores/detailStack";
 import { useSession, WORKING } from "../../stores/session";
 import { seedSearch, useRepoSearch, useSearch } from "../../stores/search";
@@ -39,14 +49,18 @@ import { ContextMenu, type MenuItem, type MenuState } from "../../components/Con
 import { Avatar } from "../../components/Avatar";
 import { Autolinked } from "../../components/Autolinked";
 import { copyText } from "../../lib/clipboard";
-import { smartCheckout } from "../../lib/checkout";
+import { isCancelled, smartCheckout } from "../../lib/checkout";
+import { announcePush, PUSH_FLASH_EVENT } from "../network/net";
 import { dropMenuItems } from "../../lib/dropMenu";
+import { justPushed, planRefPills } from "../../lib/refPills";
+import { runCherryPick } from "../../lib/cherryPick";
 import { captureUndoPoint, toastWithUndo } from "../../lib/undoToast";
 import { timeAgo, formatTimestamp } from "../../lib/time";
 import { Icon } from "../../components/Icon";
-import { matches } from "../../lib/keys";
+import { isTypingTarget, matches } from "../../lib/keys";
 import { useSettings } from "../../stores/settings";
 import { laneColor } from "./palette";
+import { BranchFinder } from "./BranchFinder";
 import { CherryPickPopover } from "./CherryPickPopover";
 import { RebasePlanDialog } from "./RebasePlanDialog";
 import { SearchBar } from "./SearchBar";
@@ -107,6 +121,7 @@ export function GraphView() {
   // mirrored into the session store". The old `graphOpts.showAuthor` was that
   // second source of truth, and it is gone.
   const columns = useSettings((s) => s.settings.graphColumns);
+  const refInlineCount = useSettings((s) => s.settings.graphRefInlineCount);
   const hiddenRefs = useSession((s) =>
     repo ? s.hiddenRefs[repo.path] ?? EMPTY_HIDDEN_REFS : EMPTY_HIDDEN_REFS,
   );
@@ -155,8 +170,22 @@ export function GraphView() {
   const [selectedOids, setSelectedOids] = useState<Set<string>>(new Set());
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
   const [pick, setPick] = useState<{ oids: string[]; parents: string[] } | null>(null);
-  /** Row to flash: the new HEAD after a checkout, or a just-picked commit. */
+  /** Row to flash: the new HEAD after a checkout. */
   const [flashOid, setFlashOid] = useState<string | null>(null);
+  /**
+   * The *source* commits of a cherry-pick (`07-cherry-pick.md` §3).
+   *
+   * Separate state from `flashOid`, not a second use of it: a pick moves HEAD
+   * too, so both fire at once and one slot would let the HEAD flash overwrite
+   * the correspondence the picked flash exists to show. They also mean
+   * different things, and the CSS says so.
+   */
+  const [pickedOids, setPickedOids] = useState<Set<string>>(new Set());
+  /** Row the pointer is over, for ghost refs (overview §1.2). */
+  const [hoverOid, setHoverOid] = useState<string | null>(null);
+  /** Branch whose remote pill just moved under a push (STATUS §4). */
+  const [pushedBranch, setPushedBranch] = useState<string | null>(null);
+  const [finderOpen, setFinderOpen] = useState(false);
   const [rebasePlan, setRebasePlan] = useState<{
     base: string;
     targetOid?: string;
@@ -169,7 +198,26 @@ export function GraphView() {
     setSelectionAnchor(null);
     setPick(null);
     setRebasePlan(null);
+    setPickedOids(new Set());
+    setHoverOid(null);
+    setFinderOpen(false);
   }, [repo?.path]);
+
+  /**
+   * Ghost refs for the hovered row.
+   *
+   * One query for the whole graph rather than one per row: containment is a
+   * merge-base per ref, and forty visible rows each asking on mount would pay
+   * that forty times for thirty-nine answers nobody reads. Kept fresh for a
+   * minute — a ref would have to move for the answer to change, and moving one
+   * invalidates the graph anyway.
+   */
+  const { data: ghostRefs } = useQuery({
+    queryKey: ["ghostRefs", repo?.path, hoverOid],
+    enabled: !!repo?.path && !!hoverOid,
+    queryFn: () => containingRefs(repo!.path, hoverOid!, 2),
+    staleTime: 60_000,
+  });
 
   const rowContextMenu = useCallback(
     (e: React.MouseEvent, row: GraphRow) => {
@@ -755,6 +803,13 @@ export function GraphView() {
   // F3 / ⌘G and their reverses, plus the two ways into the field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // `/` is a bare key, so it only counts when the user is not typing —
+      // otherwise every path in a commit message would open the finder.
+      if (!isTypingTarget(event) && matches(event, "graph.findRef")) {
+        event.preventDefault();
+        setFinderOpen(true);
+        return;
+      }
       // Previous before next: both are F3-shaped and the shifted one is the
       // more specific match, so testing next first would swallow it.
       if (matches(event, "search.prev")) {
@@ -813,6 +868,26 @@ export function GraphView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.mode]);
 
+  // A push moved a remote-tracking ref; say so on the pill rather than only in
+  // a toast, which is somewhere else on the screen from the thing that changed.
+  useEffect(() => {
+    const onPushed = (event: Event) => setPushedBranch((event as CustomEvent<string>).detail);
+    window.addEventListener(PUSH_FLASH_EVENT, onPushed);
+    return () => window.removeEventListener(PUSH_FLASH_EVENT, onPushed);
+  }, []);
+  useEffect(() => {
+    if (!pushedBranch) return;
+    const timer = setTimeout(() => setPushedBranch(null), 1800);
+    return () => clearTimeout(timer);
+  }, [pushedBranch]);
+
+  // The picked flash is one pulse, like the HEAD one, and then gone.
+  useEffect(() => {
+    if (pickedOids.size === 0) return;
+    const timer = setTimeout(() => setPickedOids(new Set()), 1200);
+    return () => clearTimeout(timer);
+  }, [pickedOids]);
+
   // HEAD moved: scroll to it, and flash the row (STATUS §4).
   //
   // The scroll alone was the load-bearing half, but on a long history it looks
@@ -834,52 +909,6 @@ export function GraphView() {
     seenHead.current = headOid;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [headOid]);
-
-  if (!repo) {
-    return <div className="graph-empty">Open a repository to view its history.</div>;
-  }
-  if (isPending) {
-    return <div className="graph-empty">Loading history…</div>;
-  }
-  if (error) {
-    return <div className="graph-empty error">{String(error)}</div>;
-  }
-  if (rows.length === 0 && !status?.isDirty) {
-    return <div className="graph-empty">No commits yet.</div>;
-  }
-
-  const dirtyCount = new Set([
-    ...(status?.staged ?? []).map((entry) => entry.path),
-    ...(status?.unstaged ?? []).map((entry) => entry.path),
-    ...(status?.conflicted ?? []).map((entry) => entry.path),
-  ]).size;
-
-  const currentWip = (wips ?? []).find((wip) => wip.isCurrent);
-  const otherWips = (wips ?? []).filter((wip) => !wip.isCurrent);
-
-  const selectRow = (event: React.MouseEvent, row: GraphRow) => {
-    if ((event.metaKey || event.ctrlKey)) {
-      setSelectedOids((current) => {
-        const next = new Set(current);
-        if (next.has(row.oid)) next.delete(row.oid);
-        else next.add(row.oid);
-        return next;
-      });
-    } else if (event.shiftKey && selectionAnchor) {
-      const from = rows.findIndex((candidate) => candidate.oid === selectionAnchor);
-      const to = rows.findIndex((candidate) => candidate.oid === row.oid);
-      if (from >= 0 && to >= 0) {
-        const [start, end] = from < to ? [from, to] : [to, from];
-        setSelectedOids(new Set(rows.slice(start, end + 1).map((candidate) => candidate.oid)));
-      }
-    } else {
-      setSelectedOids(new Set([row.oid]));
-    }
-    setSelectionAnchor(row.oid);
-    selectOid(row.oid);
-    // Gives the pane focus, which is what decides who owns ⌘F.
-    parentRef.current?.focus({ preventScroll: true });
-  };
 
   /**
    * Right-clicking a ref pill acts on the *ref* (STATUS B1).
@@ -992,6 +1021,7 @@ export function GraphView() {
               run(async () => {
                 const result = await gitNetwork(path, "push", "origin", [ref.name]);
                 if (!result.success) throw new Error(result.output);
+                announcePush(ref.name);
               }, `Pushed ${ref.name}`),
           },
           {
@@ -1032,18 +1062,141 @@ export function GraphView() {
     [repo, qc, pushToast],
   );
 
+  /**
+   * Open the worktree that holds the target branch, then pick into it.
+   *
+   * Run directly rather than through the confirm popover, because the popover
+   * is state of *this* tab and the pick happens in another repository handle —
+   * carrying it across the switch would mean a popover that outlives the
+   * repository it was raised for. The menu entry named both halves, which is
+   * the confirmation the popover would have been.
+   */
+  const pickInWorktree = useCallback(
+    async (holder: WorktreeInfo, branch: string, commitOid: string) => {
+      try {
+        const opened = await openRepo(holder.path);
+        setRepo(opened);
+        pushToast("info", `Switched to the "${holder.name}" worktree.`);
+        await runCherryPick({
+          repoPath: holder.path,
+          oids: [commitOid],
+          branch,
+          commitImmediately: true,
+          qc,
+        });
+      } catch (error) {
+        toastError(error);
+      }
+    },
+    [qc, setRepo, pushToast],
+  );
+
+  // ---- No hooks below this line. ----
+  //
+  // These early returns mean a hook declared after them is one React sees on
+  // some renders and not others. `refContextMenu` and `pickInWorktree` used to
+  // sit further down beside `dropOnRef`, the plain helper that calls them, and
+  // the first render that got past `isPending` — which is to say opening any
+  // repository — crashed the renderer with "rendered more hooks than during
+  // the previous render". Nothing here is linted for it: there is no eslint
+  // config in this repo, so this comment is the guard.
+  if (!repo) {
+    return <div className="graph-empty">Open a repository to view its history.</div>;
+  }
+  if (isPending) {
+    return <div className="graph-empty">Loading history…</div>;
+  }
+  if (error) {
+    return <div className="graph-empty error">{String(error)}</div>;
+  }
+  if (rows.length === 0 && !status?.isDirty) {
+    return <div className="graph-empty">No commits yet.</div>;
+  }
+
+  const dirtyCount = new Set([
+    ...(status?.staged ?? []).map((entry) => entry.path),
+    ...(status?.unstaged ?? []).map((entry) => entry.path),
+    ...(status?.conflicted ?? []).map((entry) => entry.path),
+  ]).size;
+
+  const currentWip = (wips ?? []).find((wip) => wip.isCurrent);
+  const otherWips = (wips ?? []).filter((wip) => !wip.isCurrent);
+
+  const selectRow = (event: React.MouseEvent, row: GraphRow) => {
+    if ((event.metaKey || event.ctrlKey)) {
+      setSelectedOids((current) => {
+        const next = new Set(current);
+        if (next.has(row.oid)) next.delete(row.oid);
+        else next.add(row.oid);
+        return next;
+      });
+    } else if (event.shiftKey && selectionAnchor) {
+      const from = rows.findIndex((candidate) => candidate.oid === selectionAnchor);
+      const to = rows.findIndex((candidate) => candidate.oid === row.oid);
+      if (from >= 0 && to >= 0) {
+        const [start, end] = from < to ? [from, to] : [to, from];
+        setSelectedOids(new Set(rows.slice(start, end + 1).map((candidate) => candidate.oid)));
+      }
+    } else {
+      setSelectedOids(new Set([row.oid]));
+    }
+    setSelectionAnchor(row.oid);
+    selectOid(row.oid);
+    // Gives the pane focus, which is what decides who owns ⌘F.
+    parentRef.current?.focus({ preventScroll: true });
+  };
+
+
+
   const dropOnRef = (event: React.DragEvent, target: string, isHead: boolean) => {
     event.preventDefault();
     event.stopPropagation();
     if (!repo) return;
     const commitOid = event.dataTransfer.getData("application/x-mtgit-commit");
     if (commitOid) {
-      if (!isHead) {
-        pushToast("info", "Check out the target branch before cherry-picking onto it.");
+      const commit = rows.find((candidate) => candidate.oid === commitOid);
+      if (isHead) {
+        setPick({ oids: [commitOid], parents: commit?.parents ?? [] });
         return;
       }
-      const commit = rows.find((candidate) => candidate.oid === commitOid);
-      setPick({ oids: [commitOid], parents: commit?.parents ?? [] });
+      // `07-cherry-pick.md` §5: picking onto a branch that is not checked out
+      // here is a *composite* action, not an error. Which composite depends on
+      // why it is not checked out — another worktree holds it, or it is simply
+      // not the current branch — so the menu has to ask git first.
+      const short = commitOid.slice(0, 7);
+      const { clientX: x, clientY: y } = event;
+      void worktreeHolding(repo.path, target)
+        .catch(() => null)
+        .then((holder) =>
+          setMenu({
+            x,
+            y,
+            items: holder
+              ? [
+                  {
+                    label: `Open the "${holder.name}" worktree and cherry-pick ${short}`,
+                    onClick: () => void pickInWorktree(holder, target, commitOid),
+                  },
+                ]
+              : [
+                  {
+                    label: `Check out ${target} and cherry-pick ${short}`,
+                    onClick: async () => {
+                      try {
+                        await smartCheckout(repo.path, target);
+                        await refreshRepo(qc, repo.path);
+                        // The popover survives this: the repository path has
+                        // not changed, so the reset effect keyed on it does
+                        // not fire and take the pick with it.
+                        setPick({ oids: [commitOid], parents: commit?.parents ?? [] });
+                      } catch (error) {
+                        if (!isCancelled(error)) toastError(error);
+                      }
+                    },
+                  },
+                ],
+          }),
+        );
       return;
     }
     const source = event.dataTransfer.getData("application/x-mtgit-ref");
@@ -1127,6 +1280,20 @@ export function GraphView() {
               />
               Relative dates
             </label>
+            <label className="gh-gear-number">
+              Ref pills before <code>+N</code>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={refInlineCount}
+                onChange={(e) =>
+                  useSettings
+                    .getState()
+                    .set({ graphRefInlineCount: Number(e.target.value) || 1 })
+                }
+              />
+            </label>
             <div className="gh-gear-sep">Columns</div>
             <ColumnManager columns={columns} />
           </div>
@@ -1203,7 +1370,14 @@ export function GraphView() {
         />
       ))}
       <div className="graph-body">
-      <div className="graph-scroll" ref={parentRef} tabIndex={-1}>
+      <div
+        className="graph-scroll"
+        ref={parentRef}
+        tabIndex={-1}
+        // Otherwise the last row hovered keeps its ghosts while the pointer is
+        // somewhere else entirely.
+        onMouseLeave={() => setHoverOid(null)}
+      >
         <div className="graph-inner" style={{ height: virtualizer.getTotalSize() }}>
           <canvas className="graph-canvas" ref={canvasRef} style={{ marginLeft: BRANCH_COL_WIDTH }} />
           {virtualItems.map((vi) => {
@@ -1219,6 +1393,7 @@ export function GraphView() {
                 selected={row.oid === selectedOid || selectedOids.has(row.oid)}
                 hit={hitOids.has(row.oid)}
                 flash={row.oid === flashOid}
+                picked={pickedOids.has(row.oid)}
                 currentHit={row.oid === currentHitOid}
                 onSearchAuthor={() =>
                   repo && seedSearch(repo.path, `author:${row.email || row.author}`)
@@ -1239,7 +1414,11 @@ export function GraphView() {
                 }
                 onRefDrop={dropOnRef}
                 onRefContextMenu={refContextMenu}
+                onHover={() => setHoverOid(row.oid)}
                 hiddenRefs={hiddenRefs}
+                refInlineCount={refInlineCount}
+                ghosts={hoverOid === row.oid ? (ghostRefs ?? []) : []}
+                pushedBranch={pushedBranch}
                 checkoutTarget={checkoutTarget}
               />
             );
@@ -1276,12 +1455,26 @@ export function GraphView() {
       />
       </div>
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
+      {finderOpen && (
+        <BranchFinder
+          repoPath={repo.path}
+          // `revealCommit` already owns "scroll to a commit that may not be
+          // loaded yet" — it pulls pages until the row exists. The finder has
+          // nothing to add to that beyond choosing the oid.
+          onPick={(oid, name) => {
+            revealCommit(oid);
+            pushToast("info", `${name} — showing its tip.`);
+          }}
+          onClose={() => setFinderOpen(false)}
+        />
+      )}
       {pick && repo && (
         <CherryPickPopover
           repoPath={repo.path}
           branch={repo.head.branch ?? repo.head.oid?.slice(0, 7) ?? "HEAD"}
           oids={pick.oids}
           parents={pick.parents}
+          onPicked={(oids) => setPickedOids(new Set(oids))}
           onClose={() => setPick(null)}
         />
       )}
@@ -1373,6 +1566,7 @@ function GraphRowView({
   hit,
   currentHit,
   flash,
+  picked,
   onSearchAuthor,
   columns,
   stats,
@@ -1382,7 +1576,11 @@ function GraphRowView({
   onCheckoutRef,
   onRefDrop,
   onRefContextMenu,
+  onHover,
   hiddenRefs,
+  refInlineCount,
+  ghosts,
+  pushedBranch,
   checkoutTarget,
 }: {
   row: GraphRow;
@@ -1394,6 +1592,7 @@ function GraphRowView({
   hit: boolean;
   currentHit: boolean;
   flash: boolean;
+  picked: boolean;
   onSearchAuthor: () => void;
   columns: GraphColumnId[];
   stats: CommitStats | undefined;
@@ -1403,29 +1602,31 @@ function GraphRowView({
   onCheckoutRef: (name: string) => void;
   onRefDrop: (event: React.DragEvent, target: string, isHead: boolean) => void;
   onRefContextMenu: (event: React.MouseEvent, ref: RefBadge) => void;
+  onHover: () => void;
   hiddenRefs: string[];
+  refInlineCount: number;
+  ghosts: GhostRef[];
+  pushedBranch: string | null;
   checkoutTarget: string | null;
 }) {
-  const localNames = new Set(row.refs.filter((ref) => ref.kind === "localBranch").map((ref) => ref.name));
-  const collapsedRemotes = new Set(
-    row.refs
-      .filter((ref) => ref.kind === "remoteBranch")
-      .map((ref) => ref.name.split("/").slice(1).join("/"))
-      .filter((name) => localNames.has(name)),
-  );
-  const displayRefs = row.refs.filter(
-    (ref) =>
-      !hiddenRefs.includes(ref.name) &&
-      (ref.kind !== "remoteBranch" ||
-        !collapsedRemotes.has(ref.name.split("/").slice(1).join("/"))),
+  const [expandedRefs, setExpandedRefs] = useState(false);
+  const { shown: displayRefs, hidden: overflowRefs, collapsed: collapsedRemotes } = planRefPills(
+    row.refs,
+    hiddenRefs,
+    refInlineCount,
+    expandedRefs,
   );
   return (
     <div
       className={`graph-row${selected ? " selected" : ""}${hit ? " hit" : ""}${
         currentHit ? " current-hit" : ""
-      }${flash ? " flash" : ""}`}
+      }${flash ? " flash" : ""}${picked ? " picked" : ""}`}
       style={{ top, height: ROW_HEIGHT }}
       onClick={onSelect}
+      // Only rows with nothing to show ask: a ghost never renders beside a
+      // real pill, so asking there would be a merge-base sweep per hovered
+      // row for an answer that is thrown away.
+      onMouseEnter={() => displayRefs.length === 0 && onHover()}
       onContextMenu={onContextMenu}
       draggable
       onDragStart={(event) => {
@@ -1434,10 +1635,28 @@ function GraphRowView({
       }}
     >
       <div className="row-refs" style={{ width: BRANCH_COL_WIDTH }}>
+        {/* Ghost refs (overview §1.2): what this row *would* be labelled.
+            Only when it carries no pill of its own — beside a real one they
+            read as a rendering fault rather than a hint. */}
+        {displayRefs.length === 0 &&
+          ghosts.map((ghost) => (
+            <span
+              key={`ghost-${ghost.kind}-${ghost.name}`}
+              className={`badge badge-${ghost.kind} ghost`}
+              style={{ borderColor: laneColor(row.color) }}
+              title={`Contained in ${ghost.name}, ${ghost.distance} commit${
+                ghost.distance === 1 ? "" : "s"
+              } back from its tip`}
+            >
+              <span className="badge-name">{ghost.name}</span>
+            </span>
+          ))}
         {displayRefs.map((r) => (
           <span
             key={r.kind + r.name}
-            className={`badge badge-${r.kind}${r.isHead ? " head" : ""}`}
+            className={`badge badge-${r.kind}${r.isHead ? " head" : ""}${
+              justPushed(r, pushedBranch) ? " pushed" : ""
+            }`}
             style={
               r.isHead
                 ? { backgroundColor: laneColor(row.color), borderColor: laneColor(row.color) }
@@ -1467,9 +1686,22 @@ function GraphRowView({
               <Icon name="cloud" size={11} />
             )}
             {checkoutTarget === r.name && <Icon name="pending" size={11} />}
-            {r.name}
+            <span className="badge-name">{r.name}</span>
           </span>
         ))}
+        {overflowRefs.length > 0 && (
+          <button
+            type="button"
+            className="badge badge-overflow"
+            title={overflowRefs.map((r) => r.name).join("\n")}
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpandedRefs(true);
+            }}
+          >
+            +{overflowRefs.length}
+          </button>
+        )}
       </div>
       <div className="row-graph" style={{ width: gutter }} />
       <span

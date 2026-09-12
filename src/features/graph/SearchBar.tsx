@@ -1,6 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { cancelSearch, listContributors, listRefs, searchCommits } from "../../ipc/commands";
+import {
+  cancelSearch,
+  completePaths,
+  listContributors,
+  listRefs,
+  searchCommits,
+} from "../../ipc/commands";
+import { useSession, WORKING } from "../../stores/session";
 import { DEFAULT_MODIFIERS, useSearch, type Modifiers, type SearchMode } from "../../stores/search";
 import "./search.css";
 
@@ -51,6 +58,21 @@ function isExpensive(query: string): boolean {
   return /(^|\s)(change:|~:)/.test(query);
 }
 
+/**
+ * The partial path in a `file:` term under the caret, or null when the caret
+ * is not in one. Null rather than an empty string, because an empty prefix is
+ * a real request — `file:` with nothing after it lists the tree root.
+ */
+function useFilePrefix(query: string, caret: number): string | null {
+  return useMemo(() => {
+    const { word } = wordAtCaret(query, caret);
+    // Only the long form and its alias: the grammar negates `message:` alone
+    // (`core/search.rs`'s operator table), so there is no `-file:` to complete.
+    const match = word.match(/^(?:file:|\?:)(.*)$/);
+    return match ? match[1] : null;
+  }, [query, caret]);
+}
+
 /** The word the caret sits in, which is what autocomplete completes. */
 function wordAtCaret(value: string, caret: number): { word: string; start: number } {
   const start = value.lastIndexOf(" ", Math.max(0, caret - 1)) + 1;
@@ -75,6 +97,9 @@ export function SearchBar({
   // subscribing to the whole store (which would re-render on every keystroke
   // in every other tab's field).
   const store = useMemo(() => useSearch.getState(), []);
+  // The WIP row is not a commit, so it has no tree to complete against; HEAD's
+  // is the right fallback and `null` is how the backend asks for it.
+  const selectedOid = useSession((s) => (s.selectedOid === WORKING ? null : s.selectedOid));
   const inputRef = useRef<HTMLInputElement>(null);
   const [suggestCursor, setSuggestCursor] = useState(0);
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -100,6 +125,17 @@ export function SearchBar({
     queryKey: ["contributors", repoPath],
     enabled: !!repoPath && suggestOpen,
     queryFn: () => listContributors(repoPath),
+    staleTime: 30_000,
+  });
+  // `file:` completion, per path segment (`08-search-and-filter.md` §4). The
+  // *selected* commit's tree is the source, per §4's "paths from the current
+  // selection's tree": offering a path that commit never had produces a search
+  // with no hits and no explanation for why.
+  const filePrefix = useFilePrefix(query, caret);
+  const { data: pathOptions } = useQuery({
+    queryKey: ["completePaths", repoPath, selectedOid, filePrefix],
+    enabled: !!repoPath && suggestOpen && filePrefix !== null,
+    queryFn: () => completePaths(repoPath, selectedOid, filePrefix ?? ""),
     staleTime: 30_000,
   });
 
@@ -213,7 +249,13 @@ export function SearchBar({
             desc: `${c.email} · ${c.commits} commit${c.commits === 1 ? "" : "s"}`,
           }));
       }
-      // `file:` still waits on a path source for the current selection.
+      if (operator.token === "file:") {
+        return (pathOptions ?? []).map((option) => ({
+          text: `file:${option.path}`,
+          label: option.path,
+          desc: option.isDir ? "directory — keep typing to descend" : "file",
+        }));
+      }
       return [];
     }
     const lower = word.toLowerCase();
@@ -224,18 +266,24 @@ export function SearchBar({
         label: o.alias ? `${o.token}  (${o.alias})` : o.token,
         desc: o.desc,
       }));
-  }, [query, caret, refs, contributors]);
+  }, [query, caret, refs, contributors, pathOptions]);
 
   const accept = (text: string) => {
     const { start } = wordAtCaret(query, caret);
     const next = `${query.slice(0, start)}${text}${query.slice(caret)}`;
     store.setQuery(repoPath, next);
-    setSuggestOpen(false);
-    requestAnimationFrame(() => {
-      const at = start + text.length;
-      inputRef.current?.setSelectionRange(at, at);
-      setCaret(at);
-    });
+    // An accepted operator or directory is not an answer, it is the start of
+    // one — closing the list there would make every path a two-keystroke
+    // dance of Tab, `/`, Tab.
+    setSuggestOpen(text.endsWith(":") || text.endsWith("/"));
+    setSuggestCursor(0);
+    // The caret moves in the same render as the text. Leaving it to the frame
+    // callback below made `wordAtCaret` read the new query at the old offset
+    // for one frame, which — now that the list stays open — showed the wrong
+    // suggestions and then flickered.
+    const at = start + text.length;
+    setCaret(at);
+    requestAnimationFrame(() => inputRef.current?.setSelectionRange(at, at));
   };
 
   const showSuggestions = suggestOpen && suggestions.length > 0;
@@ -275,7 +323,9 @@ export function SearchBar({
             );
             return;
           }
-          if (showSuggestions && (e.key === "Tab" || (e.key === "Enter" && suggestions[suggestCursor]?.text.endsWith(":")))) {
+          const partial = suggestions[suggestCursor]?.text;
+          const isPartial = partial?.endsWith(":") || partial?.endsWith("/");
+          if (showSuggestions && (e.key === "Tab" || (e.key === "Enter" && isPartial))) {
             e.preventDefault();
             accept(suggestions[suggestCursor].text);
             return;

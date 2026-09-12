@@ -44,19 +44,38 @@ Apply one or more commits from anywhere in the graph onto the checked-out branch
 
 > Status audited 2026-09-08 — see `STATUS.md`.
 
-- [x] Single and multi cherry-pick work from context menu and DnD; multi applies oldest→newest. — dropping on a non-checked-out pill toasts a pointer instead of offering the pick
+- [x] Single and multi cherry-pick work from context menu and DnD; multi applies oldest→newest. — dropping on a non-checked-out pill now offers the composite action rather than a pointer (see the last row)
 - [x] Confirm popover with "Commit immediately" toggle; `--no-commit` leaves staged changes in WIP.
 - [x] Sequence conflict flow: banner with position, Continue/Skip/Abort; Abort rolls back all applied picks of the sequence.
 - [x] Merge-commit pick requires and applies mainline parent selection. — radio list of parents → `-m <n>`
 - [x] Already-applied commits are skipped with notice. — `cherry-pick --skip` + "already applied" in the toast
 - [x] Undo restores the pre-pick tip.
 - [x] A pick attempted while another operation is paused is refused with a pointer to the banner (§5).
-- [ ] Dirty-tree stash fallback (B4) — a refused pick surfaces git's error instead.
+- [x] Dirty-tree stash fallback (B4). — Offered, not taken silently: a stash the user did not ask
+      for is a surprise their next `git stash list` delivers, and checkout already asks. The
+      backend half (`advanced::cherry_pick_many`'s `stash_fallback`) is where the care is, because
+      *when not to restore* has three answers — pop on success, pop on an outright failure so a
+      refusal leaves the tree as it was found, and **keep** the stash when the sequence pauses,
+      since popping into a conflicted index mixes the user's work into the markers and no later
+      `--abort` separates them again. Two tests, one per interesting branch.
 - [x] `-x` settings flag (B1) — Settings → General → Commits; `CherryPickPopover` passes `settings().cherryPickAppendOrigin` at the call site that used to be hardcoded `false` (P6).
-- [ ] Per-commit sequence progress and the "picked" flash on source commits (§3).
+- [◐] Per-commit sequence progress and the "picked" flash on source commits (§3). — **The flash
+      landed**: the source rows pulse once, in their own colour rather than the HEAD flash's,
+      because a pick moves HEAD too and two rows pulsing identically would read as "these are the
+      same thing" instead of "this one came from that one". **Progress has not**, and §3 already
+      says why: one `git cherry-pick` invocation reports nothing per commit, and driving the
+      sequence commit-by-commit would mean owning the sequencer's restart semantics — a trade §3
+      itself rules out.
 
 **New in this revision (GitLens-derived):**
 
 - [x] A `select`-mode search result feeds a multi-commit pick directly (§2). — the row menu picks the whole multi-selection oldest-first, and select mode is what puts every hit into it.
 - [x] Conflicts during a sequence use the unified conflict panel (`05-merge.md` §5). — the panel names the picked commit as the incoming side rather than "theirs".
-- [ ] Picking onto a branch held by another worktree is offered as a composite action, not a git error (§5).
+- [x] Picking onto a branch held by another worktree is offered as a composite action, not a git
+      error (§5). — Dropping a commit on a pill that is not HEAD used to toast "check out the
+      target branch first", which is a tool declining to do the thing it was asked. It now asks
+      git which case this is and offers the matching composite: *Check out `<branch>` and
+      cherry-pick*, or *Open the "`<worktree>`" worktree and cherry-pick* when `worktree_holding`
+      names a holder. The worktree path runs the pick directly rather than through the confirm
+      popover — the popover is state of the tab being left behind, and the menu entry named both
+      halves, which is the confirmation it would have been.

@@ -59,6 +59,22 @@ export function classifyFailure(output: string): NetFailure {
 }
 
 /**
+ * "A push landed on these refs" — the graph flashes the matching remote pills
+ * (`03-push.md` §7, STATUS §4).
+ *
+ * An event rather than a store field: the pill animation is a moment, not
+ * state, and nothing needs to be able to ask later whether a push happened.
+ * The payload is the *local* branch name; the graph matches both the remote
+ * pill (`origin/main`) and the local pill that absorbed it.
+ */
+export const PUSH_FLASH_EVENT = "mtgit:pushed";
+
+export function announcePush(branch: string | null | undefined): void {
+  if (!branch) return;
+  window.dispatchEvent(new CustomEvent(PUSH_FLASH_EVENT, { detail: branch }));
+}
+
+/**
  * Run a network op and report its outcome. `gitNetwork` resolves with a
  * `GitOpResult` even when git exits non-zero, so callers that only `await` it
  * report success on failure — this is the one place that check lives.
@@ -80,6 +96,7 @@ export async function runNet(
     const res = await gitNetwork(repo.path, op, undefined, extra);
     if (res.success) {
       toast("success", successMessage ?? `${op} complete`);
+      if (op === "push") announcePush(repo.head.branch);
       return true;
     }
     await reportFailure(repo, op, res.output);

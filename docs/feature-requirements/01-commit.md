@@ -77,7 +77,16 @@ Vertical layout, top to bottom:
 - [x] Co-author picker appends well-formed `Co-authored-by:` trailers from the contributor list. — `lib/coauthors.ts`, fed by `list_contributors` (G28). Already-credited addresses are filtered out, and the trailer joins an existing trailer block rather than starting a paragraph, because git reads trailers only in the last one.
 - [x] `commit.template` pre-fills the Description when the fields are empty. — `core/identity.rs::commit_template`, comment lines stripped (`commit_cli` passes `-m`, which git cleans with `--cleanup=whitespace` and would commit them verbatim). Seeds once, and never over a draft.
 - [x] Issue references render as autolinks in the message preview and the graph message column. — `components/Autolinked` over `lib/autolinks.ts`; patterns come from repo config plus a built-in for origin's host, and nothing calls a network.
-- [ ] **Stash** and **Copy changes to worktree…** are reachable from the commit panel headers.
+- [x] **Stash** and **Copy changes to worktree…** are reachable from the commit panel headers. — a
+      quiet `⋯` on the **Staged** and **Changes** headers, so each one offers the scope its
+      section names. Two notes. *Staged-only stash* shells out to `git stash push --staged`
+      (`core/stash.rs::save_staged`), alone in a module that is otherwise pure libgit2: git2 has
+      no equivalent, and the near miss — `StashFlags::KEEP_INDEX` — stashes everything and then
+      restores the index, which is the opposite scope. *Copy* is a copy, not a move: the source
+      keeps its work, because the gesture's whole premise is "I started in the wrong worktree"
+      and a half-applied move loses uncommitted work that no reflog can return
+      (`core/worktree.rs::copy_changes`, which includes untracked files — the common case here
+      is a brand-new file).
 
 > Deferred (overview §8.3): **Generate commit message** and **Compose commits** — GitLens's AI
 > features. Named here so their absence is a decision. Of the two, generate-message is the one

@@ -409,6 +409,87 @@ pub fn merge_relation(repo: &Repository, target: &str, source: &str) -> Result<M
     })
 }
 
+/// A ref that does not point at a commit but *contains* it — what the row
+/// would be labelled if it were a tip (overview §1.2, "ghost refs").
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GhostRef {
+    pub name: String,
+    pub kind: RefKind,
+    /// Commits between this ref's tip and the commit — 1 for its parent.
+    pub distance: usize,
+}
+
+/// How many refs a single ghost lookup will interrogate.
+///
+/// Containment is a merge-base per ref, and a repository with a thousand
+/// remote-tracking branches would spend a visible fraction of a second
+/// answering a question the user asked by moving the mouse. Answering from
+/// the first `GHOST_REF_SCAN_LIMIT` refs is wrong only in the case where every
+/// one of them is a dead end, and being briefly wrong about a dimmed hint is
+/// cheaper than a hover that stutters.
+const GHOST_REF_SCAN_LIMIT: usize = 300;
+
+/// The nearest refs containing `oid`, nearest first.
+///
+/// Refs that point *at* `oid` are excluded: the row already carries a real
+/// badge for those, and a ghost duplicate of a pill sitting beside it reads as
+/// a rendering bug. Local branches win ties over remote ones and remote ones
+/// over tags, because that is the order in which a name answers "which branch
+/// am I looking at".
+pub fn containing_refs(repo: &Repository, oid: &str, limit: usize) -> Result<Vec<GhostRef>> {
+    let target = repo.revparse_single(oid)?.peel_to_commit()?.id();
+    let mut found: Vec<GhostRef> = Vec::new();
+
+    let references = match repo.references() {
+        Ok(references) => references,
+        Err(_) => return Ok(found),
+    };
+    for r in references.flatten().take(GHOST_REF_SCAN_LIMIT) {
+        let (kind, name) = if r.is_branch() {
+            (RefKind::LocalBranch, r.shorthand().unwrap_or("").to_string())
+        } else if r.is_remote() {
+            (RefKind::RemoteBranch, r.shorthand().unwrap_or("").to_string())
+        } else if r.is_tag() {
+            (RefKind::Tag, r.shorthand().unwrap_or("").to_string())
+        } else {
+            continue;
+        };
+        if name.is_empty() || name.ends_with("/HEAD") {
+            continue;
+        }
+        let Ok(tip) = r.peel_to_commit().map(|c| c.id()) else {
+            continue;
+        };
+        if tip == target || !repo.graph_descendant_of(tip, target).unwrap_or(false) {
+            continue;
+        }
+        // Only for the refs that actually contain it: `graph_ahead_behind`
+        // walks the difference, so asking it of every ref would pay the walk
+        // for the ones already ruled out by the cheaper merge-base above.
+        let distance = repo.graph_ahead_behind(tip, target).map(|(ahead, _)| ahead).unwrap_or(usize::MAX);
+        found.push(GhostRef { name, kind, distance });
+    }
+
+    found.sort_by(|a, b| {
+        a.distance
+            .cmp(&b.distance)
+            .then_with(|| kind_rank(&a.kind).cmp(&kind_rank(&b.kind)))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    found.truncate(limit);
+    Ok(found)
+}
+
+fn kind_rank(kind: &RefKind) -> u8 {
+    match kind {
+        RefKind::LocalBranch => 0,
+        RefKind::RemoteBranch => 1,
+        RefKind::Tag => 2,
+        RefKind::Head => 3,
+    }
+}
+
 /// URL of a named remote (e.g. "origin"), if it exists.
 pub fn remote_url(repo: &Repository, name: &str) -> Option<String> {
     repo.find_remote(name).ok().and_then(|r| r.url().map(str::to_string))
@@ -418,6 +499,59 @@ pub fn remote_url(repo: &Repository, name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::testutil::TestRepo;
+
+    /// `TestRepo::commit` points a fresh `bN` branch at every commit so a
+    /// revwalk always reaches it. Ghost refs are *about* which branches
+    /// contain a commit, so those would drown the assertion.
+    fn drop_scaffold_branches(t: &TestRepo) {
+        let names: Vec<String> = t
+            .repo
+            .branches(Some(BranchType::Local))
+            .unwrap()
+            .filter_map(|b| b.ok())
+            .filter_map(|(b, _)| b.name().ok().flatten().map(str::to_string))
+            .filter(|name| name.starts_with('b') && name[1..].chars().all(|c| c.is_ascii_digit()))
+            .collect();
+        for name in names {
+            t.repo.find_branch(&name, BranchType::Local).unwrap().delete().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_ghost_ref_names_the_nearest_branch_containing_the_commit() {
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let b = t.commit("b", &[a]);
+        let c = t.commit("c", &[b]);
+        drop_scaffold_branches(&t);
+        t.repo.branch("mid", &t.repo.find_commit(b).unwrap(), true).unwrap();
+        t.repo.branch("feature", &t.repo.find_commit(c).unwrap(), true).unwrap();
+
+        let ghosts = containing_refs(&t.repo, &a.to_string(), 5).unwrap();
+        let names: Vec<&str> = ghosts.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, vec!["mid", "feature"], "nearest first");
+        assert_eq!(ghosts[0].distance, 1);
+        assert_eq!(ghosts[1].distance, 2);
+
+        // A ref that points *at* the commit is a real badge, not a ghost —
+        // rendering both would put the same name on the row twice.
+        let ghosts = containing_refs(&t.repo, &b.to_string(), 5).unwrap();
+        let names: Vec<&str> = ghosts.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, vec!["feature"], "`mid` points at b, so it is not a ghost");
+    }
+
+    #[test]
+    fn a_commit_no_ref_contains_has_no_ghost_refs() {
+        // The case a "nearest ref" search gets wrong by answering anyway: a
+        // tip on a parallel history is not what this commit is labelled by.
+        let t = TestRepo::new();
+        let a = t.commit("a", &[]);
+        let orphan = t.commit_orphan("elsewhere", "elsewhere");
+        drop_scaffold_branches(&t);
+        t.repo.branch("main", &t.repo.find_commit(a).unwrap(), true).unwrap();
+
+        assert!(containing_refs(&t.repo, &orphan.to_string(), 5).unwrap().is_empty());
+    }
 
     #[test]
     fn push_target_prefers_origin_then_a_sole_remote() {

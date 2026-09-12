@@ -8,12 +8,16 @@ import {
   getStatus,
   getWorktreeDiff,
   ignorePath,
+  copyChangesToWorktree,
   listContributors,
   listRefs,
+  listWorktrees,
   commitTemplate,
   operationContinue,
   resolveConflictSide,
   stagePaths,
+  stashSave,
+  stashSaveStaged,
   unstagePaths,
 } from "../../ipc/commands";
 import { refreshRepo } from "../../ipc/repoState";
@@ -70,6 +74,13 @@ export function StagingView() {
   const { data: contributors } = useQuery({
     queryKey: ["contributors", repo.path],
     queryFn: () => listContributors(repo.path),
+    staleTime: 30_000,
+  });
+  // Only for the "Copy changes to worktree…" entry, which does not exist until
+  // there is a second worktree to copy into (`01-commit.md` §3.2).
+  const { data: worktrees } = useQuery({
+    queryKey: ["worktrees", repo.path],
+    queryFn: () => listWorktrees(repo.path),
     staleTime: 30_000,
   });
 
@@ -144,6 +155,54 @@ export function StagingView() {
       toastError(e);
     }
   }
+
+  /**
+   * The `…` menu on a section header (`01-commit.md` §3.2).
+   *
+   * GitLens treats moving uncommitted work between worktrees as a first-class
+   * action, and it is the whole point of having worktrees: you started in the
+   * wrong one. Stash sits beside it because both answer "get this out of my
+   * way", and the header is where the pile of changes is.
+   */
+  const sectionMenu = (event: React.MouseEvent, stagedOnly: boolean): void => {
+    const others = (worktrees ?? []).filter((wt) => !wt.isCurrent);
+    const what = stagedOnly ? "staged changes" : "all changes";
+    const items: MenuItem[] = [
+      {
+        label: stagedOnly ? "Stash staged changes" : "Stash all changes",
+        onClick: () =>
+          run(async () => {
+            if (stagedOnly) await stashSaveStaged(repo.path);
+            // Untracked files are part of "all changes" here; leaving them
+            // behind is how a stash-and-switch loses a brand-new file.
+            else await stashSave(repo.path, undefined, true);
+            pushToast("success", `Stashed ${what}.`);
+          }),
+      },
+    ];
+    if (others.length) {
+      items.push({ separator: true });
+      for (const wt of others) {
+        items.push({
+          label: `Copy ${what} to “${wt.name}”…`,
+          onClick: () =>
+            run(async () => {
+              const copied = await copyChangesToWorktree(repo.path, wt.name, stagedOnly);
+              // "Copy", so the toast says what is *still here* as well as what
+              // is now there — the gesture is easy to read as a move.
+              pushToast(
+                copied.skipped ? "info" : "success",
+                `Copied ${copied.files} file(s) to “${copied.worktree}”. This worktree keeps them too.` +
+                  (copied.skipped
+                    ? ` ${copied.skipped} change(s) could not be expressed as a patch and stayed here only.`
+                    : ""),
+              );
+            }),
+        });
+      }
+    }
+    setMenu({ x: event.clientX, y: event.clientY, items });
+  };
 
   const staged = status?.staged ?? [];
   const unstaged = status?.unstaged ?? [];
@@ -235,9 +294,18 @@ export function StagingView() {
           title={`Staged (${staged.length})`}
           action={
             staged.length > 0 && (
-              <button onClick={() => run(() => unstagePaths(repo.path, staged.map((e) => e.path)))}>
-                Unstage all
-              </button>
+              <span className="staging-bulk">
+                <button onClick={() => run(() => unstagePaths(repo.path, staged.map((e) => e.path)))}>
+                  Unstage all
+                </button>
+                <button
+                  className="staging-more"
+                  title="Stash or copy the staged changes"
+                  onClick={(event) => sectionMenu(event, true)}
+                >
+                  ⋯
+                </button>
+              </span>
             )
           }
         >
@@ -294,6 +362,13 @@ export function StagingView() {
                 </button>
                 <button onClick={() => run(() => stagePaths(repo.path, unstaged.map((e) => e.path)))}>
                   Stage all
+                </button>
+                <button
+                  className="staging-more"
+                  title="Stash or copy every uncommitted change"
+                  onClick={(event) => sectionMenu(event, false)}
+                >
+                  ⋯
                 </button>
               </span>
             )

@@ -30,6 +30,21 @@ function finish(result: CheckoutResult): CheckoutResult {
   return result;
 }
 
+/**
+ * Does this git failure mean "the working tree is in the way"?
+ *
+ * Invariant 8 leaves us a plain string, so the classification is textual. It
+ * is shared with the cherry-pick fallback (`07-cherry-pick.md` B4) rather than
+ * copied: checkout and cherry-pick are refused by the same code inside git and
+ * print the same sentences, and two regexes that drift apart would offer the
+ * stash on one gesture and not the other.
+ */
+export function looksLikeDirtyTreeCollision(text: string): boolean {
+  return /local changes|would be overwritten|untracked working tree files|checkout conflict/i.test(
+    text,
+  );
+}
+
 /** Checkout with Git's normal carry-forward behavior and collision recovery. */
 export async function smartCheckout(path: string, target: string): Promise<CheckoutResult> {
   // Every checkout in the app comes through here — sidebar, graph rows, ref
@@ -112,9 +127,7 @@ async function smartCheckoutInner(path: string, target: string): Promise<Checkou
       if (choice === "new") return finish(await checkoutAdvanced(path, remote, "normal", `${local}-1`));
       throw CANCELLED;
     }
-    const looksLikeCollision =
-      /local changes|would be overwritten|untracked working tree files|checkout conflict/i.test(text);
-    if (!looksLikeCollision) throw error;
+    if (!looksLikeDirtyTreeCollision(text)) throw error;
     const choice = await choiceDialog({
       title: `Cannot check out ${target}`,
       message: `${text}\n\nChoose how MTGit should handle the colliding changes.`,

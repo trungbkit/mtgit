@@ -28,6 +28,7 @@ export type ActionId =
   | "redo"
   | "push"
   | "pull"
+  | "graph.findRef"
   | "search.focus"
   | "search.next"
   | "search.prev"
@@ -67,6 +68,13 @@ export const ACTIONS: Action[] = [
     group: "Graph",
     chord: "Mod+Shift+F",
     note: "Mod+F also focuses search while the graph has focus",
+  },
+  {
+    id: "graph.findRef",
+    label: "Find a branch or tag",
+    group: "Graph",
+    chord: "/",
+    note: "Selects the tip; it does not check out",
   },
   { id: "search.next", label: "Next match", group: "Graph", chord: "F3", also: ["Mod+G"] },
   {

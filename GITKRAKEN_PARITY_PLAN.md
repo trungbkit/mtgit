@@ -53,8 +53,8 @@ links (9 for worktrees and WIP-row placement, 5 for token resolution), at **107*
 **162** after the rest of P8 — `STATUS.md` §5 lists what those 55 pin and why each needed a
 test rather than a look.
 
-**There is now a frontend runner too.** P7 added Vitest; the suite is at **204 tests** after
-P8. The gate is five commands rather than four:
+**There is now a frontend runner too.** P7 added Vitest; the suite is at **232 tests** after
+the 2026-09-12 pass. The gate is five commands rather than four:
 
 ```
 cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
@@ -169,8 +169,8 @@ turns G10 from a design problem into an implementation one.
 
 | # | Gap | Detail |
 |---|---|---|
-| ~~G16~~ | ~~**Graph has three fixed columns**~~ ✅ **closed in P8 item 3** | Author / Changes / Date / SHA, toggleable and reorderable from the gear popover, persisted in `settings.graphColumns` — a preference, not session state, which is why `graphOpts.showAuthor` is gone rather than wrapped. Reorder is ▲/▼ rather than header dragging: the popover is 200px wide and drag inside it would fight the graph's own row dragging. Changes is the one column that costs a diff per row, so it is off by default and fetched per visible window in 50-row blocks. |
-| ~~G17~~ | ~~**No minimap**~~ ✅ **closed in P8 item 3** | The markers landed with P5's search; the minimap followed. It is a *density* strip beside them, shown only while a search is submitted — "where are my matches clustered" has no answer when nothing is searched for. Bucketed and shaded by count, because at 12,000 commits in 600px each pixel row is twenty commits and one mark per hit loses every cluster to overlap. |
+| ~~G16~~ | ~~**Graph has three fixed columns**~~ ✅ **closed in P8 item 3** | Author / Changes / Date / SHA, toggleable and reorderable from the gear popover, persisted in `settings.graphColumns` — a preference, not session state, which is why `graphOpts.showAuthor` is gone rather than wrapped. Reorder is ▲/▼ rather than header dragging: the popover is 200px wide and drag inside it would fight the graph's own row dragging. Changes is the one column that costs a diff per row, so it is off by default and fetched per visible window in 50-row blocks. **The refs column's `+N` overflow chip landed on 2026-09-12** with the same reasoning: it is a fixed-width column, and a release commit carrying nine tags would push the graph off-screen. The inline count is a setting for the same reason the columns are — the right number is a property of the repository. The HEAD pill is exempt from the collapse: a plain slice would put "where am I" behind a chip on precisely the rows that carry the most refs. |
+| ~~G17~~ | ~~**No minimap**~~ ✅ **closed in P8 item 3** | The markers landed with P5's search; the minimap followed. It is a *density* strip beside them, shown only while a search is submitted — "where are my matches clustered" has no answer when nothing is searched for. Bucketed and shaded by count, because at 12,000 commits in 600px each pixel row is twenty commits and one mark per hit loses every cluster to overlap. **Ghost refs landed on 2026-09-12**, the last of §1.2: `refs::containing_refs` names the nearest branch or tag containing a commit, asked on hover and only for rows carrying no pill of their own — containment is a merge-base per ref, and a ghost beside a real pill reads as a rendering fault rather than a hint. |
 | ~~G18~~ | ~~**Worktrees exist in the backend and nowhere in the UI**~~ ✅ **closed in P8 item 1** | The sidebar WORKTREES section lists every worktree — main included, which `Repository::worktrees()` omits — with add, open-as-a-tab and remove; "Open in worktree…" sits beside Checkout on branch menus and graph rows; the toolbar names the linked worktree the tab is in; and each *dirty* worktree gets its own WIP row on its own HEAD's lane. Backend grew `remove`, a main-worktree-aware `list`, and ref-aware `add`. |
 | ~~G19~~ | ~~**No terminal links**~~ ✅ **closed in P8 item 6** | It was the regex plus a call into the graph-selection path this row predicted, with one correction: the regex alone cannot tell "main" in a branch listing from "main" in a sentence, so candidates are extracted in `lib/terminalLinks.ts` and *resolved* by `core/terminal.rs` against the repository. A token only becomes a link when git can resolve it. Ranges reveal their right end; not-yet-loaded commits pull pages until they turn up. |
 | ~~G20~~ | ~~**No autolinks**~~ ✅ **closed in P8 item 6** | `core/autolink.rs` reads per-repo patterns from config and adds a built-in `#` pattern **only** for hosts whose issue URL shape we know — a guess at an unknown host produces a link that 404s, and a broken link is worse than plain text because the user follows it. `lib/autolinks.ts` splits the text (longest match wins; no reference may start mid-word, so `#ff0012` stays a colour). Link out only, exactly as this row said. |
@@ -540,8 +540,8 @@ were not clicked through.
   format gate would fail on the first run for reasons unrelated to any change. It has still
   never *run* — expect Windows path and line-ending fallout on first green, which is the point
   of standing it up.
-- **Frontend tests** ✅ — Vitest + Testing Library + jsdom, **154 tests at the time** (204 after
-  P8) over the state machines
+- **Frontend tests** ✅ — Vitest + Testing Library + jsdom, **154 tests at the time** (230 today)
+  over the state machines
   that had nothing checking them: the session store's tab rules and recent-repo migration, the
   search store's three modes and hit navigation, the settings store, `lib/keys`, `refname`,
   `cloneurl`, `terminalLinks`, `DialogHost`, and — the two the STATUS §1 record singled out as
@@ -565,6 +565,18 @@ were not clicked through.
   the whole remaining change.
 - **E2E** ✗ — not started. `tauri-driver` + WebdriverIO against `scripts/make-fixture.sh` needs a
   built binary and a driver on the runner, neither of which exists yet.
+- **Frontend tests, second pass** ✅ — 232 after the 2026-09-12 spec-backlog pass. Same lesson as
+  the first: the fixture is where the lies live. `net.test.ts`'s `RepoInfo` was built with a cast
+  and no `head`, which the type says is not optional; nothing read it until `runNet` needed the
+  branch a push had moved, and then four green tests went red at once on a `TypeError` its own
+  catch was swallowing.
+  The pass also shipped a crash and then closed it — `GraphView` declared two hooks below its
+  early returns, so every repository open threw "rendered more hooks than during the previous
+  render" (`STATUS.md` §5.1). It is the clearest argument yet for the one tool this repo does
+  not have: **there is no eslint config**, so `react-hooks/rules-of-hooks` — which exists for
+  exactly this and would have caught it at the keyboard — is not running. Adding it is a
+  seventh gate command and a decision for whoever owns the gate, but the cost of not having it
+  is now measured.
 
 **Exit — not yet met:** a stranger can build all three platforms from a tag, but not install a
 signed one.
@@ -740,6 +752,22 @@ list_contributors(limit?)               # DONE — co-authorship counted separat
 commit_stats(oids[])                    # DONE — batched, for the graph's Changes column
 commit_template()                       # DONE — `commit.template`, comments stripped
 worktree_holding(branch)                # DONE — who already has it checked out
+copy_changes_to_worktree(name, stagedOnly) -> { files, skipped, worktree, path }
+                                        # DONE — a copy, not a move; the diff includes
+                                        # untracked *and* binary files, the two a plain patch
+                                        # drops, and `skipped` reports anything it still could
+                                        # not carry. No op guard: nothing changes in *this*
+                                        # repository, and a second tab on the target should
+                                        # see its own watcher fire
+stash_save_staged(message?)             # DONE — `git stash push --staged`; libgit2 has no
+                                        # equivalent and KEEP_INDEX is the opposite scope
+containing_refs(oid, limit?) -> [{ name, kind, distance }]
+                                        # DONE — ghost refs (overview §1.2). A merge-base per
+                                        # ref, so it is asked on hover and only for rows with
+                                        # no pill of their own
+complete_paths(oid?, prefix, limit?) -> [{ path, isDir }]
+                                        # DONE — `file:` autocomplete, one path segment at a
+                                        # time from the selection's tree
 unset_upstream(local)                   # DONE — the prune-orphan recovery (STATUS C8)
 resolve_terminal_tokens(tokens[]) -> [{ token, kind, oid, label }]   # DONE — batched per
                                         # hovered line; only resolvable tokens come back
@@ -795,15 +823,16 @@ Two contract notes that are easy to get wrong:
 | ~~P4~~ | ~~Conflict editor~~ | ✅ **done** (3-pane + per-file take-side); the labels and cross-file region nav it left outstanding landed with P8 item 2 |
 | ~~P5~~ | ~~Search, drag-drop, interactive rebase~~ | ✅ **done** (search grammar in Rust + three result modes + scroll markers; drag-drop; interactive rebase) |
 | ~~P6~~ | ~~Settings, light theme, keybindings, icons~~ | ✅ **done** (settings file + identity, both themes, keybinding registry + cheat sheet, SVG icon set) |
-| P7 | CI, tests, packaging | ◐ **partly done** — CI, the frontend suite (204 tests) and the IPC check are in; e2e and signing/updater are not |
-| ~~P8~~ | ~~GitLens-derived surfaces (G16–G28)~~ | ✅ **done** — all six items; G16–G28 closed bar `+N` ref overflow and ghost refs on hover, both named in `STATUS.md` §6 |
-| **Remaining** | P7's **e2e + code signing**, and the short list in `docs/feature-requirements/STATUS.md` §4 (rebase ghosting, cherry-pick sequence progress, two flashes) | **~3–5 days of feature work, plus whatever the certificates and the runner take** |
+| P7 | CI, tests, packaging | ◐ **partly done** — CI, the frontend suite (232 tests) and the IPC check are in; e2e and signing/updater are not |
+| ~~P8~~ | ~~GitLens-derived surfaces (G16–G28)~~ | ✅ **done** — all six items, and **G16–G28 are now closed outright**: `+N` ref overflow and ghost refs landed on 2026-09-12 with the rest of the spec backlog |
+| **Remaining** | P7's **e2e + code signing**, plus three items that are decisions rather than work: rebase ghosting, cherry-pick sequence progress, and what the sidebar's eye toggle should mean | **Whatever the certificates and the runner take; the feature backlog is closed** |
 
 The UI/UX fidelity work in §3 was distributed across P1 (shell + start screen), P3 and P8 (undo
 toasts), P5 (drop affordances), P6 (tokens, density, icons) and P8 (columns, minimap, detail
 stack) rather than batched — a separate "make it look like GitKraken" phase at the end would
-have meant rebuilding components twice. It is done bar the four items in
-`docs/feature-requirements/STATUS.md` §4.
+have meant rebuilding components twice. It is done bar the two items in
+`docs/feature-requirements/STATUS.md` §4, both of which are recorded trades rather than
+unfinished work — the picked flash and the remote-pill animation closed on 2026-09-12.
 
 P8 was deliberately sequenced **after** P7 rather than before it, despite containing items
 cheaper than anything in P6. The reason was that P7 stands up CI and the first frontend test
@@ -860,13 +889,29 @@ If you want the shortest path to "this feels like GitKraken":
     (item 2, which did subsume STATUS C4 and did unblock two rebase items), then the column
     model and the minimap, the detail stack, conflict prediction, and item 6's cheap wins.
     `--follow` (G22) was pulled forward out of order as this line said to.
-11. **P7** ◐ ← **what is left.** CI, the frontend suite (204 tests) and `check-ipc` landed;
+10c. ~~**The spec backlog** — every unticked acceptance criterion left across the eight feature
+    docs.~~ ✅ **done on 2026-09-12**, and it was smaller than the count suggested because four
+    of the items shared two new backend reads. `refs::containing_refs` gave the graph ghost refs;
+    `core/paths.rs` gave `file:` its path source; `worktree::copy_changes` gave the commit panel
+    its copy action; and `cherry_pick_many`'s `stash_fallback` closed both B4 and, with
+    `worktree_holding`, the composite drop. The frontend halves — the `+N` chip, the `/` finder,
+    the picked and pushed flashes — are each a small module with tests
+    (`lib/refPills`, `lib/refFinder`, `lib/cherryPick`), extracted for the same reason P8's were:
+    a runner exists to point them at, and two of them found their own bugs while being written.
+11. **P7** ◐ ← **what is left.** CI, the frontend suite (232 tests) and `check-ipc` landed;
     **e2e and code signing are the remainder**, and both need something this repository does not
     have (a `tauri-driver` on the runner, an Apple Developer ID plus a notarytool password, a
     Windows code-signing certificate, and an updater keypair). The secret names `tauri-action`
     reads are already in `.github/workflows/release.yml`, so adding them is the whole change on
     that side.
-12. **Then the four polish items in `docs/feature-requirements/STATUS.md` §4**, of which only
-    one is hard: in-progress rebase ghosting needs the graph to represent "a commit that will
-    exist", and inventing rows for those collides with `search_commits` returning row indices —
-    the same constraint that kept WIP rows out of the row list.
+12. **What is deliberately not built**, so it is not re-proposed as an oversight. Three items,
+    each blocked on a judgement rather than on effort:
+    - **In-progress rebase ghosting** (`06-rebase.md` B4) — the graph has no representation of
+      "a commit that will exist", and inventing rows for those collides with `search_commits`
+      returning row indices; the same constraint kept WIP rows out of the row list. The honest
+      fix is a second index space, which is a change to the graph's contract, not a feature.
+    - **Per-commit cherry-pick progress** (`07-cherry-pick.md` §3) — the spec itself rules it
+      out: it would cost the sequencer's restart semantics, which are worth more than a counter.
+    - **What the sidebar's eye toggle means** (`08-search-and-filter.md` §7.1) — today it hides
+      *badges*; GitKraken's hides *rows*. Both are defensible and the second changes behaviour
+      that already shipped, so it wants a decision before code.

@@ -86,12 +86,32 @@ impl TestRepo {
         let n = self.counter.get() + 1;
         self.counter.set(n);
 
-        let mut tb = self.repo.treebuilder(None).unwrap();
+        // An in-memory index rather than a treebuilder: a treebuilder inserts
+        // one flat entry per call and rejects a `/` in the name, so a fixture
+        // with `src/lib.rs` in it could not be written at all. The index is
+        // also not the repository's, so building a fixture does not stage
+        // anything a later test would read back.
+        let mut index = git2::Index::new().unwrap();
         for (path, content) in files {
             let blob = self.repo.blob(content.as_bytes()).unwrap();
-            tb.insert(*path, blob, 0o100644).unwrap();
+            index
+                .add(&git2::IndexEntry {
+                    ctime: git2::IndexTime::new(0, 0),
+                    mtime: git2::IndexTime::new(0, 0),
+                    dev: 0,
+                    ino: 0,
+                    mode: 0o100644,
+                    uid: 0,
+                    gid: 0,
+                    file_size: content.len() as u32,
+                    id: blob,
+                    flags: 0,
+                    flags_extended: 0,
+                    path: path.as_bytes().to_vec(),
+                })
+                .unwrap();
         }
-        let tree_oid = tb.write().unwrap();
+        let tree_oid = index.write_tree_to(&self.repo).unwrap();
         let tree = self.repo.find_tree(tree_oid).unwrap();
         let sig = self.sig(n);
 

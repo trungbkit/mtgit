@@ -37,6 +37,17 @@ read out of the source, not inferred from the plan. The gate is green at this co
 > What is left in the plan is **P7's e2e and code signing**, which need a driver on the runner
 > and certificates this repository does not have.
 
+> **The spec backlog closed on 2026-09-12.** Every unticked acceptance criterion across the
+> eight feature docs, bar the ones blocked on something this repository does not have or on a
+> decision nobody has taken. What landed: the `+N` ref-overflow chip and ghost refs on hover
+> (overview §1.2); the `/` branch finder (`02-checkout.md` §2); `file:` path autocomplete
+> (`08-search-and-filter.md` §4); Stash and Copy-changes-to-worktree on the commit panel headers
+> (`01-commit.md` §3.2); the cherry-pick dirty-tree fallback and the worktree composite action
+> (`07-cherry-pick.md` B4, §5); and two of §4's four polish items, the picked flash and the
+> remote-pill animation. The gate is at **173 Rust tests** and **232 frontend tests**, green on
+> all six commands. What is deliberately *not* built is §4's remaining two plus the sidebar eye's
+> meaning — each blocked on a judgement rather than on effort, and each recorded where it lives.
+
 > **Scope note (revised after the GitLens pass).** This audit covers the docs *as they stood on
 > 2026-09-08*, before `gitkraken/vscode-gitlens` was folded in as a second reference
 > (`00-overview.md` §0). The specs have since grown a set of GitLens-derived criteria, each
@@ -64,14 +75,14 @@ record; what is unticked there is unticked here.
 
 | Doc | Feature | Verdict |
 |---|---|---|
-| `01-commit.md` | Commit & staging | **Complete** against the original spec and all but one GitLens criterion; **Stash / Copy-to-worktree from the panel headers** is the remainder |
-| `02-checkout.md` | Checkout | **Complete** bar two: the large-checkout progress counter (git gives us no progress for a local checkout) and the `/` branch finder |
+| `01-commit.md` | Commit & staging | **Complete.** Stash / Copy-to-worktree landed on the panel headers, closing the last GitLens criterion |
+| `02-checkout.md` | Checkout | **Complete** bar one: the large-checkout progress counter, which git gives us no progress for on a local checkout. The `/` branch finder landed |
 | `03-push.md` | Push | **Complete** — publish form, lease and auth recovery, push-tag, the pill menu and unpushed markers all landed |
 | `04-pull.md` | Pull & fetch | **Complete** — including the autostash-conflict toast, the prune-orphan recovery, unpulled markers, jump-to and merge target |
 | `05-merge.md` | Merge | **Complete** — the unified conflict panel closed the last three |
 | `06-rebase.md` | Rebase + interactive | **Complete** bar in-progress graph ghosting (B4) |
-| `07-cherry-pick.md` | Cherry-pick | **Substantially complete** — no dirty-tree stash fallback, no per-commit sequence progress, no worktree composite action |
-| `08-search-and-filter.md` | Commit search & filtering | **Complete** bar `file:` path autocomplete — the minimap and contributor autocomplete landed with P8. See its §7.1 |
+| `07-cherry-pick.md` | Cherry-pick | **Complete** bar per-commit sequence progress, which §3 itself rules out as not worth the sequencer semantics it would cost |
+| `08-search-and-filter.md` | Commit search & filtering | **Complete** as an implementation. Its §7.1 is down to two rows, neither of which is missing work: the sidebar eye's meaning is an open product decision, and a search field inside a full-width diff has no centre pane to take over |
 
 ---
 
@@ -231,16 +242,27 @@ Closed since this list was written:
   `isMerge` and listed greyed in the editor, while still kept out of the todo file — `git
   rebase -i` without `--rebase-merges` never had them in its own list.
 
+Closed on 2026-09-12:
+
+- ~~**No "picked" flash on the source commits.**~~ ✅ The prediction that this was "one call site
+  away" was half right. Reusing `flashOid` would not have worked: a cherry-pick moves HEAD too,
+  so the HEAD flash fires in the same tick and one state slot means the last writer wins. It is
+  its own state and its own keyframe, in a different colour — two rows pulsing identically say
+  "these are the same thing" where the point is "this one came from that one".
+- ~~**No remote-pill animation after a push.**~~ ✅ `net.ts` announces the branch a successful
+  push moved (`PUSH_FLASH_EVENT`) and the graph pulses the matching pill. The graph cannot watch
+  for this itself: a push moves a ref the graph query only learns about on its next refresh, by
+  which time the pill has already redrawn in its new place. Both the remote pill and the local
+  pill that absorbed it match, because on screen they are one pill.
+
 Still outstanding:
 
 - **No progress on a cherry-pick sequence** ("Cherry-picking 3 of 7…"); the whole list is one
   `git cherry-pick` invocation, so there is nothing to report per commit. Either drive the
   sequence commit-by-commit or drop the requirement. **Still undecided**, and deliberately so:
   driving it per commit would mean owning the sequencer's restart semantics, which is a larger
-  change than the progress bar is worth.
-- **No "picked" flash on the source commits** after a cherry-pick. The flash mechanism now
-  exists (it is what the HEAD row uses); this is one call site away.
-- **No remote-pill animation** after a push.
+  change than the progress bar is worth. `07-cherry-pick.md` §3 says the same in the spec itself,
+  which makes this a recorded trade rather than a gap.
 - **No in-progress ghosting** of not-yet-replayed commits during a rebase (`06-rebase.md` B4).
   The one genuinely hard item left here: the graph has no representation of "a commit that will
   exist", and inventing rows for them collides with `search_commits` returning row indices
@@ -313,9 +335,9 @@ Writing them found four real defects, each fixed with the test that caught it:
   token instead.
 - **`isTypingTarget` could return `undefined`** where its signature promised a boolean.
 
-What the frontend suite still does **not** cover: `GraphView` and `Sidebar` (the two largest
-components, both needing a virtualizer and a query client to render), `lib/checkout.ts`'s
-collision-recovery dialog flow, and the diff renderer. E2E (P7) is unstarted, so no test in
+What the frontend suite still does **not** cover: `Sidebar`, `lib/checkout.ts`'s
+collision-recovery dialog flow, and the diff renderer. `GraphView` was on this list until
+§5.1's defect took it off — it now has a mount test, though only over the open path. E2E (P7) is unstarted, so no test in
 either suite drives the real app.
 
 **P8 added 55 Rust tests (107 → 162) and 50 frontend tests (154 → 204.)** What they pin, and why
@@ -356,6 +378,68 @@ each was worth a test rather than a look:
 Still uncovered, and worth naming: `ConflictPanel`'s cross-file navigation and the graph's
 column rendering are both component-level and share the gap above.
 
+**The 2026-09-12 pass added 11 Rust tests (162 → 173) and 28 frontend tests (204 → 232.)**
+
+- `core/refs.rs` (2) — ghost refs name the *nearest* containing branch first, and a ref pointing
+  **at** the commit is not a ghost (the row already carries a real badge, and a duplicate reads
+  as a rendering fault). Plus the case a "nearest ref" search gets wrong by answering anyway: a
+  commit on a parallel history has no containing ref, and the honest answer is none.
+- `core/paths.rs` (3) — completion descends one segment at a time, reads the selection's tree
+  rather than the working directory, and falls back to the index on an unborn HEAD.
+- `core/worktree.rs` (3) — copy reproduces a tracked edit **and an untracked file** without
+  removing either from the source, carries a **binary** file, and refuses a copy into the
+  worktree the changes are already in. The two content cases are where a plain diff quietly does
+  the wrong thing: an untracked file is the common case for the gesture (a brand-new file), and a
+  binary one prints as "Binary files differ" and applies as nothing unless the diff is asked for
+  the real bytes. Whatever a patch still cannot carry is counted and reported rather than
+  dropped, because "copied 4 files" must not be a lie about work that stayed in one place.
+- `core/advanced.rs` (2) — the cherry-pick stash fallback, once per outcome that differs: a
+  paused sequence **keeps** the stash, a clean pick pops it back.
+- `core/settings.rs` (1, extended) — an inline ref count of zero clamps to one, since all-chip
+  and no answer is not a preference.
+- Frontend: `lib/refPills` (10) — the overflow plan and the push-flash match, including that a
+  remote branch with slashes in its name (`upstream/feat/login`) is matched on the whole name
+  after the remote and not on the first segment; `lib/refFinder` (7) — the ranking, stated as
+  the failure it prevents (`remainder` must not outrank `main`); `lib/cherryPick` (8) — the B4
+  fallback's four branches and the rule that a *failed* or *paused* pick does not flash its
+  sources, because the flash means "these are now up there too"; and one in
+  `features/network/net` for the push announcement.
+
+Writing them found one defect of the same shape as P7's four: `net.test.ts`'s `RepoInfo` fixture
+had no `head`, which the type says is not optional. Nothing read it until `runNet` needed the
+branch a push had moved, and then four passing tests failed at once on a `TypeError` swallowed
+by the function's own catch. A cast-shaped fixture is a lie the compiler has been told not to
+check; the fixture now carries every field.
+
+### 5.1 A6 — the one this pass shipped, and what it cost to find
+
+**Opening any repository crashed the renderer.** `GraphView` declares four early returns
+(`!repo`, `isPending`, `error`, no rows) and then, a hundred lines further down, declared two
+`useCallback`s beside `dropOnRef`, the plain helper that calls them. The first render of a
+repository takes the `isPending` branch and runs the hooks above the returns; the second runs
+those *and* the two below. React throws "rendered more hooks than during the previous render"
+and the app shows its error boundary instead of the graph.
+
+Three things about it are worth keeping:
+
+- **It was half pre-existing.** `refContextMenu` had been below the returns since B1, and the
+  hook count changing between renders was already true. Adding `pickInWorktree` did not create
+  the fault so much as make it fire reliably. Both are now above the returns, with a
+  `---- No hooks below this line. ----` comment where they used to be able to go.
+- **Nothing in the gate could see it.** `tsc` is happy, the Rust tests never load a component,
+  and the frontend suite deliberately skipped `GraphView` (this section said so, two paragraphs
+  up: "the two largest components, both needing a virtualizer and a query client to render").
+  The gap named itself and then the bug walked through it. **There is also no eslint config in
+  this repo** — the scattered `eslint-disable-next-line` comments are vestigial —
+  so `react-hooks/rules-of-hooks`, which exists precisely for this, is not running.
+- **The test that closes it is small.** `GraphView.test.tsx` mounts the component with
+  `getGraph` unresolved, asserts the loading state, then resolves it — the exact transition. It
+  needs the IPC module stubbed, `@tanstack/react-virtual` replaced (jsdom lays nothing out, so
+  the real virtualizer reports zero rows and the assertion would pass against a component that
+  rendered nothing), a null canvas context, and a `ResizeObserver` stub, which now lives in
+  `src/test/setup.ts` for the next component test. It was confirmed to fail against the bug
+  before being kept.
+
 ---
 
 ## 6. GitLens-derived criteria — closed with P8
@@ -368,15 +452,15 @@ that does not survive in the code.
 
 | Doc | New criteria | State |
 |---|---|---|
-| ~~`08-search-and-filter.md`~~ | ~~15 — the whole doc~~ | ✅ **Done in P5.** `core/search.rs`, `search_commits` / `cancel_search`, `SearchBar`, `stores/search.ts`, `ScrollMarkers`. 25 tests. The minimap and contributor autocomplete followed in P8; `file:` path autocomplete is the only remainder (that doc's §7.1). |
-| ~~`00-overview.md`~~ | columns · Changes column · minimap · scroll markers · `+N` overflow · ghost refs · detail sheets · WORKTREES + CONTRIBUTORS · sidebar-scopes-the-graph · jump-to · date style · terminal links · autolinks · rich hovers · blame heatmap · follow renames · revision navigation · guided palette | ✅ **All but `+N` ref overflow and ghost refs on hover.** The column model is a persisted preference (`settings.graphColumns`), not session state — the old `graphOpts.showAuthor` was exactly the second source of truth the conventions forbid, and it is gone. The **Changes** column is the only one that is not free (a diff per row), so it is off by default and fetched per *visible window*, rounded to a block so dragging the scrollbar is not a fetch per frame. |
-| ~~`01-commit.md`~~ | 5 — per-worktree WIP row · co-author picker · `commit.template` · autolinks in preview · stash / copy-to-worktree | ✅ **Four of five.** The WIP row carries one recorded deviation: clicking another worktree's row **opens that worktree as a tab** rather than opening the commit panel on it — a different worktree has a different index, and this tab's handle cannot stage into it honestly. Stash / copy-to-worktree from the panel headers is the one left. |
-| ~~`02-checkout.md`~~ | 5 + §7 — `/` finder · remote branches in the palette · Open in worktree… · worktree-holds-branch dialog · sidebar worktree management | ✅ **All but the `/` branch finder.** B8's detached case needed a scratch reference (git2's `WorktreeAddOptions` insists on one) that is deleted after the worktree's HEAD is moved off it — which is what git does internally; a test asserts no `mtgit-worktree-*` branch survives. The holds-branch dialog names the worktree via `worktree_holding` and offers to open it. |
+| ~~`08-search-and-filter.md`~~ | ~~15 — the whole doc~~ | ✅ **Done in P5.** `core/search.rs`, `search_commits` / `cancel_search`, `SearchBar`, `stores/search.ts`, `ScrollMarkers`. 25 tests. The minimap and contributor autocomplete followed in P8, and `file:` path autocomplete on 2026-09-12 — `core/paths.rs` completes one path segment at a time from the *selection's* tree, which is both the shape that stays useful at 50k paths and the only one that cannot offer a path the commit never had. |
+| ~~`00-overview.md`~~ | columns · Changes column · minimap · scroll markers · `+N` overflow · ghost refs · detail sheets · WORKTREES + CONTRIBUTORS · sidebar-scopes-the-graph · jump-to · date style · terminal links · autolinks · rich hovers · blame heatmap · follow renames · revision navigation · guided palette | ✅ **All of them.** `+N` overflow and ghost refs closed on 2026-09-12. The overflow chip is `lib/refPills.ts`, and the rule worth knowing is that **the HEAD pill is never the one hidden** — a plain slice puts "where am I" behind a chip on exactly the rows that carry the most refs; the inline count is a setting (`graphRefInlineCount`) because the right number is a property of the repository. Ghosts are asked for on hover and **only for rows with no pill of their own**: containment is a merge-base per ref, so asking on every hovered row would pay that sweep for an answer thrown away, and a ghost rendered beside a real pill reads as a fault rather than a hint. The column model is a persisted preference (`settings.graphColumns`), not session state — the old `graphOpts.showAuthor` was exactly the second source of truth the conventions forbid, and it is gone. The **Changes** column is the only one that is not free (a diff per row), so it is off by default and fetched per *visible window*, rounded to a block so dragging the scrollbar is not a fetch per frame. |
+| ~~`01-commit.md`~~ | 5 — per-worktree WIP row · co-author picker · `commit.template` · autolinks in preview · stash / copy-to-worktree | ✅ **All five**, the last on 2026-09-12. The WIP row carries one recorded deviation: clicking another worktree's row **opens that worktree as a tab** rather than opening the commit panel on it — a different worktree has a different index, and this tab's handle cannot stage into it honestly. Stash and copy-to-worktree now sit behind a `⋯` on the **Staged** and **Changes** headers, each offering the scope its section names; the copy is a copy, because a half-applied move of uncommitted work is a loss no reflog can undo. |
+| ~~`02-checkout.md`~~ | 5 + §7 — `/` finder · remote branches in the palette · Open in worktree… · worktree-holds-branch dialog · sidebar worktree management | ✅ **All five**, the finder on 2026-09-12: it selects a tip and never checks out, which is what separates it from the palette and is why a bare `/` is safe for it. B8's detached case needed a scratch reference (git2's `WorktreeAddOptions` insists on one) that is deleted after the worktree's HEAD is moved off it — which is what git does internally; a test asserts no `mtgit-worktree-*` branch survives. The holds-branch dialog names the worktree via `worktree_holding` and offers to open it. |
 | ~~`03-push.md`~~ | 2 — unpushed row markers · worktree-aware push target | ✅ **Both.** The push target fell out of G18 for free; the markers come from `graph::sync_sets`, which walks the divergence rather than history. |
 | ~~`04-pull.md`~~ | 3 — unpulled row markers · jump-to controls · merge-target resolution + display | ✅ **All three.** The resolution rule git does not have is documented at `refs::merge_target` rather than spread across the UI: config override, the remote's advertised default, then a conventional name — and a branch is never its own merge target. |
 | ~~`05-merge.md`~~ | 3 — unified conflict panel · cross-file region navigation · ref-labelled take-side | ✅ **All three**, and they subsumed C4 as predicted. |
 | ~~`06-rebase.md`~~ | 3 — conflict prediction · unified panel mid-plan · undo from the completion toast | ✅ **All three.** Prediction was indeed the one new algorithm. Two findings worth keeping: conflicts **cascade** (reordering two commits that touch one line predicts two conflicts, because git stops twice), and "writes nothing" turned out to be not quite true — unreferenced tree objects are written, because git2's merge takes `Tree` handles. Both are stated in the module doc rather than glossed. |
-| ~~`07-cherry-pick.md`~~ | 3 — search-fed multi-pick · unified panel · worktree composite action | ✅ **Two of three.** The worktree composite action is the remainder. |
+| ~~`07-cherry-pick.md`~~ | 3 — search-fed multi-pick · unified panel · worktree composite action | ✅ **All three**, the composite on 2026-09-12. Dropping a commit on a pill that is not HEAD used to toast "check out the target branch first" — a tool declining to do what it was asked. It now asks `worktree_holding` which case it is and offers the matching composite, running the worktree one directly rather than through the popover: the popover is state of the tab being left behind. |
 
 **Dependency order, as it actually played out:**
 

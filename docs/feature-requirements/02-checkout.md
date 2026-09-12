@@ -59,9 +59,14 @@ Checkout is the most frequent operation and must be near-instant and confirmatio
 - [x] Checkout is refused with a pointer to the banner while an operation is paused (B6). — `requireNoPausedOperation` in `lib/checkout.ts:smartCheckout`, which every checkout entry point goes through
 - [ ] Large checkouts show a progress toast with a file counter (§5).
 
-**New in this revision (GitLens-derived) — none implemented:**
+**New in this revision (GitLens-derived):**
 
-- [ ] `/` opens the branch finder and selects the branch tip in the graph without checking out.
+- [x] `/` opens the branch finder and selects the branch tip in the graph without checking out. —
+      `features/graph/BranchFinder.tsx` over `lib/refFinder.ts`. The ranking is the part worth a
+      test: an exact name beats a prefix beats a substring beats a scattered subsequence, so
+      typing `main` does not offer `remainder` first, and a remote branch is matched from *after*
+      the remote so `origin/main` ranks as a prefix hit. Jumping reuses `revealCommit`, which
+      already pages history in until the row exists.
 - [x] Command palette offers remote branches as checkout targets (STATUS B7). — the palette is guided now (G27), so Checkout is one step that lists local branches, remote branches and tags instead of one row per branch crowding out every real command.
 - [x] **Open in worktree…** creates and opens a worktree per §7, from a branch, a commit, or a remote branch. *All three. The detached case goes through a scratch reference — git2's `WorktreeAddOptions` insists on one — and then moves the worktree's own HEAD off it and deletes the branch, which is what git does internally. `a_worktree_from_a_bare_commit_is_detached_and_leaves_no_branch` pins both halves, including that no `mtgit-worktree-*` branch is left behind.*
 - [x] A branch held by another worktree produces the named-worktree dialog, not git's raw refusal. *`worktree_holding` names the holder, and the dialog offers to open that worktree as a tab or to check out the commit detached. Opening it is not a checkout **here**, so it bows out with the module's `CANCELLED` sentinel rather than letting the caller announce one.*

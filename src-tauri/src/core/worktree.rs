@@ -7,7 +7,10 @@
 //! "which one am I in" is the question the section exists to answer.
 
 use crate::error::{Error, Result};
-use git2::{Oid, Repository, WorktreeAddOptions, WorktreeLockStatus, WorktreePruneOptions};
+use git2::{
+    ApplyLocation, Diff, DiffFormat, DiffOptions, Oid, Repository, WorktreeAddOptions,
+    WorktreeLockStatus, WorktreePruneOptions,
+};
 use serde::Serialize;
 use std::path::Path;
 
@@ -235,6 +238,95 @@ pub fn holder_of(repo: &Repository, branch: &str) -> Result<Option<WorktreeInfo>
         .find(|wt| !wt.is_current && wt.branch.as_deref() == Some(branch)))
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyResult {
+    /// Files the patch touched.
+    pub files: usize,
+    /// Changed files the patch could not carry, and so did not copy.
+    pub skipped: usize,
+    pub worktree: String,
+    pub path: String,
+}
+
+/// Copy this worktree's uncommitted changes into another one
+/// (`01-commit.md` §3.2).
+///
+/// **Copy, not move.** GitLens moves; we leave the source alone. The gesture's
+/// whole reason to exist is "I started in the wrong worktree", and a user who
+/// discovers halfway through that they wanted the other one has lost nothing —
+/// where a move that half-applies has lost work that was never committed and
+/// is therefore not in the reflog for Undo to find (`01-commit.md` §3.3).
+///
+/// The patch is built with libgit2 and applied with libgit2. `git apply` would
+/// also do it, but the diff we want includes **untracked** files, and asking
+/// the `git` binary for that means `--no-index` on a file list we would have
+/// had to enumerate first.
+pub fn copy_changes(repo: &Repository, target_name: &str, staged_only: bool) -> Result<CopyResult> {
+    let target = list(repo)?
+        .into_iter()
+        .find(|wt| wt.name == target_name)
+        .ok_or_else(|| Error::Msg(format!("no worktree named '{target_name}'")))?;
+    if target.is_current {
+        return Err(Error::Msg(
+            "that is the worktree the changes are already in".into(),
+        ));
+    }
+
+    let head_tree = repo.head().ok().and_then(|head| head.peel_to_tree().ok());
+    let mut opts = DiffOptions::new();
+    // Without this a binary change prints as "Binary files differ" and applies
+    // as nothing — a copy that silently drops the one file the user could not
+    // reproduce by hand. `skipped` below is the backstop for whatever this
+    // still cannot carry.
+    opts.show_binary(true);
+    let diff = if staged_only {
+        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))?
+    } else {
+        // Untracked files are uncommitted changes too, and the common case
+        // for this gesture — a new file written in the wrong worktree — is
+        // entirely untracked. `show_untracked_content` is what turns each one
+        // into an applicable "new file" hunk rather than a bare delta.
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .show_untracked_content(true);
+        repo.diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))?
+    };
+
+    let mut patch: Vec<u8> = Vec::new();
+    diff.print(DiffFormat::Patch, |_, _, line| {
+        match line.origin() {
+            '+' | '-' | ' ' => patch.push(line.origin() as u8),
+            _ => {}
+        }
+        patch.extend_from_slice(line.content());
+        true
+    })?;
+    if patch.is_empty() {
+        return Err(Error::Msg(if staged_only {
+            "nothing is staged to copy".into()
+        } else {
+            "no uncommitted changes to copy".into()
+        }));
+    }
+
+    let target_repo = Repository::open(&target.path)?;
+    let parsed = Diff::from_buffer(&patch)?;
+    let files = parsed.deltas().len();
+    target_repo.apply(&parsed, ApplyLocation::WorkDir, None)?;
+
+    Ok(CopyResult {
+        files,
+        // A delta the patch could not express is one the target did not get.
+        // Reporting zero here is the point: the caller says "copied N files",
+        // and a silent shortfall would make that sentence a lie about work the
+        // user still has in only one place.
+        skipped: diff.deltas().len().saturating_sub(files),
+        worktree: target.name,
+        path: target.path,
+    })
+}
+
 /// Remove a linked worktree: delete its working directory, then prune the
 /// admin entry.
 ///
@@ -328,6 +420,64 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert!(list[0].is_main && !list[0].is_current, "main is listed but not current");
         assert!(list[1].is_current, "the linked worktree we opened is current");
+    }
+
+    /// The gesture `01-commit.md` §3.2 asks for: you started in the wrong
+    /// worktree. Untracked files are the common case — a brand-new file — and
+    /// a diff that omitted them would copy nothing at all in exactly the
+    /// situation the feature exists for.
+    #[test]
+    fn copy_changes_reproduces_uncommitted_work_without_removing_the_original() {
+        let (t, a, scratch) = fixture();
+        t.checkout(a);
+        let wt_dir = scratch.path().join("wt-copy");
+        add(&t.repo, "wt-copy", wt_dir.to_str().unwrap(), Some(&a.to_string()), false).unwrap();
+
+        std::fs::write(t.dir.path().join("file.txt"), "edited\n").unwrap();
+        std::fs::write(t.dir.path().join("new.txt"), "fresh\n").unwrap();
+
+        let result = copy_changes(&t.repo, "wt-copy", false).unwrap();
+        assert_eq!(result.files, 2, "the tracked edit and the untracked file");
+        assert_eq!(std::fs::read_to_string(wt_dir.join("file.txt")).unwrap(), "edited\n");
+        assert_eq!(std::fs::read_to_string(wt_dir.join("new.txt")).unwrap(), "fresh\n");
+        assert_eq!(
+            std::fs::read_to_string(t.dir.path().join("file.txt")).unwrap(),
+            "edited\n",
+            "copy, not move — the source keeps its work"
+        );
+    }
+
+    /// A binary change prints as "Binary files differ" unless the diff is
+    /// asked for the real thing, and a patch saying that applies as nothing.
+    /// The whole point of copying is that the target ends up with the work.
+    #[test]
+    fn copy_changes_carries_a_binary_file_rather_than_dropping_it() {
+        let (t, a, scratch) = fixture();
+        t.checkout(a);
+        let wt_dir = scratch.path().join("wt-binary");
+        add(&t.repo, "wt-binary", wt_dir.to_str().unwrap(), Some(&a.to_string()), false).unwrap();
+
+        let bytes: Vec<u8> = vec![0, 159, 146, 150, 0, 1, 2, 3];
+        std::fs::write(t.dir.path().join("blob.bin"), &bytes).unwrap();
+
+        let result = copy_changes(&t.repo, "wt-binary", false).unwrap();
+        assert_eq!(result.skipped, 0, "nothing was dropped on the floor");
+        assert_eq!(std::fs::read(wt_dir.join("blob.bin")).unwrap(), bytes);
+    }
+
+    #[test]
+    fn copying_changes_into_the_worktree_they_are_already_in_is_refused() {
+        // Applying a worktree's own diff to itself either no-ops or corrupts
+        // the file, depending on the hunk. Neither is what was asked for.
+        let (t, a, scratch) = fixture();
+        t.checkout(a);
+        let wt_dir = scratch.path().join("wt-self");
+        add(&t.repo, "wt-self", wt_dir.to_str().unwrap(), Some(&a.to_string()), false).unwrap();
+        std::fs::write(t.dir.path().join("file.txt"), "edited\n").unwrap();
+
+        let here = list(&t.repo).unwrap().into_iter().find(|w| w.is_current).unwrap();
+        let error = copy_changes(&t.repo, &here.name, false).unwrap_err();
+        assert!(format!("{error}").contains("already in"), "{error}");
     }
 
     /// "Open `main` in a worktree" must give you `main`. Passing a branch

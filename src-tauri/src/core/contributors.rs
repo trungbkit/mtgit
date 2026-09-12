@@ -132,8 +132,11 @@ pub fn co_authors(message: &str) -> Vec<(String, String)> {
 }
 
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    (s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix))
-        .then(|| &s[prefix.len()..])
+    // `s.get(..n)` rather than `s[..n]`: the prefix length is a byte count, and a
+    // commit message is arbitrary UTF-8, so that boundary can land mid-character.
+    // Indexing there panics; `get` just declines the match.
+    let head = s.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix).then(|| &s[prefix.len()..])
 }
 
 #[cfg(test)]
@@ -197,6 +200,25 @@ mod tests {
         assert_eq!(
             co_authors("x\n\nco-authored-by: A B <a@b.c>"),
             vec![("A B".to_string(), "a@b.c".to_string())]
+        );
+    }
+
+    /// A commit message is arbitrary UTF-8, and a multi-byte character
+    /// straddling the trailer prefix's byte length used to panic the whole
+    /// scan — so opening a repo with one crashed the app.
+    #[test]
+    fn a_multibyte_char_at_the_prefix_boundary_is_not_a_trailer() {
+        // "feat: search " is 13 bytes, so '\u{2192}' spans bytes 13..16 and
+        // straddles the 15-byte length of "co-authored-by:".
+        let straddles = "feat: search \u{2192} graph";
+        assert!(co_authors(straddles).is_empty());
+        assert!(co_authors("short").is_empty());
+        // A real trailer still parses when the message carries such a line.
+        assert_eq!(
+            co_authors(&format!(
+                "{straddles}\n\nCo-authored-by: Ada L <ada@example.com>\n"
+            )),
+            vec![("Ada L".to_string(), "ada@example.com".to_string())]
         );
     }
 

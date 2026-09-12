@@ -155,3 +155,15 @@
   max-height: 44px;
   overflow: hidden;
 }
+
+/* The `…` on a section header (`01-commit.md` §3.2). Deliberately quiet: it
+   holds two rarely-wanted actions beside a button people press constantly,
+   and a second loud control next to "Stage all" invites the wrong one. */
+.staging-more {
+  padding: 0 5px;
+  color: var(--text-faint);
+  letter-spacing: 1px;
+}
+.staging-more:hover {
+  color: var(--text);
+}

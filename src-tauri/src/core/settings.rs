@@ -58,6 +58,9 @@ fn lenient_tab_width<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u8,
 fn lenient_true<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<bool, D::Error> {
     lenient_or(d, true)
 }
+fn lenient_ref_inline_count<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u8, D::Error> {
+    lenient_or(d, default_ref_inline_count())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -115,6 +118,12 @@ fn default_tab_width() -> u8 {
 }
 fn default_auto_fetch_minutes() -> u32 {
     1
+}
+/// Two, not GitLens's one. One inline pill hides the *other* half of the
+/// common pair — a local branch and its remote-tracking twin — behind a chip,
+/// on the row people look at most.
+fn default_ref_inline_count() -> u8 {
+    2
 }
 fn default_true() -> bool {
     true
@@ -193,6 +202,16 @@ pub struct Settings {
     #[serde(default = "default_graph_columns", deserialize_with = "lenient_columns")]
     pub graph_columns: Vec<String>,
 
+    /// How many ref pills a graph row shows before the rest collapse into a
+    /// `+N` chip (overview §1.2). A setting rather than a constant because the
+    /// right number depends on the repository: a release repo where every
+    /// commit carries four tags wants one, a two-branch repo never overflows.
+    #[serde(
+        default = "default_ref_inline_count",
+        deserialize_with = "lenient_ref_inline_count"
+    )]
+    pub graph_ref_inline_count: u8,
+
     #[serde(default = "default_terminal_font_size", deserialize_with = "lenient_terminal_font_size")]
     pub terminal_font_size: u8,
     /// Empty means "the login shell".
@@ -226,6 +245,7 @@ impl Default for Settings {
             history_follow_renames: true,
             blame_heatmap: true,
             graph_columns: default_graph_columns(),
+            graph_ref_inline_count: default_ref_inline_count(),
             terminal_font_size: default_terminal_font_size(),
             terminal_shell: None,
             keybindings: BTreeMap::new(),
@@ -241,6 +261,9 @@ impl Settings {
         self.font_size = self.font_size.clamp(10, 20);
         self.terminal_font_size = self.terminal_font_size.clamp(8, 24);
         self.diff_tab_width = self.diff_tab_width.clamp(1, 16);
+        // Zero inline pills would collapse a lone branch name into "+1",
+        // which is a chip where the answer would have fit.
+        self.graph_ref_inline_count = self.graph_ref_inline_count.clamp(1, 20);
         // A fetch every few seconds is a request storm, not a preference.
         if self.auto_fetch_minutes != 0 {
             self.auto_fetch_minutes = self.auto_fetch_minutes.clamp(1, 1440);
@@ -381,6 +404,7 @@ mod tests {
             font_size: 200,
             terminal_font_size: 1,
             diff_tab_width: 0,
+            graph_ref_inline_count: 0,
             auto_fetch_minutes: 99_999,
             ..Settings::default()
         };
@@ -389,6 +413,7 @@ mod tests {
         assert_eq!(saved.font_size, 20);
         assert_eq!(saved.terminal_font_size, 8);
         assert_eq!(saved.diff_tab_width, 1);
+        assert_eq!(saved.graph_ref_inline_count, 1, "zero pills is all chip, no answer");
         assert_eq!(saved.auto_fetch_minutes, 1440);
         assert_eq!(load(dir.path()), saved);
     }
