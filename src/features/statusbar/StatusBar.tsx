@@ -5,7 +5,20 @@ import { cancelGitNetwork, cancelSearch, getStatus, gitAvailable, listRefs } fro
 import { toastError } from "../../stores/toasts";
 import { Icon } from "../../components/Icon";
 import { useSession } from "../../stores/session";
+import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import "./statusbar.css";
+
+/**
+ * The range `core/settings.rs` clamps `fontSize` to, mirrored here only so the
+ * buttons can disable themselves at the ends. The clamp is still the backend's:
+ * pressing through would be corrected, not obeyed.
+ */
+const FONT_MIN = 10;
+const FONT_MAX = 20;
+
+function setFontSize(next: number) {
+  useSettings.getState().set({ fontSize: Math.min(Math.max(next, FONT_MIN), FONT_MAX) });
+}
 
 export function StatusBar() {
   const repo = useSession((s) => s.repo);
@@ -13,6 +26,7 @@ export function StatusBar() {
   const toggleSidebar = useSession((s) => s.toggleSidebar);
   const terminalOpen = useSession((s) => s.terminalOpen);
   const toggleTerminal = useSession((s) => s.toggleTerminal);
+  const fontSize = useSettings((s) => s.settings.fontSize);
 
   const [progress, setProgress] = useState<string | null>(null);
   const [searching, setSearching] = useState<number | null>(null);
@@ -53,6 +67,7 @@ export function StatusBar() {
     };
   }, []);
 
+  const percent = Math.round((fontSize / DEFAULT_SETTINGS.fontSize) * 100);
   const head = repo?.head.branch;
   const current = refs?.local.find((b) => b.isHead);
   const dirty =
@@ -71,7 +86,7 @@ export function StatusBar() {
             </span>
             {current && (current.ahead || current.behind) ? (
               <span className="sb-ab">
-                {current.ahead ? `↑${current.ahead}` : ""} {current.behind ? `↓${current.behind}` : ""}
+                {current.ahead ? `${current.ahead}↑` : ""} {current.behind ? `${current.behind}↓` : ""}
               </span>
             ) : null}
           </>
@@ -119,9 +134,42 @@ export function StatusBar() {
           disabled={!repo}
           onClick={() => repo && toggleTerminal()}
         >
-          ▁
+          <Icon name="terminal" />
         </button>
-        <span className="sb-zoom">100%</span>
+        {/* A control, not a label. It read a literal `100%` — on a session at
+            20px and on one at 10px alike, so the one place in the app that
+            reports the interface scale was the one place guaranteed to be
+            wrong. The store clamps and returns the clamped value, so the
+            readout cannot drift from what was actually applied. */}
+        <span className="sb-zoom">
+          <button
+            title="Smaller interface"
+            aria-label="Smaller interface"
+            disabled={fontSize <= FONT_MIN}
+            onClick={() => setFontSize(fontSize - 1)}
+          >
+            −
+          </button>
+          {/* The label says both, because the visible text is a number: a
+              screen reader given only "100%" is told the value and not what
+              pressing it does. */}
+          <button
+            className="sb-zoom-value"
+            title="Reset interface size"
+            aria-label={`Reset interface size (currently ${percent}%)`}
+            onClick={() => setFontSize(DEFAULT_SETTINGS.fontSize)}
+          >
+            {percent}%
+          </button>
+          <button
+            title="Larger interface"
+            aria-label="Larger interface"
+            disabled={fontSize >= FONT_MAX}
+            onClick={() => setFontSize(fontSize + 1)}
+          >
+            +
+          </button>
+        </span>
         <span className="sb-git-dot" title={hasGit ? "git available" : "git missing"} data-ok={!!hasGit} />
         <span className="sb-version">{__APP_VERSION__}</span>
       </div>

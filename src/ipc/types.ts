@@ -100,6 +100,11 @@ export interface GraphRow {
   oid: string;
   parents: string[];
   summary: string;
+  /**
+   * First paragraph of the body, flattened and truncated by `core/graph.rs`.
+   * Drawn dimmed after the summary; empty when there is nothing to show.
+   */
+  bodyPreview: string;
   author: string;
   email: string;
   timestamp: number;

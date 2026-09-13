@@ -6,11 +6,34 @@
 .filelist-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 5px 10px;
   font-size: 11px;
   color: var(--text-dim);
   border-bottom: 1px solid var(--border);
+}
+.filelist-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.filelist-sort:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+/* Without `auto` here the toggle drifts left whenever the sort control is
+   hidden, which is every time the tree is on. */
+.filelist-head .pathtree-toggle {
+  margin-left: auto;
+}
+.filelist-sort ~ .pathtree-toggle {
+  margin-left: 0;
 }
 .pathtree-toggle,
 .filelist-head .pathtree-toggle {
@@ -67,10 +90,28 @@
 .file-mark.del {
   color: var(--red);
 }
+/* The directory clips, the filename never does.
+   `.file-name` used to carry the ellipsis itself, which truncates the *end* —
+   the one part of a path anybody reads. `text-overflow` does not reach the
+   children of a flex container (the same rule `.badge` / `.badge-name`
+   documents in `graph.css`), so it moves onto the directory span and the
+   basename simply refuses to shrink. */
 .file-name {
+  display: flex;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.file-dir {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+.file-name b {
+  flex-shrink: 0;
+  font-weight: 600;
 }
 .file-actions {
   display: none;

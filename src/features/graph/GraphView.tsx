@@ -59,7 +59,7 @@ import { timeAgo, formatTimestamp } from "../../lib/time";
 import { Icon } from "../../components/Icon";
 import { isTypingTarget, matches } from "../../lib/keys";
 import { useSettings } from "../../stores/settings";
-import { laneColor } from "./palette";
+import { laneColor, laneTint } from "./palette";
 import { BranchFinder } from "./BranchFinder";
 import { CherryPickPopover } from "./CherryPickPopover";
 import { RebasePlanDialog } from "./RebasePlanDialog";
@@ -1579,6 +1579,7 @@ export function GraphView() {
                 row={row}
                 repoPath={repo.path}
                 top={vi.start}
+                index={vi.index}
                 gutter={gutterWidth}
                 nodeLeft={BRANCH_COL_WIDTH + laneX(row.lane)}
                 rowHeight={rowHeight}
@@ -1749,6 +1750,7 @@ const GraphRowView = memo(function GraphRowView({
   row,
   repoPath,
   top,
+  index,
   gutter,
   nodeLeft,
   rowHeight,
@@ -1775,6 +1777,7 @@ const GraphRowView = memo(function GraphRowView({
   row: GraphRow;
   repoPath: string;
   top: number;
+  index: number;
   gutter: number;
   nodeLeft: number;
   rowHeight: number;
@@ -1807,10 +1810,16 @@ const GraphRowView = memo(function GraphRowView({
   );
   return (
     <div
-      className={`graph-row${selected ? " selected" : ""}${hit ? " hit" : ""}${
-        currentHit ? " current-hit" : ""
-      }${flash ? " flash" : ""}${picked ? " picked" : ""}`}
-      style={{ top, height: rowHeight }}
+      className={`graph-row${index % 2 ? " odd" : ""}${selected ? " selected" : ""}${
+        hit ? " hit" : ""
+      }${currentHit ? " current-hit" : ""}${flash ? " flash" : ""}${picked ? " picked" : ""}`}
+      // The band is the row's own lane colour rather than one blue for all of
+      // them, which is what ties it to the node and edges beside it. Computed
+      // here, inside the memoized row: a tint swept in the parent would walk
+      // every loaded row on each hover (parity plan §7). Banding parity comes
+      // from the index rather than `:nth-child`, because rows are absolutely
+      // positioned and their DOM order is the virtualizer's, not the graph's.
+      style={{ top, height: rowHeight, background: selected ? laneTint(row.color) : undefined }}
       onClick={(event) => onSelect(event, row)}
       // Only rows with nothing to show ask: a ghost never renders beside a
       // real pill, so asking there would be a merge-base sweep per hovered
@@ -1837,6 +1846,7 @@ const GraphRowView = memo(function GraphRowView({
                 ghost.distance === 1 ? "" : "s"
               } back from its tip`}
             >
+              <Icon name={ghost.kind === "tag" ? "tag" : "branch"} size={11} />
               <span className="badge-name">{ghost.name}</span>
             </span>
           ))}
@@ -1875,6 +1885,11 @@ const GraphRowView = memo(function GraphRowView({
             {(r.kind === "remoteBranch" ||
               (r.kind === "localBranch" && collapsedRemotes.has(r.name))) && (
               <Icon name="cloud" size={11} />
+            )}
+            {/* The one pill kind that carried no glyph, so a plain local
+                branch was the only pill identified by colour alone. */}
+            {r.kind === "localBranch" && !r.isHead && !collapsedRemotes.has(r.name) && (
+              <Icon name="branch" size={11} />
             )}
             {checkoutTarget === r.name && <Icon name="pending" size={11} />}
             <span className="badge-name">{r.name}</span>
@@ -1921,8 +1936,16 @@ const GraphRowView = memo(function GraphRowView({
       <span className="row-summary">
         {/* Issue references are links here too (G20): the graph is where most
             people read a message, and a reference you can only follow from the
-            detail panel is one you mostly do not follow. */}
+            detail panel is one you mostly do not follow. That holds for the
+            body half as well — it used to be spliced into `summary` by the Rust
+            side, so it has always been autolinked, and it is where a "fixes
+            #123" usually is. */}
         <Autolinked repoPath={repoPath} text={row.summary} />
+        {row.bodyPreview && (
+          <span className="row-body">
+            <Autolinked repoPath={repoPath} text={row.bodyPreview} />
+          </span>
+        )}
       </span>
       {columns.map((id) => (
         <span key={id} className={`row-col col-${id}`}>

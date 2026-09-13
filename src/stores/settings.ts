@@ -67,6 +67,33 @@ export function applyAppearance(settings: Settings): void {
 }
 
 /**
+ * Mark the platform on the root element.
+ *
+ * Not a setting — it cannot change while the app is running — but it is a root
+ * attribute that CSS keys off, and root attributes are written here so
+ * `theme.css` and its neighbours can keep every value in one readable place.
+ * `tabs.css` uses it to reserve the macOS traffic-light gutter, which only
+ * exists on the platform whose titlebar the tab strip replaces.
+ *
+ * `navigator.userAgent` rather than `@tauri-apps/plugin-os`: the question is
+ * which chrome this window was given, the user agent answers it synchronously
+ * on the first frame, and a plugin would cost a JS package, a Rust crate, a
+ * `lib.rs` registration and a capability entry to answer it a round trip
+ * later — which is a frame of the tab strip drawn under the traffic lights.
+ * `lib/keys.ts` and `Sidebar.tsx` already choose their modifier labels the
+ * same way.
+ *
+ * Called from `main.tsx` rather than from `applyAppearance`, which does not
+ * run until the settings file has been read.
+ */
+export function applyPlatform(): void {
+  document.documentElement.setAttribute(
+    "data-platform",
+    /mac/i.test(navigator.userAgent) ? "macos" : "other",
+  );
+}
+
+/**
  * Raising the settings screen from outside the shell — the toolbar gear, the
  * command palette, the cheat sheet's footer. An event rather than a store
  * flag: the panel is the shell's own state, and a second copy of "is settings

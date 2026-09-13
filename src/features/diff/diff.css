@@ -47,8 +47,61 @@
   color: var(--on-accent);
 }
 
+/* Holds the scroller and the ruler side by side, for the reason `graph.css`
+   gives about the marker gutter: an absolutely positioned child of a scroll
+   container is placed against its content box, so it scrolls away. */
+.diff-pane {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.diff-ruler {
+  position: relative;
+  flex-shrink: 0;
+  width: 12px;
+  background: var(--bg-panel-2);
+  border-left: 1px solid var(--border);
+}
+.diff-ruler-mark {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  min-height: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 1px;
+  cursor: pointer;
+}
+.diff-ruler-mark.add {
+  background: var(--green);
+}
+.diff-ruler-mark.del {
+  background: var(--red);
+}
+.diff-ruler-mark.mixed {
+  background: var(--yellow);
+}
+.diff-ruler-mark.current {
+  left: 0;
+  right: 0;
+  box-shadow: 0 0 0 1px var(--text);
+}
+/* Written straight to the DOM on scroll (`OverviewRuler`), never through
+   state: the diff is not virtualized, so a re-render per scroll frame is every
+   line in the file. */
+.diff-ruler-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--accent-tint-strong);
+  pointer-events: none;
+}
+
 .diff-code {
   flex: 1;
+  min-width: 0;
   overflow: auto;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -133,8 +186,14 @@
 .dline.del .gutter {
   background: var(--diff-del-bg-strong);
 }
+/* Hatched, not filled: a flat block reads as "a line with another background",
+   and this is "no line here at all". */
 .dline.empty {
-  background: var(--diff-empty-bg);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--diff-empty-bg) 0 6px,
+    transparent 6px 12px
+  );
 }
 
 /* Split view */

@@ -53,7 +53,6 @@ export function Toolbar() {
   const setRepo = useSession((s) => s.setRepo);
   const recentRepos = useSession((s) => s.recentRepos);
   const toggleTerminal = useSession((s) => s.toggleTerminal);
-  const toggleSidebar = useSession((s) => s.toggleSidebar);
   const setPaletteOpen = useSession((s) => s.setPaletteOpen);
   const openStart = useSession((s) => s.openStart);
   const setCloneOpen = useSession((s) => s.setCloneOpen);
@@ -659,8 +658,12 @@ export function Toolbar() {
           }
         />
         <ToolBtn icon="search" label="Search" onClick={() => setPaletteOpen(true)} />
-        <ToolBtn icon="layout" label="Layout" onClick={toggleSidebar} />
-        <ToolBtn icon="gear" label="Settings" onClick={openSettings} />
+        {/* Actions and Search, and nothing else.
+            `Settings` used to sit here drawn with the same `gear` glyph as
+            `Actions` — two different controls, one picture — and now lives at
+            the end of the tab strip with the other window-level controls.
+            `Layout` toggled the sidebar, which the status bar already does and
+            with an on/off state this group had no way to show. */}
       </div>
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />

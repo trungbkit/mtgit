@@ -42,11 +42,43 @@ export function lanePalette(): string[] {
 /** Drop the cached ring; call after the theme changes. */
 export function refreshLanePalette(): void {
   cached = null;
+  tints = null;
 }
 
 export function laneColor(index: number): string {
   const palette = lanePalette();
   return palette[((index % palette.length) + palette.length) % palette.length];
+}
+
+/** Alpha for the selected-row band, as a two-digit hex suffix. */
+const TINT_ALPHA = "2e";
+let tints: Map<number, string> | null = null;
+
+/**
+ * The selected row's band, in its own lane's colour.
+ *
+ * One blue for every row said nothing about which line the row sits on; the
+ * tint is what ties the band to the node and the edges drawn beside it.
+ *
+ * Cached like the ring above and dropped by the same `refresh`, because this is
+ * read in `GraphRowView`'s render — once per visible row, on every hover.
+ * The tokens are hex, so the alpha is a suffix rather than a `color-mix`: a
+ * computed colour here would be a second place the theme is decided.
+ */
+export function laneTint(index: number): string {
+  if (!tints) tints = new Map();
+  const cachedTint = tints.get(index);
+  if (cachedTint) return cachedTint;
+
+  const base = laneColor(index);
+  // Only `#rgb` and `#rrggbb` take the suffix. A token retuned to `oklch(...)`
+  // or a named colour falls back to the theme's own selection band rather than
+  // producing `oklch(...)2e`, which is not a colour at all.
+  const tint = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(base)
+    ? `${base}${TINT_ALPHA}`
+    : "var(--bg-selected)";
+  tints.set(index, tint);
+  return tint;
 }
 
 /** Kept for callers that want the whole ring; prefer `lanePalette()`. */

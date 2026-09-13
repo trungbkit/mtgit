@@ -9,7 +9,7 @@ import { useSession, WORKING } from "../../stores/session";
 import { toastError, useToasts } from "../../stores/toasts";
 import { StagingView } from "../staging/StagingView";
 import { FileViewer } from "../diff/FileViewer";
-import { FileList } from "./FileList";
+import { FileList, STATUS_MARK } from "./FileList";
 import { Avatar } from "../../components/Avatar";
 import { Autolinked } from "../../components/Autolinked";
 import { ContextMenu, type MenuState } from "../../components/ContextMenu";
@@ -63,7 +63,12 @@ export function DetailPanel() {
     <div className="detail-shell">
       {changed > 0 && (
         <button className="changes-banner" onClick={() => selectOid(WORKING)}>
-          {changed} file change{changed === 1 ? "" : "s"} in working directory — View Changes
+          <span>
+            {changed} file change{changed === 1 ? "" : "s"} in working directory
+          </span>
+          {/* The whole strip is the target; this is the affordance saying so,
+              not a second button inside the first. */}
+          <span className="changes-banner-cta">View Changes</span>
         </button>
       )}
       {selectedOid ? (
@@ -132,7 +137,22 @@ function SheetStack({ repoPath, headOid }: { repoPath: string; headOid: string |
   );
 }
 
-function summarize(files: { status: FileStatus }[]): string {
+interface SummaryPart {
+  /** The `.file-mark` colour class, so the counts read in the same language
+   *  the rows two lines below them do. */
+  cls: string;
+  ch: string;
+  label: string;
+}
+
+/**
+ * The change counts, as parts rather than one joined string.
+ *
+ * Joined, it could only ever be one colour — while the rows it describes were
+ * already colour-coded by status, so the summary was the one place in the panel
+ * that said "added" in the same grey as "deleted".
+ */
+function summarize(files: { status: FileStatus }[]): SummaryPart[] {
   let mod = 0;
   let add = 0;
   let del = 0;
@@ -141,11 +161,11 @@ function summarize(files: { status: FileStatus }[]): string {
     else if (f.status === "deleted") del++;
     else mod++;
   }
-  const parts: string[] = [];
-  if (mod) parts.push(`${mod} modified`);
-  if (add) parts.push(`${add} added`);
-  if (del) parts.push(`${del} deleted`);
-  return parts.join(" + ") || "no changes";
+  const parts: SummaryPart[] = [];
+  if (mod) parts.push({ ...STATUS_MARK.modified, label: `${mod} modified` });
+  if (add) parts.push({ ...STATUS_MARK.added, label: `${add} added` });
+  if (del) parts.push({ ...STATUS_MARK.deleted, label: `${del} deleted` });
+  return parts;
 }
 
 function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string; headOid: string | null }) {
@@ -289,7 +309,13 @@ function CommitView({ repoPath, oid, headOid }: { repoPath: string; oid: string;
       </div>
 
       <div className="detail-filesummary">
-        <span className="fs-count">{summarize(detail.files)}</span>
+        {summarize(detail.files).map((part) => (
+          <span key={part.label} className={`fs-part ${part.cls}`}>
+            <span className="fs-mark">{part.ch}</span>
+            {part.label}
+          </span>
+        ))}
+        {detail.files.length === 0 && <span className="fs-part">no changes</span>}
       </div>
 
       <div className="detail-split">

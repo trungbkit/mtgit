@@ -190,8 +190,14 @@
 }
 .wip-count {
   margin-left: auto;
-  color: var(--text-faint);
-  font-size: 11.5px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--warn-tint);
+  border: 1px solid var(--warn-tint-border);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
 }
 
 .graph-inner {
@@ -221,11 +227,34 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.graph-row:hover {
-  background: var(--bg-hover);
+/* Every other row, faintly. Rows are absolutely positioned, so `:nth-child`
+   describes the virtualizer's DOM order rather than the graph's — the parity
+   class comes from the row index instead.
+
+   `:where()` contributes no specificity, which is the point: banding is the
+   bottom layer, and *everything* that colours a row for a reason — hover, a
+   search hit, a flash — has to win over it without having to know this rule
+   exists. Written as a plain `.graph-row.odd` it ties with `.graph-row.hit`
+   and, being in the later stylesheet, silently took every other search hit's
+   yellow away.
+
+   Both of these are alphas, and that is not a style choice: `.graph-canvas`
+   draws the lanes *below* the rows, so an opaque background here erases the
+   graph rather than tinting it. Banding did exactly that on every odd row,
+   which is how a connected history came out drawn in dashes. `--bg-hover` is
+   the shared opaque one used by every other list in the app and is the wrong
+   token here; the graph has its own. */
+.graph-row:where(.odd) {
+  background: var(--bg-row-alt);
 }
+.graph-row:hover {
+  background: var(--bg-row-hover);
+}
+/* The band's colour is an inline style now — the row's own lane, set in
+   `GraphRowView`. What is left here is the rail, which stays at full lane
+   saturation: the tint alone is too weak at the alpha that keeps the message
+   readable over it. */
 .graph-row.selected {
-  background: var(--bg-selected);
   box-shadow: inset 2px 0 0 var(--bg-selected-solid);
 }
 /* Keyboard navigation moves the selection, so the selected row is the one the
@@ -280,6 +309,9 @@
      because `text-overflow` does not reach the children of a flex container. */
   min-width: 0;
   overflow: hidden;
+  /* Pills carry a leading glyph. Without the gap it sits flush against the
+     name, which reads as one smudged word rather than an icon and a label. */
+  gap: 4px;
   padding: 1px 7px;
   border-radius: 10px;
   font-size: 10.5px;
@@ -322,6 +354,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text);
+}
+/* The body half of the message. Dimmed rather than separated by punctuation:
+   the Rust side used to splice it into the summary with an em-dash, which gave
+   the row the right words and no way to tell subject from explanation. */
+.row-body {
+  margin-left: 10px;
+  color: var(--text-faint);
 }
 /* The column *cells* own their widths now (`.col-*` above). What is left here
    is what the content inside a cell looks like. */

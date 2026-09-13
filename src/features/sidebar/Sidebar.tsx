@@ -704,21 +704,32 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-seg">
-        <button className="seg-btn active">☰ List</button>
+        {/* This row used to open with a `List` button that was permanently
+            active and handled no click — a one-segment segmented control,
+            which is a label drawn as something you can press. Its other
+            segment would have been "Agents", which is out of scope. */}
+        <span className="sidebar-title">Viewing {viewing}</span>
         <button className="sidebar-collapse" title="Collapse sidebar" onClick={toggleSidebar}>
           ‹
         </button>
       </div>
-      <div className="sidebar-viewing">Viewing {viewing}</div>
 
       <div className="sidebar-top">
-        <input
-          ref={filterRef}
-          className="sidebar-filter"
-          placeholder={`Filter (${FILTER_HINT})`}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
+        <div className="sidebar-search">
+          <input
+            ref={filterRef}
+            className="sidebar-filter"
+            placeholder={`Filter (${FILTER_HINT})`}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          {/* Decoration, not a button: the field is already focused by the
+              chord the placeholder advertises, and a magnifier that looks
+              pressable but is not is worse than one that does not. */}
+          <span className="sidebar-search-icon" aria-hidden="true">
+            <Icon name="search" size={13} />
+          </span>
+        </div>
         <button title="New branch / tag" onClick={addMenu}>
           +
         </button>
@@ -810,7 +821,11 @@ export function Sidebar() {
               <span className="ref-icon"><Icon name={w.isCurrent ? "check" : "worktree"} /></span>
               <span className="ref-name">{w.name}</span>
               {w.branch && <span className="wt-branch">{w.branch}</span>}
-              {w.locked && <span className="wt-flag" title="Locked">🔒</span>}
+              {w.locked && (
+                <span className="wt-flag" title="Locked">
+                  <Icon name="lock" size={10} />
+                </span>
+              )}
               {/* null means the worktree could not be opened — "unknown", not "clean". */}
               {w.changed === null ? (
                 <span className="wt-flag" title="Could not read this worktree">?</span>
@@ -1055,18 +1070,25 @@ function BranchSection({
       {open &&
         groupByFolder(items).map(([folder, branches]) => (
           <div key={folder || "_root"}>
-            {folder && <div className="folder">📁 {folder}</div>}
+            {folder && (
+              <div className="folder">
+                <Icon name="folder" size={11} />
+                {folder}
+              </div>
+            )}
             {branches.map((b) => (
               <div
                 key={b.name}
                 className={`ref-item${b.isHead ? " head" : ""}${dragged && dragged !== b.name && local ? " droppable" : ""}`}
                 style={{ paddingLeft: folder ? 34 : 20 }}
                 title={
-                  b.upstreamGone
-                    ? `${b.name} — its upstream ${b.upstream} is gone from the remote`
-                    : b.upstream
-                      ? `tracks ${b.upstream}`
-                      : b.name
+                  b.isHead
+                    ? `HEAD: ${headBranch}`
+                    : b.upstreamGone
+                      ? `${b.name} — its upstream ${b.upstream} is gone from the remote`
+                      : b.upstream
+                        ? `tracks ${b.upstream}`
+                        : b.name
                 }
                 draggable
                 onDragStart={() => setDragged(b.name)}
@@ -1093,11 +1115,10 @@ function BranchSection({
                 )}
                 {(b.ahead || b.behind) && (
                   <span className="ahead-behind">
-                    {b.ahead ? <span className="ahead">↑{b.ahead}</span> : null}
-                    {b.behind ? <span className="behind">↓{b.behind}</span> : null}
+                    {b.ahead ? <span className="ahead">{b.ahead}↑</span> : null}
+                    {b.behind ? <span className="behind">{b.behind}↓</span> : null}
                   </span>
                 )}
-                {b.isHead && <span className="head-dot" title={`HEAD: ${headBranch}`} />}
                 <button
                   className="ref-eye"
                   title={hiddenRefs.includes(b.name) ? "Show in graph" : "Hide from graph"}

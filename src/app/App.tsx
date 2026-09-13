@@ -133,8 +133,13 @@ export function App() {
 
   return (
     <div className="app">
-      <Toolbar />
+      {/* The tab strip identifies the window's open repositories and the
+          toolbar acts on whichever one is active, so the toolbar goes below
+          it — drawn the other way round the toolbar appears to own the tabs,
+          when switching a tab is what changes every control in it. On macOS
+          this row is also the titlebar (`tabs.css`). */}
       <TabBar />
+      <Toolbar />
       <ConflictBanner />
       <DetachedHeadBanner />
       {activeStart ? (

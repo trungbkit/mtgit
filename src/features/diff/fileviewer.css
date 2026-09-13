@@ -80,8 +80,50 @@
   gap: 8px;
   font-size: 11px;
 }
-.fv-toolbar .diff-mode-toggle {
+/* The reading toggles and the view toggle travel together at the right end, so
+   only the first of them claims the gap. They are rendered by the same branch,
+   so the mode toggle never appears without this one in front of it. */
+.fv-toolbar .fv-reading {
   margin-left: auto;
+}
+
+/* Change stepper and the two reading toggles. Both are icon groups matching
+   `.fv-tabs` / `.fv-actions`, so the toolbar reads as one row of controls
+   rather than three unrelated ones. */
+.fv-stepper,
+.fv-reading {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fv-stepper button,
+.fv-reading button {
+  display: flex;
+  align-items: center;
+  border: none;
+  border-radius: 0;
+  padding: 3px 7px;
+  background: var(--bg-panel);
+}
+.fv-reading button.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.fv-stepper-count {
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  background: var(--bg-panel);
+}
+
+.fv-toolbar .diff-mode-toggle button {
+  display: flex;
+  align-items: center;
+  padding: 3px 8px;
 }
 
 .fv-body {

@@ -17,6 +17,8 @@ export type IconName =
   | "cloud"
   | "tag"
   | "worktree"
+  | "folder"
+  | "lock"
   | "stash"
   | "stash-save"
   | "stash-pop"
@@ -35,6 +37,14 @@ export type IconName =
   | "search"
   | "layout"
   | "commit"
+  | "sort"
+  | "view-inline"
+  | "view-split"
+  | "wrap"
+  | "whitespace"
+  | "arrow-up"
+  | "arrow-down"
+  | "repo"
   | "plus"
   | "close"
   | "person";
@@ -62,6 +72,13 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M2 12.8V4.2a.8.8 0 0 1 .8-.8h3.1l1.3 1.7h6a.8.8 0 0 1 .8.8v6.9a.8.8 0 0 1-.8.8H2.8a.8.8 0 0 1-.8-.8z" />
       <path d="M8 7.6v4" />
       <circle cx="8" cy="11.9" r="1.1" />
+    </>
+  ),
+  folder: <path d="M1.8 12.6V4.2a.9.9 0 0 1 .9-.9h3.1l1.5 1.7h6a.9.9 0 0 1 .9.9v6.7a.9.9 0 0 1-.9.9H2.7a.9.9 0 0 1-.9-.9z" />,
+  lock: (
+    <>
+      <rect x="3.4" y="7.2" width="9.2" height="6.2" rx="1.1" />
+      <path d="M5.6 7.2V5.4a2.4 2.4 0 0 1 4.8 0v1.8" />
     </>
   ),
   stash: (
@@ -170,6 +187,47 @@ const PATHS: Record<IconName, React.ReactNode> = {
     <>
       <circle cx="8" cy="8" r="2.6" />
       <path d="M1.6 8h3.8M10.6 8h3.8" />
+    </>
+  ),
+  "view-inline": (
+    <>
+      <rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.2" />
+      <path d="M4.4 6h7.2M4.4 8.6h7.2M4.4 11.2h4.4" />
+    </>
+  ),
+  "view-split": (
+    <>
+      <rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.2" />
+      <path d="M8 2.6v10.8" />
+    </>
+  ),
+  wrap: (
+    <>
+      <path d="M2.2 4h11.6" />
+      <path d="M2.2 8h8.6a2.4 2.4 0 0 1 0 4.8H7.4" />
+      <path d="m9.2 10.8-1.8 2 1.8 2" />
+    </>
+  ),
+  whitespace: (
+    <>
+      <path d="M2.4 5.2v5.6M13.6 5.2v5.6" />
+      <circle cx="5.6" cy="8" r=".9" />
+      <circle cx="8" cy="8" r=".9" />
+      <circle cx="10.4" cy="8" r=".9" />
+    </>
+  ),
+  "arrow-up": <path d="M8 13V3.4M4 7.4 8 3.4l4 4" />,
+  "arrow-down": <path d="M8 3v9.6M4 8.6l4 4 4-4" />,
+  sort: (
+    <>
+      <path d="M4.6 2.6v10.8M2.2 11l2.4 2.4L7 11" />
+      <path d="M11.4 13.4V2.6M9 5l2.4-2.4L13.8 5" />
+    </>
+  ),
+  repo: (
+    <>
+      <path d="M12.5 2.5H4.8a1.3 1.3 0 0 0-1.3 1.3v8.4a1.3 1.3 0 0 1 1.3-1.3h7.7z" />
+      <path d="M12.5 10.9v2.6H4.8a1.3 1.3 0 0 1-1.3-1.3" />
     </>
   ),
   plus: <path d="M8 3.2v9.6M3.2 8h9.6" />,

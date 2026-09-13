@@ -57,6 +57,14 @@ pub struct GraphRow {
     pub oid: String,
     pub parents: Vec<String>,
     pub summary: String,
+    /// First paragraph of the body, flattened and truncated. Drawn dimmed after
+    /// the summary on the row; empty when the commit has no body worth showing.
+    ///
+    /// It used to be spliced into `summary` with an em-dash, which gave the row
+    /// the right *text* and no way to draw it differently from the subject —
+    /// and no way to keep a trailer block or a 900-character paragraph out of
+    /// the graph.
+    pub body_preview: String,
     pub author: String,
     pub email: String,
     /// Author time, unix seconds.
@@ -319,21 +327,11 @@ pub fn build_rows(
             edges.push(Edge { from_lane: from, to_lane: to, kind, color: to });
         }
 
-        let subject = commit.summary().unwrap_or("");
-        let body_preview = commit
-            .body()
-            .and_then(|body| body.lines().find(|line| !line.trim().is_empty()))
-            .unwrap_or("");
-        let summary = if body_preview.is_empty() {
-            subject.to_string()
-        } else {
-            format!("{subject} — {body_preview}")
-        };
-
         rows.push(GraphRow {
             oid: rl.oid.to_string(),
             parents: commit.parent_ids().map(|o| o.to_string()).collect(),
-            summary,
+            summary: commit.summary().unwrap_or("").to_string(),
+            body_preview: body_preview(commit.body().unwrap_or("")),
             author: author.name().unwrap_or("").to_string(),
             email: author.email().unwrap_or("").to_string(),
             timestamp: commit.time().seconds(),
@@ -347,6 +345,62 @@ pub fn build_rows(
     }
 
     Ok(rows)
+}
+
+/// How much of a commit body a graph row will ever show.
+///
+/// The graph query is an infinite query and its pages accumulate, so every byte
+/// on a [`GraphRow`] is multiplied by how far the user has scrolled. The row can
+/// only ever draw a clause, so only a clause is sent. Raising this is a payload
+/// change; measure before you do.
+const BODY_PREVIEW_CHARS: usize = 120;
+
+/// The first paragraph of a commit body, flattened to one line and truncated.
+///
+/// Two things are deliberately dropped.
+///
+/// **Everything past the first blank line.** The rest is a second thought, and
+/// the row has no room for the first one.
+///
+/// **A trailer-only paragraph.** `feat: x\n\nCo-Authored-By: ...` has a body
+/// whose entire first paragraph is trailers, and "co-authored by" is not what
+/// the commit did. The test is git's own: every line of the paragraph shaped
+/// `Token-Name: value`, in a paragraph that is also the message's last — which
+/// is why a one-line body reading `fix: thing` yields nothing here. git reads
+/// that as a trailer too.
+fn body_preview(body: &str) -> String {
+    let mut paragraphs = body
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|p| !p.is_empty());
+    let Some(first) = paragraphs.next() else {
+        return String::new();
+    };
+    let is_last = paragraphs.next().is_none();
+    if is_last && first.lines().all(|line| is_trailer(line.trim())) {
+        return String::new();
+    }
+
+    let flat = first.split_whitespace().collect::<Vec<_>>().join(" ");
+    // `chars()` rather than a byte slice: an index landing inside a multibyte
+    // character panics, and commit messages are not ASCII.
+    if flat.chars().count() > BODY_PREVIEW_CHARS {
+        let mut cut: String = flat.chars().take(BODY_PREVIEW_CHARS).collect();
+        cut.push('\u{2026}');
+        cut
+    } else {
+        flat
+    }
+}
+
+/// `Token-Name: value`, git's shape for an interpreted trailer.
+fn is_trailer(line: &str) -> bool {
+    match line.split_once(':') {
+        Some((token, _)) => {
+            !token.is_empty() && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        }
+        None => false,
+    }
 }
 
 /// A cheap digest of the repository's entire ref set plus HEAD.
@@ -421,6 +475,75 @@ mod tests {
         let layouts = layout(repo).unwrap();
         let badges = crate::core::refs::badges_by_oid(repo);
         build_rows(repo, &layouts, &badges, &sync_sets(repo)).unwrap()
+    }
+
+    /// The body used to be spliced into `summary` with an em-dash, which is why
+    /// these rules were never testable: there was one string, and every commit
+    /// message trailer in this repository was in it.
+    #[test]
+    fn body_preview_stops_at_the_first_blank_line() {
+        let t = TestRepo::new();
+        t.commit_with_message("subject\n\nthe explanation\n\na second thought", &[]);
+
+        let rows = full(&t.repo);
+        assert_eq!(rows[0].summary, "subject");
+        assert_eq!(rows[0].body_preview, "the explanation");
+    }
+
+    #[test]
+    fn body_preview_flattens_a_wrapped_paragraph() {
+        let t = TestRepo::new();
+        t.commit_with_message("subject\n\nhard-wrapped\nacross   three\nlines", &[]);
+
+        // The row is one line; a newline in it would render as a space anyway,
+        // and the run of spaces would survive as a gap in the middle of a word.
+        assert_eq!(full(&t.repo)[0].body_preview, "hard-wrapped across three lines");
+    }
+
+    #[test]
+    fn body_preview_excludes_a_trailer_only_body() {
+        let t = TestRepo::new();
+        t.commit_with_message(
+            "feat: a thing\n\nCo-Authored-By: Someone <nobody@example.com>\nSigned-off-by: Someone",
+            &[],
+        );
+
+        // "co-authored by" is not what the commit did.
+        assert_eq!(full(&t.repo)[0].body_preview, "");
+    }
+
+    #[test]
+    fn body_preview_keeps_prose_that_a_trailer_block_follows() {
+        let t = TestRepo::new();
+        t.commit_with_message(
+            "feat: a thing\n\nwhy it was done\n\nCo-Authored-By: Someone",
+            &[],
+        );
+
+        assert_eq!(full(&t.repo)[0].body_preview, "why it was done");
+    }
+
+    #[test]
+    fn body_preview_truncates_on_a_char_boundary() {
+        let t = TestRepo::new();
+        // Multibyte throughout: a byte slice at BODY_PREVIEW_CHARS lands inside
+        // a character here and panics, which is the whole reason for the test.
+        let long = "é".repeat(BODY_PREVIEW_CHARS + 40);
+        t.commit_with_message(&format!("subject\n\n{long}"), &[]);
+
+        let preview = &full(&t.repo)[0].body_preview;
+        assert_eq!(preview.chars().count(), BODY_PREVIEW_CHARS + 1);
+        assert!(preview.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn a_commit_with_no_body_has_no_preview() {
+        let t = TestRepo::new();
+        t.commit("just a subject", &[]);
+
+        let rows = full(&t.repo);
+        assert_eq!(rows[0].summary, "just a subject");
+        assert_eq!(rows[0].body_preview, "");
     }
 
     #[test]

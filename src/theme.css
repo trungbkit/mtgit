@@ -20,6 +20,15 @@
 :root {
   /* ---- light surfaces ---- */
   --bg-app: #f6f8fa;
+  /* Graph row states, and the reason both are alphas rather than flat colours:
+     the lane lines are a `<canvas>` *under* the rows (`.graph-canvas`, z-index
+     0; `.graph-row`, z-index 1), so an opaque row background does not tint the
+     graph, it deletes it — every other row at a time, which reads as a graph
+     drawn in dashes. Anything that colours a whole row has to be see-through.
+     Kept under ~3% and ~4% against `--bg-app`: above that the band stops being
+     something a long column scans by and becomes stripes. */
+  --bg-row-alt: #00000006;
+  --bg-row-hover: #0000000a;
   --bg-panel: #ffffff;
   --bg-panel-2: #eff2f5;
   --bg-hover: #eaeef2;
@@ -84,6 +93,13 @@
   --warn-tint-border: #9a670066;
   --ok-tint: #1a7f371f;
   --ok-tint-border: #1a7f3766;
+  /* The working-directory banner. A solid accent strip, so it reads as an
+     invitation rather than a note — and a token rather than a `color-mix` in
+     `detail.css`, because one blend ratio over both grounds is the mistake the
+     note above describes. */
+  --banner-accent-bg: #0969da;
+  --banner-accent-fg: #ffffff;
+  --banner-accent-chip: #ffffff33;
   --diff-add-bg: #2ea04320;
   --diff-add-bg-strong: #2ea04338;
   --diff-add-word: #2ea04359;
@@ -121,6 +137,8 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg-app: #1b1f24;
+    --bg-row-alt: #ffffff06;
+    --bg-row-hover: #ffffff17;
     --bg-panel: #22272e;
     --bg-panel-2: #2d333b;
     --bg-hover: #2d333b;
@@ -168,13 +186,15 @@
     --warn-tint-border: #daaa3f55;
     --ok-tint: #57ab5a22;
     --ok-tint-border: #57ab5a55;
+    --banner-accent-bg: #2d5fa8;
+    --banner-accent-fg: #eaf2ff;
+    --banner-accent-chip: #ffffff26;
     --diff-add-bg: #2ea04326;
     --diff-add-bg-strong: #2ea04340;
     --diff-add-word: #2ea04366;
     --diff-del-bg: #f8514926;
     --diff-del-bg-strong: #f8514940;
     --diff-del-word: #f8514966;
-  --diff-empty-bg: #00000033;
     --diff-empty-bg: #00000033;
 
     --term-bg: #1b1f24;
@@ -188,6 +208,8 @@
 /* ---- dark, chosen explicitly: must also win under a light OS ---- */
 :root[data-theme="dark"] {
   --bg-app: #1b1f24;
+  --bg-row-alt: #ffffff06;
+  --bg-row-hover: #ffffff17;
   --bg-panel: #22272e;
   --bg-panel-2: #2d333b;
   --bg-hover: #2d333b;
@@ -239,12 +261,19 @@
      not a delta against the media one. */
   --ok-tint: #57ab5a22;
   --ok-tint-border: #57ab5a55;
+  --banner-accent-bg: #2d5fa8;
+  --banner-accent-fg: #eaf2ff;
+  --banner-accent-chip: #ffffff26;
   --diff-add-bg: #2ea04326;
   --diff-add-bg-strong: #2ea04340;
   --diff-add-word: #2ea04366;
   --diff-del-bg: #f8514926;
   --diff-del-bg-strong: #f8514940;
   --diff-del-word: #f8514966;
+  /* Present in the `prefers-color-scheme` block above and, until now, only
+     there — so choosing Dark under a light OS hatched the split view's absent
+     lines in 6% near-black over a dark panel, which is nothing at all. */
+  --diff-empty-bg: #00000033;
 
   --term-bg: #1b1f24;
   --term-fg: #cdd9e5;

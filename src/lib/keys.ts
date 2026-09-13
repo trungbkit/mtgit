@@ -33,7 +33,9 @@ export type ActionId =
   | "search.next"
   | "search.prev"
   | "commit.focus"
-  | "commit.submit";
+  | "commit.submit"
+  | "diff.nextChange"
+  | "diff.prevChange";
 
 export interface Action {
   id: ActionId;
@@ -87,6 +89,15 @@ export const ACTIONS: Action[] = [
 
   { id: "commit.focus", label: "Focus commit message", group: "Commit", chord: "Mod+Shift+C" },
   { id: "commit.submit", label: "Commit", group: "Commit", chord: "Mod+Enter" },
+
+  {
+    id: "diff.nextChange",
+    label: "Next change in file",
+    group: "Diff",
+    chord: "Alt+ArrowDown",
+    note: "Moves hunk to hunk, not line to line",
+  },
+  { id: "diff.prevChange", label: "Previous change in file", group: "Diff", chord: "Alt+ArrowUp" },
 ];
 
 const BY_ID = new Map(ACTIONS.map((action) => [action.id, action]));

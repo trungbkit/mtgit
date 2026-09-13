@@ -15,7 +15,7 @@ is the plan; where the two overlap, STATUS.md is the more current.
 
 ## 1. Where things stand
 
-The gate is green: **173 Rust tests**, **240 frontend tests**, clippy clean at `-D warnings`,
+The gate is green: **179 Rust tests**, **288 frontend tests**, clippy clean at `-D warnings`,
 `tsc --noEmit` clean, `check:ipc` consistent across 106 commands, `vite build` succeeds.
 ~13k lines across `src/` and `src-tauri/src/`.
 

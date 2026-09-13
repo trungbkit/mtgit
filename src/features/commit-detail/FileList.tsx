@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { FileStatus } from "../../ipc/types";
+import { Icon } from "../../components/Icon";
 import "./filelist.css";
 
 export interface FileItem {
@@ -10,7 +11,12 @@ export interface FileItem {
   size?: number | null;
 }
 
-const STATUS_MARK: Record<FileStatus, { ch: string; cls: string }> = {
+/**
+ * One mapping from status to mark and colour, for the rows *and* the change
+ * summary above them. A second copy of "what colour is a modified file" is the
+ * shape defect the settings convention is about.
+ */
+export const STATUS_MARK: Record<FileStatus, { ch: string; cls: string }> = {
   added: { ch: "A", cls: "add" },
   untracked: { ch: "U", cls: "add" },
   modified: { ch: "M", cls: "mod" },
@@ -21,6 +27,42 @@ const STATUS_MARK: Record<FileStatus, { ch: string; cls: string }> = {
   conflicted: { ch: "!", cls: "del" },
   unknown: { ch: "?", cls: "mod" },
 };
+
+/** How the flat list is ordered. `path` is the order the commit gives. */
+type SortMode = "path" | "status" | "name";
+
+const SORT_LABEL: Record<SortMode, string> = {
+  path: "Path order",
+  status: "By status",
+  name: "By name",
+};
+
+const NEXT_SORT: Record<SortMode, SortMode> = {
+  path: "status",
+  status: "name",
+  name: "path",
+};
+
+function sortFiles(files: FileItem[], mode: SortMode): FileItem[] {
+  if (mode === "path") return files;
+  const copy = [...files];
+  if (mode === "name") {
+    copy.sort((a, b) => basename(a.path).localeCompare(basename(b.path)));
+  } else {
+    // Grouped by mark, so every added file sits together — which is the
+    // question this order answers ("what did this commit *add*").
+    copy.sort(
+      (a, b) =>
+        STATUS_MARK[a.status].ch.localeCompare(STATUS_MARK[b.status].ch) ||
+        a.path.localeCompare(b.path),
+    );
+  }
+  return copy;
+}
+
+function basename(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
 
 export function FileList({
   files,
@@ -36,11 +78,28 @@ export function FileList({
   onContextMenu?: (event: React.MouseEvent, file: FileItem) => void;
 }) {
   const [tree, setTree] = useState(false);
+  // Per-view, not persisted: `core/settings.rs` should not grow an entry for
+  // how one panel happened to be sorted a minute ago.
+  const [sort, setSort] = useState<SortMode>("path");
+  const ordered = useMemo(() => sortFiles(files, sort), [files, sort]);
 
   return (
     <div className="filelist">
       <div className="filelist-head">
         <span>{files.length} file{files.length === 1 ? "" : "s"}</span>
+        {/* Hidden rather than disabled in tree mode: the tree imposes its own
+            order (directories first, then name), so a sort control there would
+            be a button that changes nothing. */}
+        {!tree && (
+          <button
+            className="filelist-sort"
+            title={`${SORT_LABEL[sort]} — click for ${SORT_LABEL[NEXT_SORT[sort]].toLowerCase()}`}
+            onClick={() => setSort(NEXT_SORT[sort])}
+          >
+            <Icon name="sort" size={11} />
+            {SORT_LABEL[sort]}
+          </button>
+        )}
         <div className="pathtree-toggle">
           <button className={tree ? "" : "on"} onClick={() => setTree(false)}>
             Path
@@ -54,7 +113,7 @@ export function FileList({
         <TreeView files={files} selected={selected} onSelect={onSelect} renderActions={renderActions} onContextMenu={onContextMenu} />
       ) : (
         <div className="filelist-items">
-          {files.map((f) => (
+          {ordered.map((f) => (
             <FileRow
               key={f.path}
               f={f}
@@ -90,15 +149,22 @@ function FileRow({
   onContextMenu?: (event: React.MouseEvent, file: FileItem) => void;
 }) {
   const mark = STATUS_MARK[f.status];
+  // In tree mode the label is already a basename, so `cut` is -1 and the
+  // directory span is simply absent — the same code, not a missing branch.
+  const cut = label.lastIndexOf("/");
   return (
     <div
       className={`file-row${selected ? " selected" : ""}`}
       style={{ paddingLeft: 10 + indent * 14 }}
       onClick={() => onSelect(f.path)}
       onContextMenu={(event) => onContextMenu?.(event, f)}
+      title={f.path}
     >
       <span className={`file-mark ${mark.cls}`}>{mark.ch}</span>
-      <span className="file-name">{label}</span>
+      <span className="file-name">
+        {cut >= 0 && <span className="file-dir">{label.slice(0, cut + 1)}</span>}
+        <b>{label.slice(cut + 1)}</b>
+      </span>
       {f.size != null && f.size >= 1024 * 1024 && <span className="file-size">{formatSize(f.size)}</span>}
       {renderActions && <span className="file-actions">{renderActions(f)}</span>}
     </div>
